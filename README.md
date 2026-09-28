@@ -1,18 +1,28 @@
 # Aricoma Atlas – NetBox Bootstrap
 
-Nástroje na automatizované vytvorenie a provisioning základnej NetBox konfigurácie pre projekt **Aricoma Atlas**.
+Nástroje na automatizované nasadenie a provisioning NetBox prostredia pre projekt **Aricoma Atlas**.
 
 Cieľom projektu je umožniť pripraviť novú čistú NetBox inštanciu do štandardného Atlas stavu reprodukovateľným a idempotentným spôsobom.
 
-Bootstrap aktuálne zabezpečuje:
+Projekt aktuálne zabezpečuje:
 
+- automatizované nasadenie NetBoxu pomocou Docker Compose,
+- PostgreSQL a Valkey backend služby,
+- automatické vytvorenie NetBox superusera,
+- automatické provisionovanie NetBox API tokenu,
 - Atlas Custom Field Choice Sets,
 - Atlas Custom Fields,
 - výrobcov sieťových zariadení,
 - Device Types,
 - component templates jednotlivých Device Types,
-- validáciu konfigurácie pred zápisom,
+- validáciu konfigurácie,
 - kontrolu výsledného stavu po provisioningu.
+
+Hlavný deployment workflow je možné spustiť jedným príkazom:
+
+```bash
+python scripts/deploy_netbox.py
+```
 
 Device Type katalóg sa generuje z upstream projektu **NetBox Community Device Type Library** na základe presne definovaného Git commitu a Atlas selection manifestu.
 
@@ -26,6 +36,7 @@ Testované prostredie:
 
 - NetBox `4.7.1`
 - NetBox Docker `5.1.1`
+- Docker image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
 
 ## Device Type katalóg
 
@@ -41,9 +52,11 @@ Testované prostredie:
 | Typ komponentu | Počet |
 |---|---:|
 | Console ports | 860 |
+| Console server ports | 0 |
 | Power ports | 331 |
 | Interfaces | 23 456 |
 | Rear ports | 2 |
+| Front ports | 0 |
 | Module bays | 1 687 |
 | Device bays | 2 |
 | Power outlets | 4 |
@@ -55,13 +68,21 @@ Testované prostredie:
 
 ```text
 atlas-netbox-bootstrap/
+├── .github/
+│   └── workflows/
+│       └── validate.yml
+│
 ├── catalog/
 │   ├── manifest.yaml
 │   └── baseline/
 │       ├── custom_field_choice_sets.yaml
 │       └── custom_fields.yaml
 │
+├── deployment/
+│   └── netbox.yaml
+│
 ├── scripts/
+│   ├── deploy_netbox.py
 │   ├── bootstrap_netbox.py
 │   ├── build_catalog.py
 │   ├── provision_baseline.py
@@ -74,13 +95,453 @@ atlas-netbox-bootstrap/
 └── README.md
 ```
 
-Lokálne a generované dáta sa zámerne neukladajú do Git repozitára:
+Lokálne, generované a runtime dáta sa zámerne neukladajú do Git repozitára:
 
 ```text
 .venv/
 build/
 devicetype-library/
+.runtime/
 ```
+
+Adresár `.runtime/` obsahuje lokálny runtime deploymentu, napríklad:
+
+```text
+.runtime/
+├── atlas-netbox-state.json
+└── netbox-docker/
+```
+
+Súbor:
+
+```text
+.runtime/atlas-netbox-state.json
+```
+
+obsahuje lokálne generované credentials a NetBox API token.
+
+Tento súbor musí zostať mimo Git repozitára.
+
+---
+
+# One-command NetBox deployment
+
+Pre novú NetBox inštanciu je hlavný vstupný bod:
+
+```bash
+python scripts/deploy_netbox.py
+```
+
+Deployment vykoná celý proces:
+
+```text
+Docker preflight
+        │
+        ▼
+pinned netbox-docker checkout
+        │
+        ▼
+runtime secrets
+        │
+        ▼
+PostgreSQL + Valkey
+        │
+        ▼
+NetBox 4.7.1
+        │
+        ▼
+NetBox healthcheck
+        │
+        ▼
+superuser
+        │
+        ▼
+NetBox API token
+        │
+        ▼
+Atlas baseline
+        │
+        ▼
+Atlas Device Catalog
+        │
+        ▼
+final verification
+        │
+        ▼
+ATLAS NETBOX READY
+```
+
+Aktuálne testovaná kombinácia:
+
+```text
+NetBox:          4.7.1
+NetBox Docker:   5.1.1
+Docker image:    v4.7.1-5.1.1
+Compose project: atlas-netbox
+```
+
+---
+
+# Deployment konfigurácia
+
+Hlavná konfigurácia Docker deploymentu sa nachádza v:
+
+```text
+deployment/netbox.yaml
+```
+
+Aktuálna konfigurácia:
+
+```yaml
+netbox:
+  version: "4.7.1"
+  docker_image: "docker.io/netboxcommunity/netbox:v4.7.1-5.1.1"
+
+netbox_docker:
+  repository: "https://github.com/netbox-community/netbox-docker.git"
+  ref: "5.1.1"
+
+runtime:
+  directory: ".runtime/netbox-docker"
+  compose_project: "atlas-netbox"
+
+network:
+  listen_address: "0.0.0.0"
+  port: 8001
+
+bootstrap:
+  superuser_name: "admin"
+```
+
+Konfigurácia definuje:
+
+- verziu NetBoxu,
+- Docker image,
+- upstream `netbox-docker` repository,
+- pinned upstream ref,
+- runtime adresár,
+- Docker Compose project name,
+- listen address,
+- TCP port,
+- meno NetBox superusera.
+
+Používa sa konkrétna verzia Docker image namiesto pohyblivého `latest` tagu.
+
+Cieľom je, aby rovnaký Atlas release používal vždy rovnakú kombináciu NetBoxu a NetBox Docker support files.
+
+Port `8001` sa aktuálne používa v development prostredí, aby Atlas NetBox mohol bežať paralelne s inou NetBox inštanciou na porte `8000`.
+
+Pre samostatné nasadenie je možné port upraviť v:
+
+```text
+deployment/netbox.yaml
+```
+
+---
+
+# Izolácia Docker Compose projektu
+
+Atlas deployment používa explicitný Docker Compose project:
+
+```text
+atlas-netbox
+```
+
+To je dôležité najmä v prípade, že na rovnakom Docker hoste existuje iná NetBox inštancia.
+
+Bez explicitného Compose project name by mohlo dôjsť ku kolízii:
+
+- kontajnerov,
+- networks,
+- named volumes,
+- konfigurácie existujúceho NetBox stacku.
+
+Atlas resources preto používajú vlastný namespace.
+
+Príklad kontajnerov:
+
+```text
+atlas-netbox-netbox-1
+atlas-netbox-netbox-worker-1
+atlas-netbox-postgres-1
+atlas-netbox-redis-1
+atlas-netbox-redis-cache-1
+```
+
+Príklad persistentných volumes:
+
+```text
+atlas-netbox_netbox-postgres
+atlas-netbox_netbox-redis-data
+atlas-netbox_netbox-redis-cache-data
+atlas-netbox_netbox-media-files
+atlas-netbox_netbox-reports-files
+atlas-netbox_netbox-scripts-files
+```
+
+---
+
+# Runtime secrets
+
+Pri prvom deploymente sa automaticky generujú lokálne credentials.
+
+Aktuálne sa generujú hodnoty pre:
+
+- PostgreSQL password,
+- Valkey password,
+- Valkey cache password,
+- NetBox `SECRET_KEY`,
+- API token pepper,
+- NetBox superuser password,
+- NetBox API token.
+
+Runtime stav sa uchováva v:
+
+```text
+.runtime/atlas-netbox-state.json
+```
+
+Súbor má byť dostupný iba lokálne a je ignorovaný cez `.gitignore`.
+
+## Dôležité
+
+Runtime credentials ani API token sa nesmú commitovať do Git repozitára.
+
+Do Git repozitára nepatrí:
+
+```text
+.runtime/
+```
+
+---
+
+# Požiadavky na deployment
+
+Host musí mať minimálne:
+
+- Git,
+- Python,
+- Python `venv`,
+- Docker,
+- Docker Compose plugin.
+
+Overenie Dockeru:
+
+```bash
+docker --version
+docker compose version
+docker info
+```
+
+Python dependencies:
+
+```bash
+python -m pip install -r requirements.txt
+```
+
+Odporúčané je používať Python virtual environment.
+
+---
+
+# Python virtual environment
+
+Vytvorenie:
+
+```bash
+python3 -m venv .venv
+```
+
+Aktivácia na macOS/Linux:
+
+```bash
+source .venv/bin/activate
+```
+
+Inštalácia dependencies:
+
+```bash
+pip install -r requirements.txt
+```
+
+Overenie:
+
+```bash
+python --version
+```
+
+---
+
+# Spustenie deploymentu
+
+Po aktivovaní virtual environment:
+
+```bash
+python scripts/deploy_netbox.py
+```
+
+Skript:
+
+1. overí Docker,
+2. overí Docker Compose,
+3. pripraví pinned `netbox-docker`,
+4. vygeneruje alebo načíta runtime secrets,
+5. vytvorí Docker Compose override,
+6. stiahne potrebné Docker images,
+7. spustí NetBox stack,
+8. počká na healthy NetBox,
+9. overí alebo vytvorí API token,
+10. spustí Atlas bootstrap,
+11. vykoná finálnu kontrolu.
+
+Pri úspešnom deploymente sa zobrazí napríklad:
+
+```text
+NETBOX DOCKER READY
+==============================================================================
+URL:      http://127.0.0.1:8001
+Username: admin
+```
+
+---
+
+# Prepare-only režim
+
+Runtime je možné pripraviť bez spustenia Docker kontajnerov:
+
+```bash
+python scripts/deploy_netbox.py --prepare-only
+```
+
+Tento režim:
+
+- overí Docker,
+- naklonuje alebo aktualizuje pinned `netbox-docker`,
+- overí požadovaný Git ref,
+- pripraví runtime secrets,
+- vytvorí Docker Compose override,
+- nespustí kontajnery.
+
+Použitie je vhodné napríklad pri kontrole deployment konfigurácie.
+
+---
+
+# Verbose režim
+
+Štandardný deployment zámerne zobrazuje iba stručný priebeh.
+
+Pre detailný výstup Atlas bootstrapu:
+
+```bash
+python scripts/deploy_netbox.py --verbose
+```
+
+Verbose režim je vhodný pri:
+
+- troubleshootingu,
+- vývoji,
+- kontrole provisioningu,
+- analýze chýb.
+
+---
+
+# Opakované spustenie deploymentu
+
+Deployment je navrhnutý ako idempotentný.
+
+Opakované spustenie:
+
+```bash
+python scripts/deploy_netbox.py
+```
+
+má:
+
+- znovu overiť Docker prostredie,
+- overiť pinned upstream,
+- ponechať existujúce secrets,
+- znovu použiť existujúce Docker volumes,
+- overiť existujúci API token,
+- zosúladiť Atlas baseline,
+- zosúladiť Device Catalog,
+- vykonať finálnu kontrolu.
+
+Ak už všetko existuje, provisioning nemá vytvárať duplicity.
+
+---
+
+# Správa Docker stacku
+
+Pre prácu priamo s Compose runtime:
+
+```bash
+cd .runtime/netbox-docker
+```
+
+## Stav
+
+```bash
+docker compose -p atlas-netbox ps
+```
+
+## Zastavenie
+
+```bash
+docker compose -p atlas-netbox stop
+```
+
+## Opätovné spustenie
+
+```bash
+docker compose -p atlas-netbox start
+```
+
+## Reštart
+
+```bash
+docker compose -p atlas-netbox restart
+```
+
+## Odstránenie kontajnerov bez zmazania dát
+
+```bash
+docker compose -p atlas-netbox down
+```
+
+Následne je možné stack znovu vytvoriť:
+
+```bash
+cd ~/atlas-netbox-bootstrap
+python scripts/deploy_netbox.py
+```
+
+---
+
+# Pozor na persistentné dáta
+
+Pri bežnej správe deploymentu nepoužívaj:
+
+```bash
+docker compose -p atlas-netbox down -v
+```
+
+Parameter:
+
+```text
+-v
+```
+
+odstráni aj named volumes.
+
+To môže znamenať odstránenie PostgreSQL databázy NetBoxu.
+
+Rovnako je potrebné dávať pozor na:
+
+```bash
+docker volume prune
+docker system prune --volumes
+```
+
+Pred zásahom do volumes je potrebné vedieť, ktoré persistentné dáta sa odstránia.
 
 ---
 
@@ -90,14 +551,16 @@ Atlas baseline predstavuje konfiguráciu, ktorá má existovať na každej Atlas
 
 Aktuálne obsahuje:
 
-- 1× Custom Field Choice Set
-- 4× Custom Fields
+- 1× Custom Field Choice Set,
+- 4× Custom Fields.
 
 Konfigurácia baseline je deklaratívne uložená v:
 
 ```text
 catalog/baseline/
 ```
+
+---
 
 ## Custom Field Choice Set
 
@@ -114,6 +577,12 @@ Aktuálne možnosti:
 - HA status
 - Temperature
 
+Hodnoty sa zámerne zachovávajú presne v deklarovanej forme.
+
+Bootstrap ich automaticky nenormalizuje ani neprepisuje.
+
+---
+
 ## Custom Fields
 
 | Name | Type | Group |
@@ -129,6 +598,12 @@ Všetky aktuálne Custom Fields sú priradené k objektu:
 dcim.device
 ```
 
+Baseline provisioner kontroluje aj configuration drift.
+
+Ak deklarácia a existujúca konfigurácia NetBoxu nesedia, provisioning existujúce Custom Fieldy automaticky neprepíše.
+
+Namiesto toho oznámi drift.
+
 ---
 
 # Atlas Device Catalog
@@ -136,13 +611,19 @@ dcim.device
 Atlas Device Catalog sa generuje z upstream projektu:
 
 ```text
-netbox-community/devicetype-library
+https://github.com/netbox-community/devicetype-library.git
 ```
 
 Presná verzia upstream repozitára je definovaná v:
 
 ```text
 catalog/manifest.yaml
+```
+
+Aktuálny upstream commit:
+
+```text
+517549215455824be5e3b89965353fd2210cc20c
 ```
 
 Manifest obsahuje:
@@ -163,7 +644,50 @@ Juniper     290
 Spolu       690
 ```
 
-## Prečo používame pinned commit
+---
+
+# Cisco selection
+
+Cisco Device Types sa neimportujú všetky.
+
+Atlas manifest aktuálne vyberá najmä tieto produktové rady:
+
+```text
+CBS*
+SF*
+SG*
+SX*
+RV*
+
+WS-C2960X-*
+WS-C2960XR-*
+WS-C3650-*
+WS-C3850-*
+
+C9200-*
+C9200L-*
+C9200CX-*
+Catalyst-9200CX-*
+
+C9300-*
+C9300L-*
+C9300LM-*
+C9300X-*
+
+C9500-*
+C9500X-*
+Catalyst-9500X-*
+
+ISR4*
+C8200-*
+C8300-*
+```
+
+Fortinet a Juniper sa v aktuálnej beta verzii vyberajú celé.
+
+---
+
+# Prečo používame pinned commit
 
 Atlas katalóg nesmie závisieť od aktuálneho stavu upstream repozitára.
 
@@ -173,25 +697,73 @@ Napríklad:
 Atlas Device Catalog 0.1.0-beta
 ```
 
-musí vždy vytvoriť rovnakých 690 Device Types.
+musí vždy vytvoriť rovnaký katalóg.
 
-Preto `build_catalog.py` pred buildom kontroluje:
+Preto je upstream commit explicitne definovaný v:
 
 ```text
-Expected upstream commit
-        =
-Actual local upstream commit
+catalog/manifest.yaml
 ```
 
-Ak sa commity nezhodujú, build sa zastaví.
+Bootstrap kontroluje:
+
+```text
+manifest
+   │
+   ├── repository
+   ├── commit
+   └── selection rules
+        │
+        ▼
+local Device Type Library
+        │
+        ▼
+generated Atlas catalog
+```
+
+Ak lokálny upstream checkout alebo build nezodpovedá manifestu, katalóg sa považuje za stale a znovu sa pripraví.
 
 Tým zabezpečujeme reprodukovateľnosť jednotlivých Atlas release verzií.
 
 ---
 
+# Build Atlas Device Catalog
+
+Samostatný build:
+
+```bash
+python scripts/build_catalog.py
+```
+
+Výstup sa generuje do:
+
+```text
+build/
+```
+
+Napríklad:
+
+```text
+build/
+├── catalog-report.json
+└── device-types/
+```
+
+Adresár:
+
+```text
+build/
+```
+
+nie je súčasťou Git repozitára.
+
+Je to generovaný artefakt.
+
+---
+
 # Architektúra bootstrapu
 
-Celý proces vyzerá nasledovne:
+Device Catalog časť funguje nasledovne:
 
 ```text
 NetBox Community Device Type Library
@@ -211,133 +783,218 @@ NetBox Community Device Type Library
         ┌───────┴────────┐
         │                │
         ▼                ▼
- Atlas baseline    Device Catalog
+ Atlas baseline     Device Catalog
         │                │
         └───────┬────────┘
                 ▼
-        bootstrap_netbox.py
+       bootstrap_netbox.py
                 │
                 ▼
              NetBox
 ```
 
----
-
-# Inštalácia development prostredia
-
-## 1. Python virtual environment
-
-Vytvorenie virtual environment:
-
-```bash
-python3 -m venv .venv
-```
-
-Aktivácia:
-
-```bash
-source .venv/bin/activate
-```
-
-Inštalácia dependencies:
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-# Device Type Library
-
-Upstream Device Type Library nie je súčasťou tohto Git repozitára.
-
-Naklonuje sa samostatne:
-
-```bash
-git clone https://github.com/netbox-community/devicetype-library.git
-```
-
-Následne je potrebné checkoutnúť commit definovaný v:
+Pri kompletnom Docker deploymente je nad touto vrstvou ešte:
 
 ```text
-catalog/manifest.yaml
+deploy_netbox.py
+        │
+        ├── Docker
+        ├── PostgreSQL
+        ├── Valkey
+        ├── NetBox
+        ├── API token
+        │
+        ▼
+bootstrap_netbox.py
+        │
+        ▼
+Atlas configuration
 ```
-
-Napríklad:
-
-```bash
-cd devicetype-library
-
-git checkout <COMMIT_Z_MANIFESTU>
-```
-
-`build_catalog.py` automaticky overí, či je použitý správny commit.
 
 ---
 
-# Prístup k NetBox API
+# `deploy_netbox.py` vs `bootstrap_netbox.py`
 
-Bootstrap komunikuje s NetBoxom cez REST API.
+Tieto skripty majú rozdielnu úlohu.
 
-URL NetBoxu sa nastavuje pomocou environment variable:
+## `deploy_netbox.py`
 
-```bash
-export NETBOX_URL="http://localhost:8000"
-```
+Použi, keď chceš pripraviť celý NetBox stack.
 
-API token:
-
-```bash
-export NETBOX_TOKEN="..."
-```
-
-## Bezpečnosť
-
-Do Git repozitára sa nikdy nesmú ukladať:
-
-- NetBox API tokeny,
-- heslá,
-- privátne kľúče,
-- zákaznícke credentials,
-- `.env` súbory obsahujúce secrets.
-
-Credentials musia byť poskytované cez environment variables alebo externý secrets management.
-
----
-
-# Hlavný bootstrap
-
-Primárny entrypoint projektu je:
+Zabezpečuje:
 
 ```text
-scripts/bootstrap_netbox.py
+Docker
+  +
+NetBox
+  +
+PostgreSQL
+  +
+Valkey
+  +
+superuser
+  +
+API token
+  +
+Atlas provisioning
 ```
 
-Pri bežnom použití nie je potrebné spúšťať jednotlivé provisioning skripty manuálne.
+Spustenie:
+
+```bash
+python scripts/deploy_netbox.py
+```
 
 ---
 
-# Dry-run
+## `bootstrap_netbox.py`
 
-Pred každým provisioningom je odporúčané spustiť:
+Použi, keď NetBox už existuje a chceš iba aplikovať Atlas konfiguráciu.
+
+Dry-run:
 
 ```bash
 python scripts/bootstrap_netbox.py
 ```
 
-Dry-run kontroluje:
+Apply:
 
-1. Atlas baseline,
-2. Custom Field Choice Sets,
-3. Custom Fields,
-4. výrobcov,
-5. Device Types,
-6. component templates,
-7. prípadný configuration drift.
+```bash
+python scripts/bootstrap_netbox.py --apply
+```
 
-Dry-run nevykonáva žiadne zmeny v NetBoxe.
+Pri `--apply` sa vykoná:
 
-Kompletne provisionovaný Atlas NetBox má aktuálne skončiť približne takto:
+```text
+prepare / validate catalog
+        │
+        ▼
+Atlas baseline
+        │
+        ▼
+Atlas Device Catalog
+        │
+        ▼
+Final verification
+```
+
+Kompletný remote preflight sa pred `--apply` zámerne neopakuje.
+
+Jednotlivé provisionery vykonávajú vlastnú validáciu pred zápisom a po provisioningu nasleduje finálna kontrola.
+
+---
+
+# Dry-run existujúceho NetBoxu
+
+Pre kontrolu existujúceho NetBoxu nastav:
+
+```bash
+export NETBOX_URL="http://localhost:8000"
+export NETBOX_TOKEN="<API_TOKEN>"
+```
+
+Potom:
+
+```bash
+python scripts/bootstrap_netbox.py
+```
+
+Dry-run:
+
+- nemení NetBox,
+- kontroluje Atlas baseline,
+- kontroluje Device Catalog,
+- identifikuje missing objekty,
+- identifikuje baseline drift,
+- overuje katalóg.
+
+---
+
+# Apply na existujúci NetBox
+
+Po úspešnom dry-rune:
+
+```bash
+python scripts/bootstrap_netbox.py --apply
+```
+
+Bootstrap následne:
+
+1. pripraví Atlas Device Catalog,
+2. aplikuje Atlas baseline,
+3. aplikuje Device Catalog,
+4. vykoná finálnu verifikáciu.
+
+---
+
+# Prístup k NetBox API
+
+Pri manuálnom bootstrapovaní existujúceho NetBoxu sa používajú environment variables:
+
+```bash
+export NETBOX_URL="http://localhost:8000"
+export NETBOX_TOKEN="<TOKEN>"
+```
+
+Bootstrap token neukladá do Git repozitára.
+
+Pri `deploy_netbox.py` sa API token vytvorí automaticky a uloží sa do:
+
+```text
+.runtime/atlas-netbox-state.json
+```
+
+---
+
+# Bezpečnosť
+
+Do Git repozitára sa nesmú ukladať:
+
+- NetBox API tokeny,
+- používateľské heslá,
+- PostgreSQL heslá,
+- Redis/Valkey heslá,
+- private keys,
+- `.env` súbory s credentials,
+- `.runtime/`.
+
+Secrets musia zostať mimo Git repozitára.
+
+Pred commitom je vhodné overiť:
+
+```bash
+git status
+git diff --cached
+```
+
+---
+
+# Idempotencia
+
+Provisioning musí byť možné spustiť opakovane.
+
+Ak objekt už existuje v požadovanom stave, bootstrap ho nevytvára znovu.
+
+Príklad:
+
+```text
+Device Types
+Existing: 690
+Missing:  0
+```
+
+a:
+
+```text
+TOTAL COMPONENTS
+catalog=26342
+existing=26342
+missing=0
+```
+
+znamená, že Device Catalog je už provisioned.
+
+Rovnako pri baseline:
 
 ```text
 Choice Sets:
@@ -349,155 +1006,69 @@ Custom Fields:
   existing: 4
   missing:  0
   drift:    0
-
-Device Types:
-  Existing: 690
-  Missing:  0
-
-TOTAL COMPONENTS:
-  catalog=26342
-  existing=26342
-  missing=0
-```
-
----
-
-# Provisioning novej NetBox inštancie
-
-Provisioning sa spustí:
-
-```bash
-python scripts/bootstrap_netbox.py --apply
-```
-
-Bootstrap najprv automaticky vykoná kompletný preflight dry-run.
-
-Ak preflight zlyhá, provisioning sa nespustí.
-
-## Poradie provisioningu
-
-```text
-Preflight
-    │
-    ▼
-Custom Field Choice Sets
-    │
-    ▼
-Custom Fields
-    │
-    ▼
-Manufacturers
-    │
-    ▼
-Device Types
-    │
-    ▼
-Component Templates
-    │
-    ▼
-Final Verification
-```
-
-Po úspešnom provisioningu bootstrap vykoná záverečný dry-run, ktorým overí výsledný stav.
-
----
-
-# Idempotencia
-
-Provisioning je navrhnutý ako idempotentný.
-
-To znamená, že opakované spustenie bootstrapu nemá vytvárať duplicity.
-
-Prvý run:
-
-```text
-missing object
-    ↓
-CREATE
-```
-
-Ďalšie runy:
-
-```text
-object exists
-    ↓
-EXISTS
-    ↓
-bez zmeny
-```
-
-Výsledný stav kompletne provisionovanej inštancie má byť:
-
-```text
-missing = 0
-drift   = 0
 ```
 
 ---
 
 # Configuration drift
 
-Atlas baseline nekontroluje iba existenciu Custom Fields.
-
-Kontroluje aj ich deklarovanú konfiguráciu.
-
-Ak napríklad NetBox obsahuje:
+Baseline provisioner rozlišuje:
 
 ```text
-checkmk_enabled
+existing
+missing
+drift
 ```
 
-ale jeho konfigurácia sa líši od:
+Ak objekt chýba:
 
 ```text
-catalog/baseline/custom_fields.yaml
+missing
 ```
 
-bootstrap vypíše:
+je možné ho vytvoriť cez `--apply`.
+
+Ak objekt existuje, ale jeho konfigurácia sa líši od Atlas deklarácie:
 
 ```text
-[DRIFT]
+drift
 ```
 
-Existujúci objekt sa zámerne automaticky neupravuje.
+bootstrap ho automaticky neprepíše.
 
-Dôvodom je ochrana už používaných Custom Fields a prípadných existujúcich dát.
-
-Drift sa musí vyhodnotiť a vyriešiť vedomou zmenou baseline alebo NetBox konfigurácie.
+Dôvodom je ochrana existujúcej NetBox konfigurácie pred nechcenou modifikáciou.
 
 ---
 
 # Rebuild Atlas Device Catalog
 
-Vygenerovaný katalóg sa nachádza v:
-
-```text
-build/device-types/
-```
-
-Adresár `build/` nie je verzovaný v Git repozitári.
-
-Rebuild je možné vykonať:
+Katalóg je možné explicitne pregenerovať cez:
 
 ```bash
 python scripts/bootstrap_netbox.py --rebuild-catalog
 ```
 
-Alebo rebuild a následný provisioning:
+alebo samostatne:
 
 ```bash
-python scripts/bootstrap_netbox.py \
-  --rebuild-catalog \
-  --apply
+python scripts/build_catalog.py
 ```
 
-Pri rebuilde sa vždy kontroluje pinned upstream Git commit.
+Bootstrap zároveň kontroluje, či existujúci build zodpovedá:
+
+- manifestu,
+- upstream repozitáru,
+- upstream commitu,
+- vendor selection pravidlám,
+- počtu generovaných Device Types.
+
+Ak nie, build sa označí ako stale.
 
 ---
 
 # Audit katalógu
 
-## Základný audit
+Základný audit:
 
 ```bash
 python scripts/audit_catalog.py
@@ -506,190 +1077,376 @@ python scripts/audit_catalog.py
 Audit kontroluje napríklad:
 
 - počet Device Types,
-- distribúciu podľa výrobcu,
-- počet component templates,
-- použité component types,
-- závislosti medzi komponentmi,
-- neznáme top-level YAML polia.
+- počty podľa výrobcov,
+- podporované component templates,
+- dependencies,
+- neznáme top-level polia.
+
+Aktuálne overený stav:
+
+```text
+Device Types: 690
+```
+
+Component coverage:
+
+```text
+console-ports          860
+power-ports            331
+interfaces           23456
+rear-ports               2
+module-bays            1687
+device-bays               2
+power-outlets             4
+```
 
 ---
 
 # Audit polí component templates
 
+Detailný audit:
+
 ```bash
 python scripts/audit_component_fields.py
 ```
 
-Audit vypíše všetky polia používané jednotlivými component templates.
+Používa sa pri vývoji provisionera na kontrolu, aké polia sa reálne nachádzajú v Device Type Library.
 
-Používa sa najmä pri:
+Napríklad interfaces aktuálne používajú aj:
 
-- aktualizácii Device Type Library,
-- zmene pinned upstream commitu,
-- pridávaní nového výrobcu,
-- zmene NetBox verzie.
+```text
+description
+enabled
+label
+mgmt_only
+poe_mode
+poe_type
+```
 
-Cieľom je zabrániť tomu, aby importer potichu zahodil nové alebo nepodporované YAML atribúty.
+Provisioner má strict validáciu neznámych polí, aby sa nové upstream dáta nezačali potichu ignorovať.
 
 ---
 
 # Jednotlivé skripty
 
+## `deploy_netbox.py`
+
+Hlavný deployment entrypoint.
+
+Zabezpečuje:
+
+- Docker preflight,
+- prípravu pinned `netbox-docker`,
+- runtime secrets,
+- Docker Compose konfiguráciu,
+- spustenie NetBox stacku,
+- healthcheck,
+- superusera,
+- API token,
+- Atlas bootstrap.
+
+Bežné použitie:
+
+```bash
+python scripts/deploy_netbox.py
+```
+
+---
+
 ## `bootstrap_netbox.py`
 
-Hlavný entrypoint.
+Hlavný entrypoint pre provisioning existujúcej NetBox inštancie.
 
-Riadi:
+Dry-run:
 
-- build katalógu,
-- preflight,
-- provisioning baseline,
-- provisioning Device Catalogu,
-- final verification.
+```bash
+python scripts/bootstrap_netbox.py
+```
+
+Apply:
+
+```bash
+python scripts/bootstrap_netbox.py --apply
+```
+
+---
 
 ## `build_catalog.py`
 
-Vytvára Atlas Device Catalog z upstream Device Type Library podľa:
+Generuje Atlas Device Catalog z pinned Device Type Library checkoutu.
 
-```text
-catalog/manifest.yaml
+```bash
+python scripts/build_catalog.py
 ```
+
+---
 
 ## `provision_baseline.py`
 
-Spravuje:
+Provisionuje:
 
 - Custom Field Choice Sets,
-- Custom Fields,
-- configuration drift.
+- Custom Fields.
+
+Dry-run:
+
+```bash
+python scripts/provision_baseline.py
+```
+
+Apply:
+
+```bash
+python scripts/provision_baseline.py --apply
+```
+
+---
 
 ## `provision_netbox.py`
 
-Spravuje:
+Provisionuje:
 
 - Manufacturers,
 - Device Types,
-- Device Type component templates.
+- component templates.
+
+Dry-run:
+
+```bash
+python scripts/provision_netbox.py --all
+```
+
+Apply:
+
+```bash
+python scripts/provision_netbox.py --apply --all
+```
+
+Podporuje aj konkrétny Device Type.
+
+---
 
 ## `audit_catalog.py`
 
-Analyzuje obsah výsledného Atlas katalógu.
+Kontroluje štruktúru a obsah Device Catalogu.
+
+```bash
+python scripts/audit_catalog.py
+```
+
+---
 
 ## `audit_component_fields.py`
 
-Analyzuje YAML schému component templates používanú v katalógu.
+Analyzuje polia používané jednotlivými component templates.
+
+```bash
+python scripts/audit_component_fields.py
+```
 
 ---
 
 # Aktuálne podporované Device Type komponenty
 
-Atlas Device Catalog `0.1.0-beta` aktuálne používa:
+Provisioner aktuálne podporuje:
+
+- Console Port Templates,
+- Console Server Port Templates,
+- Power Port Templates,
+- Power Outlet Templates,
+- Interface Templates,
+- Rear Port Templates,
+- Front Port Templates,
+- Module Bay Templates,
+- Device Bay Templates.
+
+Provisioner podporuje aj dependencies:
 
 ```text
-console-ports
-power-ports
-power-outlets
-interfaces
-rear-ports
-module-bays
-device-bays
+Power Outlet
+    ↓
+Power Port
 ```
 
-Aktuálne nepoužíva:
+a:
 
 ```text
-console-server-ports
-front-ports
-inventory-items
-cooling-intakes
-cooling-outflows
+Front Port
+    ↓
+Rear Port
 ```
 
-Pri pridaní nových modelov alebo výrobcov musí audit overiť, či sa tento stav nezmenil.
+Aktuálny Atlas katalóg používa Power Outlet → Power Port dependency.
 
 ---
 
 # Development workflow
 
-Odporúčaný spôsob práce:
+Odporúčaný postup pri zmene projektu:
 
 ```text
-feature branch
-      │
-      ▼
+upraviť manifest / baseline / skripty
+        │
+        ▼
 lokálna validácia
-      │
-      ▼
+        │
+        ▼
+dry-run
+        │
+        ▼
+apply na test NetBox
+        │
+        ▼
+opakovaný run / idempotencia
+        │
+        ▼
+git diff
+        │
+        ▼
+commit
+        │
+        ▼
+push
+        │
+        ▼
 GitHub Actions
-      │
-      ▼
-Pull Request
-      │
-      ▼
-main
-      │
-      ▼
-release / version tag
 ```
 
-Príklady branchov:
+Pred commitom:
+
+```bash
+python -m py_compile scripts/*.py
+```
+
+Stav repozitára:
+
+```bash
+git status
+```
+
+Kontrola staged zmien:
+
+```bash
+git diff --cached --check
+git diff --cached --stat
+```
+
+---
+
+# GitHub Actions
+
+Repozitár obsahuje:
 
 ```text
-feature/netbox-platforms
-feature/netbox-tags
-feature/add-aruba
-fix/device-type-import
+.github/workflows/validate.yml
 ```
+
+CI sa spúšťa pri pushi a pull requeste.
+
+Kontroluje najmä:
+
+- Python syntax,
+- YAML konfiguráciu,
+- Atlas manifest,
+- baseline deklarácie,
+- pinned Device Type Library checkout,
+- build Atlas Device Catalogu,
+- audit katalógu,
+- audit component fields.
+
+CI nepotrebuje prístup k produkčnému NetBoxu ani NetBox API token.
 
 ---
 
 # Versioning
 
-Projekt používa semantic versioning.
+Projekt používa Git tagy na označenie release verzií.
 
-Príklady:
+Prvá plánovaná beta verzia:
 
 ```text
 v0.1.0-beta
-v0.2.0-beta
-v1.0.0
 ```
 
-Verzia Atlas Device Catalogu je nezávislá od upstream Device Type Library.
-
-Presný upstream commit je vždy definovaný v:
+Release má reprezentovať konkrétnu kombináciu:
 
 ```text
-catalog/manifest.yaml
+Atlas bootstrap code
+        +
+Atlas baseline
+        +
+Atlas Device Catalog manifest
+        +
+pinned Device Type Library
+        +
+pinned NetBox Docker
+        +
+pinned NetBox image
 ```
+
+Cieľom je, aby bolo možné konkrétny release spätne reprodukovať.
 
 ---
 
 # Aktuálny stav `0.1.0-beta`
 
-Funkčne overené:
+Aktuálny beta scope:
+
+- NetBox `4.7.1`
+- NetBox Docker `5.1.1`
+- Docker image `v4.7.1-5.1.1`
+- one-command Docker deployment
+- automatický superuser
+- automatický API token
+- Atlas baseline
+- 1 Custom Field Choice Set
+- 4 Custom Fields
+- Cisco Device Types
+- Fortinet Device Types
+- Juniper Device Types
+- 690 Device Types
+- 26 342 component templates
+- idempotentný provisioning
+- final verification
+- configuration drift detection pre baseline
+- GitHub Actions validácia
+
+Budúce verzie môžu rozšíriť napríklad:
+
+- ďalších výrobcov,
+- ďalšie Atlas baseline objekty,
+- ďalšie integračné nastavenia,
+- Checkmk provisioning,
+- Oxidized provisioning,
+- Atlas application deployment,
+- reverse proxy,
+- zákaznícke deployment profily.
+
+---
+
+# Cieľ projektu
+
+Dlhodobý cieľ je dostať nasadenie Atlas infraštruktúry do podoby:
 
 ```text
-Atlas baseline
-├── Choice Sets       1
-└── Custom Fields     4
-
-Atlas Device Catalog
-├── Manufacturers     3
-├── Device Types      690
-└── Components        26 342
+nový server
+    │
+    ▼
+Atlas deployment
+    │
+    ├── NetBox
+    ├── Device Catalog
+    ├── Atlas baseline
+    ├── Checkmk
+    ├── Oxidized
+    ├── Atlas application
+    └── integrations
 ```
 
-Na kompletne provisionovanej testovacej NetBox inštancii:
+Aktuálna verzia rieši prvú základnú časť tejto automatizácie:
 
 ```text
-missing = 0
-drift   = 0
-```
-
-Bootstrap bol testovaný proti:
-
-```text
-NetBox 4.7.1
-NetBox Docker 5.1.1
+NetBox deployment
+        +
+Atlas NetBox bootstrap
 ```

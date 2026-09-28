@@ -64,6 +64,7 @@ jobs:
               Path("catalog/manifest.yaml"),
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
+              Path("deployment/netbox.yaml"),
           ]
 
           for path in files:
