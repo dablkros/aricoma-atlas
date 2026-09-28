@@ -1271,20 +1271,16 @@ def main():
     )
 
     # -----------------------------------------------------------------------
-    # Always run complete dry-run first.
-    # -----------------------------------------------------------------------
-
-    run_preflight(
-        python,
-        args.batch_size,
-        args.verbose,
-    )
-
-    # -----------------------------------------------------------------------
-    # Dry-run ends here.
+    # Dry-run / preflight mode
     # -----------------------------------------------------------------------
 
     if not args.apply:
+        run_preflight(
+            python,
+            args.batch_size,
+            args.verbose,
+        )
+
         print_header(
             "DRY-RUN COMPLETE"
         )
@@ -1310,6 +1306,14 @@ def main():
         )
 
         return
+
+    # -----------------------------------------------------------------------
+    # Apply mode starts here.
+    #
+    # The provisioners perform their own validation before making changes.
+    # A complete remote dry-run before APPLY would duplicate the same
+    # expensive NetBox API scan. Final verification remains enabled below.
+    # -----------------------------------------------------------------------
 
     # -----------------------------------------------------------------------
     # Apply baseline

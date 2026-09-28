@@ -1,0 +1,18 @@
+netbox:
+  version: "4.7.1"
+  docker_image: "docker.io/netboxcommunity/netbox:v4.7.1-5.1.1"
+
+netbox_docker:
+  repository: "https://github.com/netbox-community/netbox-docker.git"
+  ref: "5.1.1"
+
+runtime:
+  directory: ".runtime/netbox-docker"
+  compose_project: "atlas-netbox"
+
+network:
+  listen_address: "0.0.0.0"
+  port: 8001
+
+bootstrap:
+  superuser_name: "admin"
