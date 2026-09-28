@@ -1,0 +1,62 @@
+catalog:
+  name: "Atlas Device Catalog"
+  version: "0.1.0-beta"
+  stage: "beta"
+
+netbox:
+  tested_version: "4.7.1"
+  distribution: "Docker-5.1.1"
+
+upstream:
+  repository: "https://github.com/netbox-community/devicetype-library.git"
+  commit: "517549215455824be5e3b89965353fd2210cc20c"
+
+vendors:
+
+  Cisco:
+
+    small_business:
+      mode: patterns
+      include:
+        - "CBS*.yaml"
+        - "SF*.yaml"
+        - "SG*.yaml"
+        - "SX*.yaml"
+        - "RV*.yaml"
+
+    enterprise:
+      mode: patterns
+      include:
+        - "WS-C2960X-*.yaml"
+        - "WS-C2960XR-*.yaml"
+        - "WS-C3650-*.yaml"
+        - "WS-C3850-*.yaml"
+
+        - "C9200-*.yaml"
+        - "C9200L-*.yaml"
+        - "C9200CX-*.yaml"
+        - "Catalyst-9200CX-*.yaml"
+
+        - "C9300-*.yaml"
+        - "C9300L-*.yaml"
+        - "C9300LM-*.yaml"
+        - "C9300X-*.yaml"
+
+        - "C9500-*.yaml"
+        - "C9500X-*.yaml"
+        - "Catalyst-9500X-*.yaml"
+
+        - "ISR4*.yaml"
+        - "C8200-*.yaml"
+        - "C8300-*.yaml"
+
+  Fortinet:
+    mode: all
+    include:
+      - "*.yaml"
+
+
+  Juniper:
+    mode: all
+    include:
+      - "*.yaml"

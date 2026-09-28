@@ -1,0 +1,15 @@
+choice_sets:
+  - name: "Profylaxia checks"
+    description: "options for profylaxia"
+    base_choices: null
+    extra_choices:
+      - ["CPU utilization", "CPU utilization"]
+      - ["Memory utilization", "Memory utilization"]
+      - ["Interface utilization", "Interface utilization"]
+      - ["interface errors", "interface errors"]
+      - ["Routing table", "Routing table"]
+      - ["Routing protocol neighbors", "Routing protocol neighbors"]
+      - ["HA status", "HA status"]
+      - ["Temperature", "Temperature"]
+    choice_colors: {}
+    order_alphabetically: false

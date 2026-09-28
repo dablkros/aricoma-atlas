@@ -1,0 +1,97 @@
+custom_fields:
+  - name: "checkmk_enabled"
+    object_types:
+      - "dcim.device"
+    type: "boolean"
+    label: "CheckMK"
+    group_name: "Monitoring"
+    description: "Device is monitored by CheckMK"
+    required: false
+    unique: false
+    search_weight: 1000
+    filter_logic: "exact"
+    ui_visible: "always"
+    ui_editable: "yes"
+    is_cloneable: false
+    nulls_first: true
+    default: false
+    weight: 100
+    validation_minimum: null
+    validation_maximum: null
+    validation_regex: ""
+    validation_schema: null
+    related_object_filter: null
+    comments: ""
+
+  - name: "oxidized_enabled"
+    object_types:
+      - "dcim.device"
+    type: "boolean"
+    label: "Oxidized"
+    group_name: "backuping"
+    description: "automatic backup configuration"
+    required: false
+    unique: false
+    search_weight: 1000
+    filter_logic: "exact"
+    ui_visible: "always"
+    ui_editable: "yes"
+    is_cloneable: false
+    nulls_first: true
+    default: false
+    weight: 100
+    validation_minimum: null
+    validation_maximum: null
+    validation_regex: ""
+    validation_schema: null
+    related_object_filter: null
+    comments: ""
+
+  - name: "profylaxia_enabled"
+    object_types:
+      - "dcim.device"
+    type: "boolean"
+    label: "Profylaxia"
+    group_name: "Profylaxia"
+    description: "do profylaxia on this device"
+    required: false
+    unique: false
+    search_weight: 1000
+    filter_logic: "exact"
+    ui_visible: "always"
+    ui_editable: "yes"
+    is_cloneable: false
+    nulls_first: true
+    default: false
+    weight: 100
+    validation_minimum: null
+    validation_maximum: null
+    validation_regex: ""
+    validation_schema: null
+    related_object_filter: null
+    comments: ""
+
+  - name: "profylaxia_checks"
+    object_types:
+      - "dcim.device"
+    type: "multiselect"
+    label: ""
+    group_name: "Profylaxia"
+    description: "choices for profylaxia"
+    required: false
+    unique: false
+    search_weight: 1000
+    filter_logic: "loose"
+    ui_visible: "always"
+    ui_editable: "yes"
+    is_cloneable: false
+    nulls_first: true
+    default: null
+    weight: 100
+    validation_minimum: null
+    validation_maximum: null
+    validation_regex: ""
+    validation_schema: null
+    related_object_filter: null
+    choice_set: "Profylaxia checks"
+    comments: ""

@@ -1,0 +1,215 @@
+name: Validate Atlas NetBox Bootstrap
+
+on:
+  push:
+    branches:
+      - main
+
+  pull_request:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    name: Validate bootstrap and catalog
+    runs-on: ubuntu-latest
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Repository
+      # ---------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ---------------------------------------------------------------------
+      # Python
+      # ---------------------------------------------------------------------
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      # ---------------------------------------------------------------------
+      # Python syntax
+      # ---------------------------------------------------------------------
+
+      - name: Validate Python syntax
+        run: |
+          python -m py_compile scripts/*.py
+
+      # ---------------------------------------------------------------------
+      # Atlas configuration files
+      # ---------------------------------------------------------------------
+
+      - name: Validate Atlas YAML files
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          import yaml
+
+          files = [
+              Path("catalog/manifest.yaml"),
+              Path("catalog/baseline/custom_field_choice_sets.yaml"),
+              Path("catalog/baseline/custom_fields.yaml"),
+          ]
+
+          for path in files:
+              if not path.exists():
+                  raise SystemExit(
+                      f"[ERROR] Missing required file: {path}"
+                  )
+
+              with path.open(
+                  "r",
+                  encoding="utf-8",
+              ) as handle:
+                  data = yaml.safe_load(handle)
+
+              if not isinstance(data, dict):
+                  raise SystemExit(
+                      f"[ERROR] Invalid YAML root in {path}"
+                  )
+
+              print(f"[OK] {path}")
+
+          print("[OK] Atlas YAML validation completed")
+          PY
+
+      # ---------------------------------------------------------------------
+      # Upstream Device Type Library
+      # ---------------------------------------------------------------------
+
+      - name: Read pinned upstream configuration
+        id: upstream
+        run: |
+          python - <<'PY' >> "$GITHUB_OUTPUT"
+          import yaml
+
+          with open(
+              "catalog/manifest.yaml",
+              "r",
+              encoding="utf-8",
+          ) as handle:
+              manifest = yaml.safe_load(handle)
+
+          upstream = manifest["upstream"]
+
+          repository = upstream["repository"]
+          commit = upstream["commit"]
+
+          print(f"repository={repository}")
+          print(f"commit={commit}")
+          PY
+
+      - name: Clone pinned Device Type Library
+        env:
+          UPSTREAM_REPOSITORY: ${{ steps.upstream.outputs.repository }}
+          UPSTREAM_COMMIT: ${{ steps.upstream.outputs.commit }}
+        run: |
+          echo "Repository: ${UPSTREAM_REPOSITORY}"
+          echo "Commit:     ${UPSTREAM_COMMIT}"
+
+          git clone \
+            "${UPSTREAM_REPOSITORY}" \
+            devicetype-library
+
+          git -C devicetype-library \
+            checkout \
+            "${UPSTREAM_COMMIT}"
+
+          ACTUAL_COMMIT="$(
+            git -C devicetype-library rev-parse HEAD
+          )"
+
+          if [ "${ACTUAL_COMMIT}" != "${UPSTREAM_COMMIT}" ]; then
+            echo "[ERROR] Upstream commit mismatch"
+            echo "Expected: ${UPSTREAM_COMMIT}"
+            echo "Actual:   ${ACTUAL_COMMIT}"
+            exit 1
+          fi
+
+          echo "[OK] Pinned upstream commit verified"
+
+      # ---------------------------------------------------------------------
+      # Atlas Device Catalog
+      # ---------------------------------------------------------------------
+
+      - name: Build Atlas Device Catalog
+        run: |
+          python scripts/build_catalog.py
+
+      - name: Audit Atlas Device Catalog
+        run: |
+          python scripts/audit_catalog.py
+
+      - name: Audit component fields
+        run: |
+          python scripts/audit_component_fields.py
+
+      # ---------------------------------------------------------------------
+      # Build result
+      # ---------------------------------------------------------------------
+
+      - name: Verify generated catalog
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+
+          root = Path("build/device-types")
+
+          if not root.exists():
+              raise SystemExit(
+                  "[ERROR] build/device-types does not exist"
+              )
+
+          files = list(
+              root.glob("*/*.yaml")
+          )
+
+          if not files:
+              raise SystemExit(
+                  "[ERROR] Generated catalog is empty"
+              )
+
+          vendors = {}
+
+          for path in files:
+              vendor = path.parent.name
+
+              vendors[vendor] = (
+                  vendors.get(vendor, 0)
+                  + 1
+              )
+
+          print()
+          print("Generated Atlas Device Catalog")
+          print("=" * 50)
+
+          for vendor in sorted(vendors):
+              print(
+                  f"{vendor:<20}"
+                  f"{vendors[vendor]:>6}"
+              )
+
+          print("-" * 50)
+          print(
+              f"{'TOTAL':<20}"
+              f"{len(files):>6}"
+          )
+
+          print()
+          print("[OK] Generated catalog verified")
+          PY
