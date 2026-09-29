@@ -461,16 +461,61 @@ jobs:
       - name: Verify NetBox API
         run: |
           python3 - <<'PY'
+          from pathlib import Path
+
           import requests
 
+          from atlas.openbao_client import OpenBaoClient
+
+          identity_file = Path(
+              ".runtime/openbao-approle.json"
+          )
+
+          if not identity_file.exists():
+              raise SystemExit(
+                  "[ERROR] Atlas OpenBao identity not found"
+              )
+
+          client = OpenBaoClient(
+              "http://127.0.0.1:18200"
+          )
+
+          openbao_token = client.login_from_identity(
+              identity_file
+          )
+
+          secret = client.kv_read(
+              openbao_token,
+              "netbox/api",
+          )
+
+          netbox_token = secret.get("token")
+
+          if not netbox_token:
+              raise SystemExit(
+                  "[ERROR] NetBox API token not found in OpenBao"
+              )
+
+          if netbox_token.startswith("nbt_"):
+              authorization = f"Bearer {netbox_token}"
+          else:
+              authorization = f"Token {netbox_token}"
+
           response = requests.get(
-              "http://127.0.0.1:8000/api/",
+              (
+                  "http://127.0.0.1:8000"
+                  "/api/users/users/?limit=1"
+              ),
+              headers={
+                  "Authorization": authorization,
+                  "Accept": "application/json",
+              },
               timeout=15,
           )
 
           if response.status_code != 200:
               raise SystemExit(
-                  "[ERROR] NetBox API returned "
+                  "[ERROR] Authenticated NetBox API request returned "
                   f"HTTP {response.status_code}: {response.text}"
               )
 
@@ -478,10 +523,11 @@ jobs:
 
           if not isinstance(data, dict):
               raise SystemExit(
-                  "[ERROR] NetBox API root returned invalid JSON"
+                  "[ERROR] NetBox API returned invalid JSON"
               )
 
-          print("[OK] NetBox API reachable")
+          print("[OK] NetBox API authentication successful")
+          print("[OK] NetBox API token from OpenBao verified")
           PY
 
       # ---------------------------------------------------------------------
