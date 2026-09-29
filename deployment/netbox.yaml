@@ -12,7 +12,7 @@ runtime:
 
 network:
   listen_address: "0.0.0.0"
-  port: 8001
+  port: 8000
 
 bootstrap:
   superuser_name: "admin"

@@ -207,7 +207,7 @@ runtime:
 
 network:
   listen_address: "0.0.0.0"
-  port: 8001
+  port: 8000
 
 bootstrap:
   superuser_name: "admin"
@@ -229,15 +229,7 @@ Používa sa konkrétna verzia Docker image namiesto pohyblivého `latest` tagu.
 
 Cieľom je, aby rovnaký Atlas release používal vždy rovnakú kombináciu NetBoxu a NetBox Docker support files.
 
-Port `8001` sa aktuálne používa v development prostredí, aby Atlas NetBox mohol bežať paralelne s inou NetBox inštanciou na porte `8000`.
-
-Pre samostatné nasadenie je možné port upraviť v:
-
-```text
-deployment/netbox.yaml
-```
-
----
+--
 
 # Izolácia Docker Compose projektu
 
@@ -398,7 +390,7 @@ Pri úspešnom deploymente sa zobrazí napríklad:
 ```text
 NETBOX DOCKER READY
 ==============================================================================
-URL:      http://127.0.0.1:8001
+URL:      http://127.0.0.1:8000
 Username: admin
 ```
 
