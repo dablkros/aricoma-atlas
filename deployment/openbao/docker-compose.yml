@@ -1,0 +1,33 @@
+services:
+  openbao:
+    image: openbao/openbao:2.7.0
+    container_name: atlas-openbao
+
+    command:
+      - server
+
+    restart: unless-stopped
+
+    environment:
+      BAO_ADDR: http://127.0.0.1:8200
+
+    ports:
+      - "127.0.0.1:18200:8200"
+
+    volumes:
+      - ./openbao.hcl:/openbao/config/openbao.hcl:ro
+      - atlas_openbao_data:/openbao/file
+
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          "bao status -address=http://127.0.0.1:8200 >/dev/null 2>&1; rc=$$?; [ $$rc -eq 0 ] || [ $$rc -eq 2 ]"
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  atlas_openbao_data:
+    name: atlas-openbao-data

@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 
 import argparse
-import json
 import os
 import secrets
 import subprocess
@@ -15,17 +14,36 @@ import requests
 
 ROOT = Path(__file__).resolve().parent.parent
 
+if str(ROOT) not in sys.path:
+    sys.path.insert(
+        0,
+        str(ROOT),
+    )
+
+from atlas.openbao_client import (  # noqa: E402
+    OpenBaoClient,
+    OpenBaoError,
+)
+
+
 CONFIG_FILE = (
     ROOT
     / "deployment"
     / "netbox.yaml"
 )
 
-STATE_FILE = (
+OPENBAO_IDENTITY_FILE = (
     ROOT
     / ".runtime"
-    / "atlas-netbox-state.json"
+    / "openbao-approle.json"
 )
+
+OPENBAO_URL = os.environ.get(
+    "OPENBAO_URL",
+    "http://127.0.0.1:18200",
+)
+
+COMPOSE_SECRET_ENV = {}
 
 
 # ===========================================================================
@@ -206,6 +224,14 @@ def load_config():
             "compose_project",
         ),
         (
+            "runtime",
+            "startup_timeout",
+        ),
+        (
+            "runtime",
+            "poll_interval",
+        ),
+        (
             "network",
             "listen_address",
         ),
@@ -229,6 +255,45 @@ def load_config():
                 f"Missing configuration: "
                 f"{section}.{key}"
             )
+
+    try:
+        startup_timeout = int(
+            config[
+                "runtime"
+            ][
+                "startup_timeout"
+            ]
+        )
+
+        poll_interval = int(
+            config[
+                "runtime"
+            ][
+                "poll_interval"
+            ]
+        )
+
+    except (
+        TypeError,
+        ValueError,
+    ) as exc:
+        raise RuntimeError(
+            "runtime.startup_timeout and "
+            "runtime.poll_interval must "
+            "be integers"
+        ) from exc
+
+    if startup_timeout < 30:
+        raise RuntimeError(
+            "runtime.startup_timeout "
+            "must be at least 30 seconds"
+        )
+
+    if poll_interval < 1:
+        raise RuntimeError(
+            "runtime.poll_interval "
+            "must be at least 1 second"
+        )
 
     repository = config[
         "netbox_docker"
@@ -517,7 +582,7 @@ def prepare_netbox_docker(
 
 
 # ===========================================================================
-# Runtime secrets
+# OpenBao-backed NetBox secrets
 # ===========================================================================
 
 def generate_secret(
@@ -528,107 +593,327 @@ def generate_secret(
     )
 
 
-def load_or_create_state(
-    config,
-):
-    STATE_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+def connect_openbao():
+    header(
+        "OPENBAO SECRETS"
     )
 
-    created = False
+    client = OpenBaoClient(
+        OPENBAO_URL
+    )
 
-    if STATE_FILE.exists():
-        with STATE_FILE.open(
-            "r",
-            encoding="utf-8",
-        ) as handle:
-            state = json.load(
-                handle
-            )
+    try:
+        status = client.seal_status()
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Unable to contact OpenBao: "
+            f"{exc}"
+        ) from exc
 
-        if not isinstance(
-            state,
-            dict,
-        ):
-            raise RuntimeError(
-                "Runtime state file "
-                "is invalid"
-            )
+    if not status.get(
+        "initialized"
+    ):
+        raise RuntimeError(
+            "OpenBao is not initialized"
+        )
 
-    else:
-        state = {}
-        created = True
+    if status.get(
+        "sealed"
+    ):
+        raise RuntimeError(
+            "OpenBao is sealed. Run the "
+            "OpenBao deploy/unseal flow first."
+        )
 
-    defaults = {
-        "postgres_password":
-            generate_secret(32),
+    if not OPENBAO_IDENTITY_FILE.exists():
+        raise RuntimeError(
+            "OpenBao Atlas deployer identity "
+            "not found: "
+            f"{OPENBAO_IDENTITY_FILE}"
+        )
 
-        "redis_password":
-            generate_secret(32),
+    try:
+        token = client.login_from_identity(
+            OPENBAO_IDENTITY_FILE
+        )
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Unable to authenticate to OpenBao "
+            "using the Atlas deployer identity: "
+            f"{exc}"
+        ) from exc
 
-        "redis_cache_password":
-            generate_secret(32),
+    ok(
+        "OpenBao atlas-deployer "
+        "authentication successful"
+    )
 
-        "netbox_secret_key":
-            generate_secret(64),
+    return (
+        client,
+        token,
+    )
 
-        "api_token_pepper":
-            generate_secret(48),
 
-        "superuser_password":
-            generate_secret(24),
-    }
+def openbao_read_optional(
+    client,
+    token,
+    path,
+):
+    try:
+        return client.kv_read(
+            token,
+            path,
+        )
+
+    except OpenBaoError as exc:
+        # OpenBaoClient currently raises on a missing
+        # KV v2 path. Treat only HTTP 404 as "absent";
+        # all authentication/policy/server errors remain
+        # fatal.
+        if "HTTP 404" in str(exc):
+            return None
+
+        raise RuntimeError(
+            f"Unable to read OpenBao secret "
+            f"atlas/{path}: {exc}"
+        ) from exc
+
+
+def ensure_secret_path(
+    client,
+    token,
+    path,
+    defaults,
+):
+    data = openbao_read_optional(
+        client,
+        token,
+        path,
+    )
+
+    created = data is None
+
+    if data is None:
+        data = {}
+
+    if not isinstance(
+        data,
+        dict,
+    ):
+        raise RuntimeError(
+            f"OpenBao secret atlas/{path} "
+            "does not contain an object"
+        )
 
     changed = False
 
-    for key, value in (
-        defaults.items()
-    ):
-        if key not in state:
-            state[key] = value
-            changed = True
+    for key, default in defaults.items():
+        if data.get(key):
+            continue
 
-    state[
-        "superuser_name"
-    ] = config[
+        value = (
+            default()
+            if callable(default)
+            else default
+        )
+
+        if value is None:
+            raise RuntimeError(
+                f"Unable to determine value for "
+                f"atlas/{path}:{key}"
+            )
+
+        data[key] = value
+        changed = True
+
+    if changed:
+        try:
+            client.kv_write(
+                token,
+                path,
+                data,
+            )
+        except OpenBaoError as exc:
+            raise RuntimeError(
+                f"Unable to write OpenBao secret "
+                f"atlas/{path}: {exc}"
+            ) from exc
+
+        if created:
+            ok(
+                f"Created OpenBao secret: "
+                f"atlas/{path}"
+            )
+        else:
+            ok(
+                f"Completed OpenBao secret: "
+                f"atlas/{path}"
+            )
+
+    else:
+        ok(
+            f"OpenBao secret exists: "
+            f"atlas/{path}"
+        )
+
+    return data
+
+
+def load_or_create_netbox_secrets(
+    config,
+    client,
+    token,
+):
+    header(
+        "NETBOX SECRETS"
+    )
+
+    postgres = ensure_secret_path(
+        client,
+        token,
+        "netbox/postgres",
+        {
+            "password":
+                (lambda: generate_secret(32)),
+        },
+    )
+
+    redis = ensure_secret_path(
+        client,
+        token,
+        "netbox/redis",
+        {
+            "password":
+                (lambda: generate_secret(32)),
+        },
+    )
+
+    redis_cache = ensure_secret_path(
+        client,
+        token,
+        "netbox/redis-cache",
+        {
+            "password":
+                (lambda: generate_secret(32)),
+        },
+    )
+
+    application = ensure_secret_path(
+        client,
+        token,
+        "netbox/application",
+        {
+            "secret_key":
+                (lambda: generate_secret(64)),
+            "api_token_pepper":
+                (lambda: generate_secret(48)),
+        },
+    )
+
+    configured_admin_name = config[
         "bootstrap"
     ][
         "superuser_name"
     ]
 
+    admin = ensure_secret_path(
+        client,
+        token,
+        "netbox/admin",
+        {
+            "username": configured_admin_name,
+            "password":
+                (lambda: generate_secret(24)),
+        },
+    )
+
     if (
-        created
-        or
-        changed
+        admin["username"]
+        != configured_admin_name
     ):
-        with STATE_FILE.open(
-            "w",
-            encoding="utf-8",
-        ) as handle:
-            json.dump(
-                state,
-                handle,
-                indent=2,
-            )
-
-            handle.write("\n")
-
-        os.chmod(
-            STATE_FILE,
-            0o600,
+        info(
+            "OpenBao already contains NetBox "
+            "admin username "
+            f"'{admin['username']}'. "
+            "Keeping the stored value instead "
+            "of changing an existing deployment."
         )
 
+    state = {
+        "postgres_password":
+            postgres["password"],
+        "redis_password":
+            redis["password"],
+        "redis_cache_password":
+            redis_cache["password"],
+        "netbox_secret_key":
+            application["secret_key"],
+        "api_token_pepper":
+            application["api_token_pepper"],
+        "superuser_name":
+            admin["username"],
+        "superuser_password":
+            admin["password"],
+    }
+
+    api = openbao_read_optional(
+        client,
+        token,
+        "netbox/api",
+    )
+
+    if (
+        api
+        and
+        api.get("token")
+    ):
+        state["netbox_api_token"] = api["token"]
+
     ok(
-        f"Runtime secrets: "
-        f"{STATE_FILE.relative_to(ROOT)}"
+        "NetBox credentials loaded "
+        "from OpenBao"
     )
 
-    return (
-        state,
-        created,
-    )
+    return state
 
+
+def configure_compose_secret_env(
+    state,
+):
+    COMPOSE_SECRET_ENV.clear()
+
+    COMPOSE_SECRET_ENV.update(
+        {
+            "ATLAS_NETBOX_POSTGRES_PASSWORD":
+                state[
+                    "postgres_password"
+                ],
+            "ATLAS_NETBOX_REDIS_PASSWORD":
+                state[
+                    "redis_password"
+                ],
+            "ATLAS_NETBOX_REDIS_CACHE_PASSWORD":
+                state[
+                    "redis_cache_password"
+                ],
+            "ATLAS_NETBOX_SECRET_KEY":
+                state[
+                    "netbox_secret_key"
+                ],
+            "ATLAS_NETBOX_API_TOKEN_PEPPER":
+                state[
+                    "api_token_pepper"
+                ],
+            "ATLAS_NETBOX_SUPERUSER_NAME":
+                state[
+                    "superuser_name"
+                ],
+            "ATLAS_NETBOX_SUPERUSER_PASSWORD":
+                state[
+                    "superuser_password"
+                ],
+        }
+    )
 
 # ===========================================================================
 # Docker Compose override
@@ -661,74 +946,40 @@ def write_compose_override(
         ]
     )
 
+    # Secrets are deliberately NOT written into this
+    # generated Compose file. Docker Compose resolves
+    # these placeholders from the deploy process
+    # environment prepared by configure_compose_secret_env().
     netbox_environment = {
         "DB_PASSWORD":
-            state[
-                "postgres_password"
-            ],
-
+            "${ATLAS_NETBOX_POSTGRES_PASSWORD}",
         "REDIS_PASSWORD":
-            state[
-                "redis_password"
-            ],
-
+            "${ATLAS_NETBOX_REDIS_PASSWORD}",
         "REDIS_CACHE_PASSWORD":
-            state[
-                "redis_cache_password"
-            ],
-
+            "${ATLAS_NETBOX_REDIS_CACHE_PASSWORD}",
         "SECRET_KEY":
-            state[
-                "netbox_secret_key"
-            ],
-
+            "${ATLAS_NETBOX_SECRET_KEY}",
         "API_TOKEN_PEPPER_1":
-            state[
-                "api_token_pepper"
-            ],
-
+            "${ATLAS_NETBOX_API_TOKEN_PEPPER}",
         "SKIP_SUPERUSER":
             "false",
-
         "SUPERUSER_NAME":
-            state[
-                "superuser_name"
-            ],
-
+            "${ATLAS_NETBOX_SUPERUSER_NAME}",
         "SUPERUSER_PASSWORD":
-            state[
-                "superuser_password"
-            ],
+            "${ATLAS_NETBOX_SUPERUSER_PASSWORD}",
     }
 
     worker_environment = {
         "DB_PASSWORD":
-            state[
-                "postgres_password"
-            ],
-
+            "${ATLAS_NETBOX_POSTGRES_PASSWORD}",
         "REDIS_PASSWORD":
-            state[
-                "redis_password"
-            ],
-
+            "${ATLAS_NETBOX_REDIS_PASSWORD}",
         "REDIS_CACHE_PASSWORD":
-            state[
-                "redis_cache_password"
-            ],
-
+            "${ATLAS_NETBOX_REDIS_CACHE_PASSWORD}",
         "SECRET_KEY":
-            state[
-                "netbox_secret_key"
-            ],
-
+            "${ATLAS_NETBOX_SECRET_KEY}",
         "API_TOKEN_PEPPER_1":
-            state[
-                "api_token_pepper"
-            ],
-
-        # Worker must not try to create
-        # the same superuser.
+            "${ATLAS_NETBOX_API_TOKEN_PEPPER}",
         "SKIP_SUPERUSER":
             "true",
     }
@@ -737,69 +988,50 @@ def write_compose_override(
         "services": {
             "netbox": {
                 "image": image,
-
                 "restart":
                     "unless-stopped",
-
                 "ports": [
                     (
                         f"{listen_address}:"
                         f"{port}:8080"
                     )
                 ],
-
                 "environment":
                     netbox_environment,
-
                 "healthcheck": {
                     "start_period":
                         "180s",
                 },
             },
-
             "netbox-worker": {
                 "image": image,
-
                 "restart":
                     "unless-stopped",
-
                 "environment":
                     worker_environment,
             },
-
             "postgres": {
                 "restart":
                     "unless-stopped",
-
                 "environment": {
                     "POSTGRES_PASSWORD":
-                        state[
-                            "postgres_password"
-                        ],
+                        "${ATLAS_NETBOX_POSTGRES_PASSWORD}",
                 },
             },
-
             "redis": {
                 "restart":
                     "unless-stopped",
-
                 "environment": {
                     "REDIS_PASSWORD":
-                        state[
-                            "redis_password"
-                        ],
+                        "${ATLAS_NETBOX_REDIS_PASSWORD}",
                 },
             },
-
             "redis-cache": {
                 "restart":
                     "unless-stopped",
-
                 "environment": {
                     "REDIS_PASSWORD":
-                        state[
-                            "redis_cache_password"
-                        ],
+                        "${ATLAS_NETBOX_REDIS_CACHE_PASSWORD}",
                 },
             },
         },
@@ -814,7 +1046,6 @@ def write_compose_override(
         "w",
         encoding="utf-8",
     ) as handle:
-
         yaml.safe_dump(
             override,
             handle,
@@ -822,9 +1053,14 @@ def write_compose_override(
             default_flow_style=False,
         )
 
+    os.chmod(
+        override_file,
+        0o600,
+    )
+
     ok(
-        f"Generated "
-        f"{override_file}"
+        f"Generated {override_file} "
+        "without plaintext secrets"
     )
 
     return override_file
@@ -840,6 +1076,11 @@ def compose(
     capture=False,
     check=True,
 ):
+    env = os.environ.copy()
+    env.update(
+        COMPOSE_SECRET_ENV
+    )
+
     return run(
         [
             "docker",
@@ -849,6 +1090,7 @@ def compose(
         cwd=runtime_dir,
         capture=capture,
         check=check,
+        env=env,
     )
 
 
@@ -871,11 +1113,11 @@ def pull_images(
     )
 
 
-def start_stack(
+def start_netbox_core(
     runtime_dir,
 ):
     header(
-        "START NETBOX"
+        "START NETBOX CORE"
     )
 
     compose(
@@ -883,11 +1125,36 @@ def start_stack(
         [
             "up",
             "-d",
+            "postgres",
+            "redis",
+            "redis-cache",
+            "netbox",
         ],
     )
 
     ok(
-        "Docker Compose stack started"
+        "NetBox core services started"
+    )
+
+
+def start_netbox_worker(
+    runtime_dir,
+):
+    header(
+        "START NETBOX WORKER"
+    )
+
+    compose(
+        runtime_dir,
+        [
+            "up",
+            "-d",
+            "netbox-worker",
+        ],
+    )
+
+    ok(
+        "NetBox worker started"
     )
 
 
@@ -907,6 +1174,27 @@ def get_netbox_container_id(
         ],
         capture=True,
     )
+
+    return result.stdout.strip()
+
+
+def container_state(
+    container_id,
+):
+    result = run(
+        [
+            "docker",
+            "inspect",
+            "--format",
+            "{{.State.Status}}",
+            container_id,
+        ],
+        capture=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        return "unknown"
 
     return result.stdout.strip()
 
@@ -934,7 +1222,8 @@ def container_health(
 
 def wait_for_netbox(
     runtime_dir,
-    timeout=360,
+    timeout,
+    poll_interval,
 ):
     header(
         "WAIT FOR NETBOX"
@@ -942,51 +1231,102 @@ def wait_for_netbox(
 
     start = time.time()
 
-    last_status = None
+    last_health = None
+    last_state = None
 
     while True:
+        elapsed = int(
+            time.time() - start
+        )
+
         container_id = (
             get_netbox_container_id(
                 runtime_dir
             )
         )
 
-        if container_id:
-            status = (
+        if not container_id:
+            state = "container-not-found"
+            health = "unknown"
+
+        else:
+            state = (
+                container_state(
+                    container_id
+                )
+            )
+
+            health = (
                 container_health(
                     container_id
                 )
             )
 
-        else:
-            status = (
-                "container-not-found"
+        if state != last_state:
+            info(
+                f"NetBox state: "
+                f"{state}"
             )
 
-        if status != last_status:
+            last_state = state
+
+        if health != last_health:
             info(
                 f"NetBox health: "
-                f"{status}"
+                f"{health}"
             )
 
-            last_status = status
+            last_health = health
 
-        if status == "healthy":
+        if (
+            state == "running"
+            and
+            health == "healthy"
+        ):
             ok(
-                "NetBox container is healthy"
+                f"NetBox is healthy "
+                f"after {elapsed}s"
             )
 
             return
 
-        if (
-            time.time()
-            - start
-            > timeout
-        ):
+        if state in {
+            "exited",
+            "dead",
+        }:
+            print()
+            print(
+                "[ERROR] NetBox container "
+                f"entered state: {state}"
+            )
+
+            print()
+            print(
+                "Recent NetBox logs:"
+            )
+
+            compose(
+                runtime_dir,
+                [
+                    "logs",
+                    "--tail",
+                    "100",
+                    "netbox",
+                ],
+                check=False,
+            )
+
+            raise RuntimeError(
+                "NetBox container stopped "
+                "during startup"
+            )
+
+        if elapsed > timeout:
             print()
             print(
                 "[ERROR] NetBox did not "
-                "become healthy"
+                f"become healthy within "
+                f"{timeout} seconds"
             )
 
             print()
@@ -1023,36 +1363,14 @@ def wait_for_netbox(
                 "for NetBox"
             )
 
-        time.sleep(5)
+        time.sleep(
+            poll_interval
+        )
 
 
 # ===========================================================================
 # NetBox API bootstrap
 # ===========================================================================
-
-def save_state(state):
-    STATE_FILE.parent.mkdir(
-        parents=True,
-        exist_ok=True,
-    )
-
-    with STATE_FILE.open(
-        "w",
-        encoding="utf-8",
-    ) as handle:
-        json.dump(
-            state,
-            handle,
-            indent=2,
-        )
-
-        handle.write("\n")
-
-    os.chmod(
-        STATE_FILE,
-        0o600,
-    )
-
 
 def get_netbox_url(config):
     address = str(
@@ -1095,7 +1413,6 @@ def token_headers(token):
     return {
         "Authorization":
             authorization,
-
         "Accept":
             "application/json",
     }
@@ -1130,6 +1447,8 @@ def validate_api_token(
 def provision_api_token(
     config,
     state,
+    openbao_client,
+    openbao_token,
 ):
     header(
         "NETBOX API TOKEN"
@@ -1141,16 +1460,23 @@ def provision_api_token(
         )
     )
 
-    existing_token = (
-        state.get(
-            "netbox_api_token"
-        )
+    api_secret = openbao_read_optional(
+        openbao_client,
+        openbao_token,
+        "netbox/api",
     )
+
+    existing_token = None
+
+    if api_secret:
+        existing_token = api_secret.get(
+            "token"
+        )
 
     if existing_token:
         info(
-            "Validating stored "
-            "NetBox API token"
+            "Validating NetBox API token "
+            "stored in OpenBao"
         )
 
         if validate_api_token(
@@ -1158,16 +1484,15 @@ def provision_api_token(
             existing_token,
         ):
             ok(
-                "Stored NetBox API "
-                "token is valid"
+                "Stored NetBox API token "
+                "is valid"
             )
 
             return existing_token
 
         info(
-            "Stored API token is "
-            "no longer valid; "
-            "provisioning a new one"
+            "Stored API token is no longer "
+            "valid; provisioning a new one"
         )
 
     endpoint = (
@@ -1180,7 +1505,6 @@ def provision_api_token(
             state[
                 "superuser_name"
             ],
-
         "password":
             state[
                 "superuser_password"
@@ -1188,8 +1512,7 @@ def provision_api_token(
     }
 
     info(
-        "Provisioning NetBox "
-        "API token"
+        "Provisioning NetBox API token"
     )
 
     try:
@@ -1205,51 +1528,40 @@ def provision_api_token(
 
     except requests.RequestException as exc:
         raise RuntimeError(
-            "Unable to contact "
-            "NetBox token "
+            "Unable to contact NetBox token "
             "provisioning endpoint: "
             f"{exc}"
-        )
+        ) from exc
 
     if response.status_code not in {
         200,
         201,
     }:
         raise RuntimeError(
-            "NetBox API token "
-            "provisioning failed "
-            f"with HTTP "
+            "NetBox API token provisioning "
+            f"failed with HTTP "
             f"{response.status_code}: "
             f"{response.text}"
         )
 
     try:
-        token_data = (
-            response.json()
-        )
-
+        token_data = response.json()
     except ValueError as exc:
         raise RuntimeError(
-            "NetBox returned an "
-            "invalid token response"
+            "NetBox returned an invalid "
+            "token response"
         ) from exc
 
-    version = (
-        token_data.get(
-            "version"
-        )
+    version = token_data.get(
+        "version"
     )
 
-    key = (
-        token_data.get(
-            "key"
-        )
+    key = token_data.get(
+        "key"
     )
 
-    plaintext = (
-        token_data.get(
-            "token"
-        )
+    plaintext = token_data.get(
+        "token"
     )
 
     if (
@@ -1263,16 +1575,14 @@ def provision_api_token(
     ):
         if not key:
             raise RuntimeError(
-                "NetBox v2 token "
-                "response does not "
-                "contain a key"
+                "NetBox v2 token response "
+                "does not contain a key"
             )
 
         if not plaintext:
             raise RuntimeError(
-                "NetBox v2 token "
-                "response does not "
-                "contain plaintext"
+                "NetBox v2 token response "
+                "does not contain plaintext"
             )
 
         api_token = (
@@ -1289,10 +1599,8 @@ def provision_api_token(
 
     if not api_token:
         raise RuntimeError(
-            "NetBox API token "
-            "response did not "
-            "contain usable "
-            "credentials"
+            "NetBox API token response did "
+            "not contain usable credentials"
         )
 
     if not validate_api_token(
@@ -1300,26 +1608,37 @@ def provision_api_token(
         api_token,
     ):
         raise RuntimeError(
-            "New NetBox API token "
-            "failed validation"
+            "New NetBox API token failed "
+            "validation"
         )
+
+    try:
+        openbao_client.kv_write(
+            openbao_token,
+            "netbox/api",
+            {
+                "token": api_token,
+            },
+        )
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "NetBox API token was created "
+            "but could not be stored in "
+            f"OpenBao: {exc}"
+        ) from exc
 
     state[
         "netbox_api_token"
     ] = api_token
 
-    save_state(
-        state
+    ok(
+        "NetBox API token provisioned "
+        "and validated"
     )
 
     ok(
-        "NetBox API token "
-        "provisioned and validated"
-    )
-
-    ok(
-        "API token stored in "
-        "gitignored runtime state"
+        "API token stored in OpenBao at "
+        "atlas/netbox/api"
     )
 
     return api_token
@@ -1442,7 +1761,6 @@ def run_atlas_bootstrap(
 def print_result(
     config,
     state,
-    state_created,
 ):
     address = str(
         config[
@@ -1487,33 +1805,13 @@ def print_result(
         f"{state['superuser_name']}"
     )
 
-    if state_created:
-        print()
-        print(
-            "Generated admin password:"
-        )
-
-        print(
-            f"  "
-            f"{state['superuser_password']}"
-        )
-
     print()
     print(
-        "Runtime credentials are stored in:"
+        "Credentials source of truth:"
     )
-
     print(
-        f"  "
-        f"{STATE_FILE}"
+        "  OpenBao KV v2: atlas/netbox/"
     )
-
-    print()
-    print(
-        "The runtime state is gitignored "
-        "and must not be committed."
-    )
-
 
 # ===========================================================================
 # Main
@@ -1567,10 +1865,19 @@ def main():
             )
         )
 
-        state, state_created = (
-            load_or_create_state(
-                config
-            )
+        (
+            openbao_client,
+            openbao_token,
+        ) = connect_openbao()
+
+        state = load_or_create_netbox_secrets(
+            config,
+            openbao_client,
+            openbao_token,
+        )
+
+        configure_compose_secret_env(
+            state
         )
 
         write_compose_override(
@@ -1600,11 +1907,33 @@ def main():
             runtime_dir
         )
 
-        start_stack(
+        start_netbox_core(
             runtime_dir
         )
 
+        startup_timeout = int(
+            config[
+                "runtime"
+            ][
+                "startup_timeout"
+            ]
+        )
+
+        poll_interval = int(
+            config[
+                "runtime"
+            ][
+                "poll_interval"
+            ]
+        )
+
         wait_for_netbox(
+            runtime_dir,
+            timeout=startup_timeout,
+            poll_interval=poll_interval,
+        )
+
+        start_netbox_worker(
             runtime_dir
         )
 
@@ -1612,6 +1941,8 @@ def main():
             provision_api_token(
                 config,
                 state,
+                openbao_client,
+                openbao_token,
             )
         )
 
@@ -1624,7 +1955,6 @@ def main():
         print_result(
             config,
             state,
-            state_created,
         )
 
     except KeyboardInterrupt:

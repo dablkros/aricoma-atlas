@@ -9,6 +9,8 @@ netbox_docker:
 runtime:
   directory: ".runtime/netbox-docker"
   compose_project: "atlas-netbox"
+  startup_timeout: 600
+  poll_interval: 5
 
 network:
   listen_address: "0.0.0.0"

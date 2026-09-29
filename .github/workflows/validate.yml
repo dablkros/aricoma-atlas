@@ -1,4 +1,4 @@
-name: Validate Atlas NetBox Bootstrap
+name: Validate Aricoma Atlas
 
 on:
   push:
@@ -16,7 +16,7 @@ permissions:
 
 jobs:
   validate:
-    name: Validate bootstrap and catalog
+    name: Validate Atlas
     runs-on: ubuntu-latest
 
     steps:
@@ -39,8 +39,8 @@ jobs:
 
       - name: Install Python dependencies
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
 
       # ---------------------------------------------------------------------
       # Python syntax
@@ -48,7 +48,8 @@ jobs:
 
       - name: Validate Python syntax
         run: |
-          python -m py_compile scripts/*.py
+          python3 -m py_compile scripts/*.py
+          python3 -m py_compile atlas/*.py
 
       # ---------------------------------------------------------------------
       # Atlas configuration files
@@ -56,7 +57,7 @@ jobs:
 
       - name: Validate Atlas YAML files
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
           import yaml
 
@@ -90,13 +91,63 @@ jobs:
           PY
 
       # ---------------------------------------------------------------------
+      # OpenBao deployment
+      # ---------------------------------------------------------------------
+
+      - name: Validate OpenBao deployment files
+        run: |
+          required_files=(
+            deployment/openbao/docker-compose.yml
+            deployment/openbao/openbao.hcl
+            deployment/openbao/policies/atlas-deployer.hcl
+            deployment/openbao/policies/atlas-operator.hcl
+            deployment/openbao/policies/device-credentials-read.hcl
+            deployment/openbao/policies/netbox-runtime.hcl
+            deployment/openbao/policies/checkmk-runtime.hcl
+            deployment/openbao/policies/oxidized-runtime.hcl
+          )
+
+          for file in "${required_files[@]}"; do
+            if [ ! -f "${file}" ]; then
+              echo "[ERROR] Missing required file: ${file}"
+              exit 1
+            fi
+
+            echo "[OK] ${file}"
+          done
+
+      - name: Validate OpenBao Docker Compose
+        run: |
+          docker compose \
+            -f deployment/openbao/docker-compose.yml \
+            config \
+            --quiet
+
+          echo "[OK] OpenBao Docker Compose configuration valid"
+
+      - name: Validate OpenBao server configuration
+        run: |
+          OPENBAO_IMAGE="$(docker compose -f deployment/openbao/docker-compose.yml config --images | head -n 1)"
+
+          if [ -z "${OPENBAO_IMAGE}" ]; then
+            echo "[ERROR] Unable to determine OpenBao image"
+            exit 1
+          fi
+
+          echo "OpenBao image: ${OPENBAO_IMAGE}"
+
+          docker run --rm -v "${PWD}/deployment/openbao:/openbao/config:ro" "${OPENBAO_IMAGE}" operator validate-config -config=/openbao/config/openbao.hcl
+
+          echo "[OK] OpenBao server configuration valid"
+
+      # ---------------------------------------------------------------------
       # Upstream Device Type Library
       # ---------------------------------------------------------------------
 
       - name: Read pinned upstream configuration
         id: upstream
         run: |
-          python - <<'PY' >> "$GITHUB_OUTPUT"
+          python3 - <<'PY' >> "$GITHUB_OUTPUT"
           import yaml
 
           with open(
@@ -150,15 +201,15 @@ jobs:
 
       - name: Build Atlas Device Catalog
         run: |
-          python scripts/build_catalog.py
+          python3 scripts/build_catalog.py
 
       - name: Audit Atlas Device Catalog
         run: |
-          python scripts/audit_catalog.py
+          python3 scripts/audit_catalog.py
 
       - name: Audit component fields
         run: |
-          python scripts/audit_component_fields.py
+          python3 scripts/audit_component_fields.py
 
       # ---------------------------------------------------------------------
       # Build result
@@ -166,7 +217,7 @@ jobs:
 
       - name: Verify generated catalog
         run: |
-          python - <<'PY'
+          python3 - <<'PY'
           from pathlib import Path
 
           root = Path("build/device-types")
@@ -214,3 +265,111 @@ jobs:
           print()
           print("[OK] Generated catalog verified")
           PY
+
+  openbao-integration:
+    name: OpenBao integration
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+    timeout-minutes: 10
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Repository
+      # ---------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ---------------------------------------------------------------------
+      # Python
+      # ---------------------------------------------------------------------
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      # ---------------------------------------------------------------------
+      # OpenBao fresh deployment
+      # ---------------------------------------------------------------------
+
+      - name: Deploy fresh OpenBao
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_openbao.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+      # ---------------------------------------------------------------------
+      # OpenBao verification
+      # ---------------------------------------------------------------------
+
+      - name: Verify OpenBao health
+        run: |
+          python3 - <<'PY'
+          import requests
+
+          response = requests.get(
+              "http://127.0.0.1:18200/v1/sys/health",
+              timeout=10,
+          )
+
+          if response.status_code != 200:
+              raise SystemExit(
+                  "[ERROR] OpenBao health endpoint returned "
+                  f"HTTP {response.status_code}: {response.text}"
+              )
+
+          data = response.json()
+
+          if not data.get("initialized"):
+              raise SystemExit(
+                  "[ERROR] OpenBao is not initialized"
+              )
+
+          if data.get("sealed"):
+              raise SystemExit(
+                  "[ERROR] OpenBao is sealed"
+              )
+
+          print("[OK] OpenBao initialized")
+          print("[OK] OpenBao unsealed")
+          print("[OK] OpenBao health endpoint verified")
+          PY
+
+      # ---------------------------------------------------------------------
+      # Idempotency
+      # ---------------------------------------------------------------------
+
+      - name: Verify second OpenBao deployment
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_openbao.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+          echo "[OK] Second OpenBao deployment completed"
+
+      # ---------------------------------------------------------------------
+      # Cleanup
+      # ---------------------------------------------------------------------
+
+      - name: Clean up OpenBao
+        if: always()
+        run: |
+          docker compose \
+            -f deployment/openbao/docker-compose.yml \
+            down \
+            -v \
+            --remove-orphans
