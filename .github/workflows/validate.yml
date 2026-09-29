@@ -599,3 +599,282 @@ jobs:
             -v \
             --remove-orphans \
             || true
+
+  netbox-upgrade-integration:
+    name: NetBox upgrade integration
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+    timeout-minutes: 35
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Repository
+      # ---------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      # ---------------------------------------------------------------------
+      # Deploy BASE version
+      # ---------------------------------------------------------------------
+
+      - name: Checkout PR base
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+        run: |
+          git checkout --detach "${BASE_SHA}"
+
+          echo "BASE commit:"
+          git rev-parse HEAD
+
+      - name: Install BASE dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      - name: Deploy BASE Atlas
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_atlas.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+      # ---------------------------------------------------------------------
+      # Seed persistent NetBox data
+      # ---------------------------------------------------------------------
+
+      - name: Create upgrade test data
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          import requests
+
+          from atlas.openbao_client import OpenBaoClient
+
+          identity_file = Path(
+              ".runtime/openbao-approle.json"
+          )
+
+          client = OpenBaoClient(
+              "http://127.0.0.1:18200"
+          )
+
+          openbao_token = client.login_from_identity(
+              identity_file
+          )
+
+          secret = client.kv_read(
+              openbao_token,
+              "netbox/api",
+          )
+
+          netbox_token = secret["token"]
+
+          if netbox_token.startswith("nbt_"):
+              authorization = f"Bearer {netbox_token}"
+          else:
+              authorization = f"Token {netbox_token}"
+
+          headers = {
+              "Authorization": authorization,
+              "Accept": "application/json",
+              "Content-Type": "application/json",
+          }
+
+          payload = {
+              "name": "CI Upgrade Test",
+              "slug": "ci-upgrade-test",
+              "description": (
+                  "Persistent object created by "
+                  "Aricoma Atlas upgrade CI"
+              ),
+          }
+
+          response = requests.post(
+              "http://127.0.0.1:8000/api/dcim/sites/",
+              headers=headers,
+              json=payload,
+              timeout=30,
+          )
+
+          if response.status_code not in {200, 201}:
+              raise SystemExit(
+                  "[ERROR] Unable to create upgrade test site: "
+                  f"HTTP {response.status_code}: {response.text}"
+              )
+
+          data = response.json()
+
+          if data.get("slug") != "ci-upgrade-test":
+              raise SystemExit(
+                  "[ERROR] Upgrade test site response is invalid"
+              )
+
+          print("[OK] Persistent NetBox test data created")
+          PY
+
+      # ---------------------------------------------------------------------
+      # Switch repository to PR HEAD
+      # ---------------------------------------------------------------------
+
+      - name: Checkout PR head
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          git checkout --detach "${HEAD_SHA}"
+
+          echo "HEAD commit:"
+          git rev-parse HEAD
+
+          if [ ! -d ".runtime" ]; then
+            echo "[ERROR] Atlas runtime disappeared during checkout"
+            exit 1
+          fi
+
+          echo "[OK] Existing Atlas runtime preserved"
+
+      - name: Install HEAD dependencies
+        run: |
+          python3 -m pip install -r requirements.txt
+
+      # ---------------------------------------------------------------------
+      # Upgrade existing Atlas deployment
+      # ---------------------------------------------------------------------
+
+      - name: Upgrade Atlas to PR version
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_atlas.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+      # ---------------------------------------------------------------------
+      # Verify persisted data
+      # ---------------------------------------------------------------------
+
+      - name: Verify data survived upgrade
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+
+          import requests
+
+          from atlas.openbao_client import OpenBaoClient
+
+          identity_file = Path(
+              ".runtime/openbao-approle.json"
+          )
+
+          client = OpenBaoClient(
+              "http://127.0.0.1:18200"
+          )
+
+          openbao_token = client.login_from_identity(
+              identity_file
+          )
+
+          secret = client.kv_read(
+              openbao_token,
+              "netbox/api",
+          )
+
+          netbox_token = secret["token"]
+
+          if netbox_token.startswith("nbt_"):
+              authorization = f"Bearer {netbox_token}"
+          else:
+              authorization = f"Token {netbox_token}"
+
+          response = requests.get(
+              (
+                  "http://127.0.0.1:8000"
+                  "/api/dcim/sites/"
+                  "?slug=ci-upgrade-test"
+              ),
+              headers={
+                  "Authorization": authorization,
+                  "Accept": "application/json",
+              },
+              timeout=30,
+          )
+
+          if response.status_code != 200:
+              raise SystemExit(
+                  "[ERROR] Unable to verify upgrade test data: "
+                  f"HTTP {response.status_code}: {response.text}"
+              )
+
+          data = response.json()
+
+          if data.get("count") != 1:
+              raise SystemExit(
+                  "[ERROR] Persistent NetBox test site "
+                  "did not survive upgrade"
+              )
+
+          site = data["results"][0]
+
+          if site.get("slug") != "ci-upgrade-test":
+              raise SystemExit(
+                  "[ERROR] Persisted NetBox site is invalid"
+              )
+
+          print("[OK] NetBox data survived upgrade")
+          PY
+
+      # ---------------------------------------------------------------------
+      # Idempotency after upgrade
+      # ---------------------------------------------------------------------
+
+      - name: Verify post-upgrade idempotency
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_atlas.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+          echo "[OK] Post-upgrade deployment is idempotent"
+
+      # ---------------------------------------------------------------------
+      # Cleanup
+      # ---------------------------------------------------------------------
+
+      - name: Clean up upgrade environment
+        if: always()
+        shell: bash
+        run: |
+          if [ -d ".runtime/netbox-docker" ]; then
+            (
+              cd .runtime/netbox-docker
+
+              docker compose \
+                -p atlas-netbox \
+                down \
+                -v \
+                --remove-orphans
+            ) || true
+          fi
+
+          docker compose \
+            -f deployment/openbao/docker-compose.yml \
+            down \
+            -v \
+            --remove-orphans \
+            || true
