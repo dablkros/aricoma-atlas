@@ -373,3 +373,183 @@ jobs:
             down \
             -v \
             --remove-orphans
+
+  atlas-integration:
+    name: Full Atlas integration
+    runs-on: ubuntu-latest
+    needs:
+      - validate
+    timeout-minutes: 30
+
+    steps:
+      # ---------------------------------------------------------------------
+      # Repository
+      # ---------------------------------------------------------------------
+
+      - name: Checkout repository
+        uses: actions/checkout@v7
+
+      # ---------------------------------------------------------------------
+      # Python
+      # ---------------------------------------------------------------------
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+
+      - name: Install Python dependencies
+        run: |
+          python3 -m pip install --upgrade pip
+          python3 -m pip install -r requirements.txt
+
+      # ---------------------------------------------------------------------
+      # Fresh Atlas deployment
+      # ---------------------------------------------------------------------
+
+      - name: Deploy fresh Atlas
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_atlas.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+      # ---------------------------------------------------------------------
+      # OpenBao verification
+      # ---------------------------------------------------------------------
+
+      - name: Verify OpenBao
+        run: |
+          python3 - <<'PY'
+          import requests
+
+          response = requests.get(
+              "http://127.0.0.1:18200/v1/sys/health",
+              timeout=10,
+          )
+
+          if response.status_code != 200:
+              raise SystemExit(
+                  "[ERROR] OpenBao health endpoint returned "
+                  f"HTTP {response.status_code}: {response.text}"
+              )
+
+          data = response.json()
+
+          if not data.get("initialized"):
+              raise SystemExit(
+                  "[ERROR] OpenBao is not initialized"
+              )
+
+          if data.get("sealed"):
+              raise SystemExit(
+                  "[ERROR] OpenBao is sealed"
+              )
+
+          print("[OK] OpenBao initialized")
+          print("[OK] OpenBao unsealed")
+          print("[OK] OpenBao health verified")
+          PY
+
+      # ---------------------------------------------------------------------
+      # NetBox verification
+      # ---------------------------------------------------------------------
+
+      - name: Verify NetBox API
+        run: |
+          python3 - <<'PY'
+          import requests
+
+          response = requests.get(
+              "http://127.0.0.1:8000/api/",
+              timeout=15,
+          )
+
+          if response.status_code != 200:
+              raise SystemExit(
+                  "[ERROR] NetBox API returned "
+                  f"HTTP {response.status_code}: {response.text}"
+              )
+
+          data = response.json()
+
+          if not isinstance(data, dict):
+              raise SystemExit(
+                  "[ERROR] NetBox API root returned invalid JSON"
+              )
+
+          print("[OK] NetBox API reachable")
+          PY
+
+      # ---------------------------------------------------------------------
+      # Idempotency
+      # ---------------------------------------------------------------------
+
+      - name: Verify second Atlas deployment
+        shell: bash
+        run: |
+          set -o pipefail
+
+          python3 scripts/deploy_atlas.py 2>&1 \
+            | sed -E \
+              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+
+          echo "[OK] Second Atlas deployment completed"
+
+      # ---------------------------------------------------------------------
+      # Final verification
+      # ---------------------------------------------------------------------
+
+      - name: Verify containers
+        run: |
+          docker ps
+
+          if ! docker ps \
+            --filter "name=atlas-netbox-netbox" \
+            --format '{{.Names}}' \
+            | grep -q .; then
+
+            echo "[ERROR] NetBox container not running"
+            exit 1
+          fi
+
+          if ! docker ps \
+            --filter "name=openbao" \
+            --format '{{.Names}}' \
+            | grep -q .; then
+
+            echo "[ERROR] OpenBao container not running"
+            exit 1
+          fi
+
+          echo "[OK] Atlas containers running"
+
+      # ---------------------------------------------------------------------
+      # Cleanup
+      # ---------------------------------------------------------------------
+
+      - name: Clean up Atlas
+        if: always()
+        shell: bash
+        run: |
+          if [ -d ".runtime/netbox-docker" ]; then
+            (
+              cd .runtime/netbox-docker
+
+              docker compose \
+                -p atlas-netbox \
+                down \
+                -v \
+                --remove-orphans
+            ) || true
+          fi
+
+          docker compose \
+            -f deployment/openbao/docker-compose.yml \
+            down \
+            -v \
+            --remove-orphans \
+            || true
