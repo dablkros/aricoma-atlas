@@ -583,6 +583,104 @@ def prepare_netbox_docker(
     return runtime_dir
 
 
+def ensure_netbox_configuration_permissions(
+    runtime_dir,
+):
+    """Normalize permissions required by the upstream NetBox bind mount.
+
+    NetBox Docker bind-mounts ./configuration to /etc/netbox/config and runs
+    the application as the image's non-root ``netbox`` user. Git does not
+    preserve directory permissions, so a restrictive host umask (for example
+    077) can produce configuration directories/files that the container cannot
+    traverse or read.
+
+    Only upstream Git-tracked files under configuration/ are normalized here.
+    Atlas-generated files use explicit modes when they are written.
+    """
+    configuration_dir = (
+        runtime_dir
+        / "configuration"
+    )
+
+    if not configuration_dir.is_dir():
+        raise RuntimeError(
+            "NetBox Docker configuration directory "
+            f"not found: {configuration_dir}"
+        )
+
+    # The bind-mount root must be traversable by the NetBox container user.
+    os.chmod(
+        configuration_dir,
+        0o755,
+    )
+
+    tracked = command_output(
+        [
+            "git",
+            "ls-files",
+            "--",
+            "configuration",
+        ],
+        cwd=runtime_dir,
+    )
+
+    normalized_files = 0
+
+    for relative in tracked.splitlines():
+        relative_path = Path(relative)
+
+        if (
+            not relative_path.parts
+            or relative_path.parts[0] != "configuration"
+            or ".." in relative_path.parts
+        ):
+            raise RuntimeError(
+                "Unexpected tracked NetBox configuration path: "
+                f"{relative}"
+            )
+
+        path = runtime_dir / relative_path
+
+        # Do not follow repository symlinks while changing host permissions.
+        if path.is_symlink():
+            continue
+
+        if not path.is_file():
+            continue
+
+        parent = path.parent
+
+        while True:
+            os.chmod(
+                parent,
+                0o755,
+            )
+
+            if parent == configuration_dir:
+                break
+
+            if configuration_dir not in parent.parents:
+                raise RuntimeError(
+                    "Tracked NetBox configuration file escaped "
+                    "the configuration directory"
+                )
+
+            parent = parent.parent
+
+        # Upstream configuration files contain application configuration, not
+        # Atlas secrets. Atlas runtime secrets stay in OpenBao/environment.
+        os.chmod(
+            path,
+            0o644,
+        )
+        normalized_files += 1
+
+    ok(
+        "NetBox configuration bind-mount permissions ready "
+        f"({normalized_files} tracked file(s))"
+    )
+
+
 # ===========================================================================
 # OpenBao-backed NetBox secrets
 # ===========================================================================
@@ -1138,6 +1236,73 @@ def pull_images(
 
     ok(
         "Docker images pulled"
+    )
+
+
+def verify_netbox_configuration_mount(
+    runtime_dir,
+):
+    header(
+        "NETBOX CONFIG PREFLIGHT"
+    )
+
+    # Run the check through Compose so it uses the exact NetBox image, user,
+    # bind mount and SELinux mount options that the real service will use.
+    result = compose(
+        runtime_dir,
+        [
+            "run",
+            "--rm",
+            "--no-deps",
+            "--entrypoint",
+            "/bin/sh",
+            "netbox",
+            "-ec",
+            (
+                "test -x /etc/netbox/config; "
+                "test -r /etc/netbox/config/configuration.py; "
+                "for file in /etc/netbox/config/*.py; do "
+                "test -r \"$file\"; "
+                "done"
+            ),
+        ],
+        capture=True,
+        check=False,
+    )
+
+    if result.returncode != 0:
+        if result.stdout:
+            print(
+                result.stdout.rstrip()
+            )
+
+        if result.stderr:
+            print(
+                result.stderr.rstrip(),
+                file=sys.stderr,
+            )
+
+        configuration_dir = (
+            runtime_dir
+            / "configuration"
+        )
+
+        try:
+            directory_mode = (
+                configuration_dir.stat().st_mode
+                & 0o777
+            )
+            mode_text = f"{directory_mode:04o}"
+        except OSError:
+            mode_text = "unknown"
+
+        raise RuntimeError(
+            "NetBox container cannot read its configuration bind mount "
+            f"(host directory mode {mode_text}: {configuration_dir})"
+        )
+
+    ok(
+        "NetBox container can read /etc/netbox/config"
     )
 
 
@@ -1914,6 +2079,10 @@ def main():
             state,
         )
 
+        ensure_netbox_configuration_permissions(
+            runtime_dir
+        )
+
         if args.prepare_only:
             header(
                 "PREPARE COMPLETE"
@@ -1936,6 +2105,10 @@ def main():
         )
 
         ensure_network(NETBOX_NETWORK)
+
+        verify_netbox_configuration_mount(
+            runtime_dir
+        )
 
         start_netbox_core(
             runtime_dir
