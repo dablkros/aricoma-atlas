@@ -1,0 +1,151 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+IFS=$'\n\t'
+umask 0022
+
+ATLAS_USER="atlas"
+ATLAS_HOME="/home/atlas"
+ATLAS_ROOT="/opt/aricoma-atlas"
+PYTHON="${ATLAS_ROOT}/.venv/bin/python3"
+RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
+PROXY_CONFIG="${ATLAS_PROXY_CONFIG:-${RUNTIME_DIR}/proxy.yaml}"
+
+log() { printf '[INFO] %s\n' "$*"; }
+die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
+
+usage() {
+    cat <<'EOF'
+Usage:
+  sudo atlasctl deploy [deploy_atlas.py options]
+  sudo atlasctl status
+  sudo atlasctl openbao
+  sudo atlasctl oxidized reconcile
+  sudo atlasctl oxidized logs [docker compose logs options]
+
+Commands:
+  deploy                Deploy or reconcile the full Atlas stack.
+  status                Show Atlas container and Oxidized inventory state.
+  openbao               Open the interactive OpenBao access helper.
+  oxidized reconcile    Reconcile Oxidized runtime/inventory state.
+  oxidized logs         Show Oxidized container logs.
+EOF
+}
+
+require_root() {
+    [[ ${EUID} -eq 0 ]] || die "Run atlasctl with sudo"
+}
+
+require_install() {
+    id "$ATLAS_USER" >/dev/null 2>&1 || die "Atlas service account does not exist"
+    [[ -x "$PYTHON" ]] || die "Atlas virtual environment is missing"
+    [[ -d "$ATLAS_ROOT" ]] || die "Atlas installation is missing"
+}
+
+atlas_env() {
+    local -a values=(
+        "HOME=${ATLAS_HOME}"
+        "USER=${ATLAS_USER}"
+        "LOGNAME=${ATLAS_USER}"
+        "PYTHONUNBUFFERED=1"
+        "PATH=${ATLAS_ROOT}/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+        "ATLAS_PROXY_CONFIG=${PROXY_CONFIG}"
+    )
+
+    if [[ -n "${OPENBAO_URL:-}" ]]; then
+        values+=("OPENBAO_URL=${OPENBAO_URL}")
+    fi
+
+    printf '%s\0' "${values[@]}"
+}
+
+run_python_as_atlas() {
+    local script=$1
+    shift
+
+    [[ -f "$script" ]] || die "Missing Atlas script: ${script}"
+
+    local -a env_args=()
+    while IFS= read -r -d '' item; do
+        env_args+=("$item")
+    done < <(atlas_env)
+
+    cd "$ATLAS_ROOT"
+    exec runuser -u "$ATLAS_USER" -- env "${env_args[@]}" \
+        "$PYTHON" "$script" "$@"
+}
+
+show_status() {
+    printf 'Atlas installation: %s\n' "$ATLAS_ROOT"
+    printf 'Atlas service user: %s\n' "$ATLAS_USER"
+    printf '\nContainers:\n'
+    docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' \
+        | awk 'NR==1 || /atlas-/'
+
+    local source="${RUNTIME_DIR}/oxidized/router.db"
+    printf '\nOxidized:\n'
+
+    if [[ ! -f "$source" ]] || ! grep -Ev '^[[:space:]]*(#|$)' "$source" 2>/dev/null | grep -q .; then
+        printf '  state: WAITING_FOR_INVENTORY\n'
+        printf '  source: %s\n' "$source"
+        return
+    fi
+
+    printf '  state: INVENTORY_PRESENT\n'
+    printf '  source: %s\n' "$source"
+}
+
+oxidized_logs() {
+    local compose_file="${RUNTIME_DIR}/oxidized/docker-compose.yml"
+    [[ -f "$compose_file" ]] || die "Oxidized runtime is not prepared"
+    shift 0
+    exec docker compose -f "$compose_file" -p atlas-oxidized logs "$@" oxidized
+}
+
+main() {
+    require_root
+    require_install
+
+    local command=${1:-}
+    case "$command" in
+        deploy)
+            shift
+            [[ -f "$PROXY_CONFIG" ]] || \
+                die "Atlas site proxy configuration is missing: ${PROXY_CONFIG}"
+            run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_atlas.py" "$@"
+            ;;
+        status)
+            shift
+            show_status "$@"
+            ;;
+        openbao)
+            shift
+            run_python_as_atlas "${ATLAS_ROOT}/scripts/openbao_access.py" "$@"
+            ;;
+        oxidized)
+            shift
+            case "${1:-}" in
+                reconcile)
+                    shift
+                    run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_oxidized.py" "$@"
+                    ;;
+                logs)
+                    shift
+                    oxidized_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        -h|--help|help|"")
+            usage
+            ;;
+        *)
+            usage
+            exit 2
+            ;;
+    esac
+}
+
+main "$@"

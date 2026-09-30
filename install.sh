@@ -5,6 +5,7 @@ umask 0022
 
 ATLAS_USER="atlas"
 ATLAS_GROUP="atlas"
+ATLAS_ADMIN_GROUP="atlas-admin"
 ATLAS_HOME="/home/atlas"
 ATLAS_ROOT="/opt/aricoma-atlas"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
@@ -57,6 +58,10 @@ validate_source_repo() {
         die "Missing scripts/deploy_atlas.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/deploy_netbox.py" ]] || \
         die "Missing scripts/deploy_netbox.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \
+        die "Missing scripts/import_site_config.py in ${source_dir}"
+    [[ -x "${source_dir}/bin/atlasctl" ]] || \
+        die "Missing executable bin/atlasctl in ${source_dir}"
     [[ -f "${source_dir}/requirements.txt" ]] || \
         die "Missing requirements.txt in ${source_dir}"
 
@@ -193,6 +198,11 @@ install_docker() {
 ensure_atlas_user() {
     header "ATLAS SERVICE ACCOUNT"
 
+    if ! getent group "$ATLAS_ADMIN_GROUP" >/dev/null 2>&1; then
+        groupadd --system "$ATLAS_ADMIN_GROUP"
+        ok "Created operator group ${ATLAS_ADMIN_GROUP}"
+    fi
+
     if id "$ATLAS_USER" >/dev/null 2>&1; then
         local actual_home
         actual_home="$(getent passwd "$ATLAS_USER" | cut -d: -f6)"
@@ -210,6 +220,13 @@ ensure_atlas_user() {
     fi
 
     usermod -aG docker "$ATLAS_USER"
+
+    local invoking_user="${SUDO_USER:-}"
+    if [[ -n "$invoking_user" && "$invoking_user" != "root" ]] && id "$invoking_user" >/dev/null 2>&1; then
+        usermod -aG "$ATLAS_ADMIN_GROUP" "$invoking_user"
+        ok "Added ${invoking_user} to ${ATLAS_ADMIN_GROUP}"
+        warn "${invoking_user} must start a new login session before ${ATLAS_ADMIN_GROUP} membership is visible without sudo."
+    fi
 
     # A new runuser process resolves supplementary groups immediately; no SSH
     # logout/login is required for this dedicated service account.
@@ -247,21 +264,14 @@ install_repository() {
 
     target_git checkout --detach --force "$source_commit"
 
-    chown -R "${ATLAS_USER}:${ATLAS_GROUP}" "$ATLAS_ROOT"
+    # Application source is readable by Atlas operators, while machine-specific
+    # runtime identities and private keys remain isolated to the service account.
+    chown "${ATLAS_USER}:${ATLAS_ADMIN_GROUP}" "$ATLAS_ROOT"
+    find "$ATLAS_ROOT" -mindepth 1 -maxdepth 1 ! -name .runtime \
+        -exec chown -R "${ATLAS_USER}:${ATLAS_ADMIN_GROUP}" {} +
     chmod 0750 "$ATLAS_ROOT"
 
     install -d -m 0700 -o "$ATLAS_USER" -g "$ATLAS_GROUP" "$RUNTIME_DIR"
-
-    # Site-specific proxy/TLS configuration is intentionally not invented by
-    # the installer. If the administrator prepared .runtime/proxy.yaml in the
-    # source checkout, carry only that configuration file into the installed
-    # runtime. Never copy the rest of .runtime, because it may contain OpenBao
-    # identities or other machine-specific secrets.
-    if [[ -f "${source_dir}/.runtime/proxy.yaml" && ! -f "${RUNTIME_DIR}/proxy.yaml" ]]; then
-        install -m 0600 -o "$ATLAS_USER" -g "$ATLAS_GROUP" \
-            "${source_dir}/.runtime/proxy.yaml" "${RUNTIME_DIR}/proxy.yaml"
-        ok "Copied prepared site proxy configuration"
-    fi
 
     local installed_commit
     installed_commit="$(target_git rev-parse HEAD)"
@@ -295,12 +305,54 @@ install_python_environment() {
     ok "Atlas Python dependencies installed"
 }
 
+install_site_configuration() {
+    local source_dir=$1
+    local source_config="${source_dir}/.runtime/proxy.yaml"
+
+    header "ATLAS SITE CONFIGURATION"
+
+    if [[ ! -f "$source_config" ]]; then
+        if [[ -f "${RUNTIME_DIR}/proxy.yaml" ]]; then
+            ok "Existing installed site configuration preserved"
+        else
+            warn "No ${source_config} found. Prepare site DNS/TLS input before sudo ./deploy.sh."
+        fi
+        return
+    fi
+
+    "${VENV_DIR}/bin/python3" \
+        "${ATLAS_ROOT}/scripts/import_site_config.py" \
+        --source "$source_config" \
+        --target-root "$ATLAS_ROOT" \
+        --owner "$ATLAS_USER" \
+        --group "$ATLAS_GROUP"
+
+    ok "Site proxy/TLS configuration imported into protected runtime"
+}
+
+install_admin_cli() {
+    header "ATLAS ADMIN CLI"
+
+    [[ -x "${ATLAS_ROOT}/bin/atlasctl" ]] || \
+        die "Missing ${ATLAS_ROOT}/bin/atlasctl"
+
+    install -m 0755 -o root -g root \
+        "${ATLAS_ROOT}/bin/atlasctl" \
+        /usr/local/sbin/atlasctl
+
+    ok "Installed /usr/local/sbin/atlasctl"
+}
+
 verify_installation() {
     header "INSTALLATION VERIFY"
 
     [[ -x "${VENV_DIR}/bin/python3" ]] || die "Atlas Python virtual environment is missing"
     [[ -f "${ATLAS_ROOT}/scripts/deploy_atlas.py" ]] || die "Atlas deploy script is missing"
+    [[ -x /usr/local/sbin/atlasctl ]] || die "atlasctl is not installed"
+    [[ "$(stat -c '%a' "$ATLAS_ROOT")" == "750" ]] || die "${ATLAS_ROOT} must have mode 0750"
+    [[ "$(stat -c '%G' "$ATLAS_ROOT")" == "$ATLAS_ADMIN_GROUP" ]] || die "${ATLAS_ROOT} must be grouped to ${ATLAS_ADMIN_GROUP}"
     [[ "$(stat -c '%a' "$RUNTIME_DIR")" == "700" ]] || die "${RUNTIME_DIR} must have mode 0700"
+    [[ "$(stat -c '%U:%G' "$RUNTIME_DIR")" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "${RUNTIME_DIR} must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
 
     runuser -u "$ATLAS_USER" -- docker info >/dev/null
     runuser -u "$ATLAS_USER" -- docker compose version >/dev/null
@@ -310,7 +362,8 @@ verify_installation() {
         "${ATLAS_ROOT}/scripts/deploy_netbox.py" \
         "${ATLAS_ROOT}/scripts/deploy_openbao.py" \
         "${ATLAS_ROOT}/scripts/deploy_oxidized.py" \
-        "${ATLAS_ROOT}/scripts/deploy_proxy.py"
+        "${ATLAS_ROOT}/scripts/deploy_proxy.py" \
+        "${ATLAS_ROOT}/scripts/import_site_config.py"
 
     ok "Host is ready for Atlas deployment"
 }
@@ -327,11 +380,15 @@ main() {
     ensure_atlas_user
     install_repository "$source_dir"
     install_python_environment
+    install_site_configuration "$source_dir"
+    install_admin_cli
     verify_installation
 
     header "ATLAS HOST READY"
     printf 'Installation root: %s\n' "$ATLAS_ROOT"
     printf 'Service account:   %s\n' "$ATLAS_USER"
+    printf 'Operator group:    %s\n' "$ATLAS_ADMIN_GROUP"
+    printf 'Admin CLI:         %s\n' '/usr/local/sbin/atlasctl'
     printf '\nNext step:\n'
     printf '  sudo ./deploy.sh\n'
 }
