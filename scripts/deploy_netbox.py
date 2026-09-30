@@ -407,6 +407,20 @@ def normalize_git_url(value):
     return value
 
 
+def prepare_configuration_permissions(runtime_dir):
+    """Make the non-secret bind mount readable by the container's NetBox user.
+
+    Git checkout inherits the caller's umask. Keep env files, AppRole identities
+    and the enclosing runtime private; only this mounted configuration is shared.
+    """
+    directory = runtime_dir / "configuration"
+    paths = [directory, *directory.rglob("*")]
+    if any(path.is_symlink() for path in paths):
+        raise RuntimeError("NetBox configuration must not contain symbolic links")
+    for path in paths:
+        path.chmod(0o755 if path.is_dir() else 0o644)
+
+
 def prepare_netbox_docker(
     config,
 ):
@@ -1085,6 +1099,8 @@ def write_compose_override(
         override_file,
         0o600,
     )
+
+    prepare_configuration_permissions(runtime_dir)
 
     ok(
         f"Generated {override_file} "
