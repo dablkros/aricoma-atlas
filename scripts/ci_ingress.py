@@ -139,19 +139,65 @@ def verify_waiting():
         secret = client.kv_read(token, SECRET_PATH)
     finally:
         client.revoke_self(token)
+
     session = requests.Session()
     session.trust_env = False
     session.verify = config["tls"]["ca_certificate"]
-    url = f"https://{config['services']['oxidized']['hostname']}:{config['proxy']['https_port']}/nodes.json"
-    if session.get(url, timeout=15).status_code != 401:
+
+    base_url = (
+        f"https://{config['services']['oxidized']['hostname']}:"
+        f"{config['proxy']['https_port']}"
+    )
+
+    nodes_url = base_url + "/nodes.json"
+    reload_url = base_url + "/reload"
+
+    response = session.get(nodes_url, timeout=15)
+    if response.status_code != 401:
         raise RuntimeError("Empty-inventory ingress is not authenticated")
-    if session.get(url, auth=(secret["username"], secret["password"]), timeout=15).status_code != 503:
-        raise RuntimeError("Empty inventory must report backend unavailable after authentication")
+
+    response = session.get(
+        nodes_url,
+        auth=(secret["username"], secret["password"]),
+        timeout=15,
+    )
+    if response.status_code != 200:
+        raise RuntimeError(
+            f"Empty inventory must return HTTP 200 for nodes.json, got {response.status_code}"
+        )
+
+    if response.json() != []:
+        raise RuntimeError("Empty inventory must return an empty node list")
+
+    response = session.get(
+        reload_url,
+        auth=(secret["username"], secret["password"]),
+        timeout=15,
+    )
+    if response.status_code != 503:
+        raise RuntimeError(
+            f"Reload must report waiting-for-inventory with HTTP 503, got {response.status_code}"
+        )
+
+    if response.json().get("status") != "waiting_for_inventory":
+        raise RuntimeError("Reload did not report waiting_for_inventory")
+
     file = ROOT / ".runtime/oxidized/docker-compose.yml"
     container = compose(file, "atlas-oxidized", "ps", "--all", "-q", "oxidized")
-    if not container or json.loads(run(["docker", "inspect", container]))[0]["State"]["Running"]:
-        raise RuntimeError("Empty-inventory Oxidized must be prepared without collecting")
-    print("[OK] Empty inventory is explicitly stopped; HTTPS still requires authentication")
+
+    if not container:
+        raise RuntimeError("Empty-inventory Oxidized container does not exist")
+
+    state = json.loads(
+        run(["docker", "inspect", container])
+    )[0]["State"]
+
+    if not state["Running"]:
+        raise RuntimeError(
+            "Empty-inventory Oxidized waiting container must remain running"
+        )
+
+    print("[OK] Empty inventory waiting state and HTTPS authentication verified")
 
 
 def verify_network_denial():
