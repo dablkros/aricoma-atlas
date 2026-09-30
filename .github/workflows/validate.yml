@@ -735,6 +735,11 @@ jobs:
           python3 -m pip install --upgrade pip
           python3 -m pip install -r requirements.txt
 
+      - name: Prepare BASE ingress certificates and DNS
+        run: |
+          python3 scripts/ci_ingress.py fixtures --empty-inventory
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
       - name: Deploy BASE Atlas
         shell: bash
         run: |
