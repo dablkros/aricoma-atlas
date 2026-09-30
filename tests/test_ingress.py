@@ -119,14 +119,18 @@ class IngressTests(unittest.TestCase):
                       "oxidized": {"docker_image": "oxidized/oxidized:0.37.0", "interval": 3600,
                                    "threads": 10, "timeout": 20}}
             file = module.prepare_runtime(config)
-            self.assertTrue(module.waiting_for_inventory(file))
             source = file.parent / "router.db"
+
+            self.assertFalse(module.has_inventory(source))
+
             source.write_text("# operator source remains intact\n")
             module.prepare_runtime(config)
+
             self.assertEqual(source.read_text(), "# operator source remains intact\n")
-            self.assertTrue(module.waiting_for_inventory(file))
+            self.assertFalse(module.has_inventory(source))
+
             source.write_text("127.0.0.2:ios\n")
-            self.assertFalse(module.waiting_for_inventory(file))
+            self.assertTrue(module.has_inventory(source))
             compose = yaml.safe_load(file.read_text())
             self.assertNotIn("ports", compose["services"]["oxidized"])
             self.assertEqual(compose["volumes"]["atlas_oxidized_data"]["name"], "atlas-oxidized-data")
