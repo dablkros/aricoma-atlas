@@ -69,7 +69,7 @@ if ! has_inventory; then
 fi
 
 trap - INT TERM EXIT
-exec /sbin/my_init
+exec /usr/bin/dumb-init -- runsvdir -P /etc/service
 '''
 
 
@@ -363,6 +363,8 @@ def validate_runtime(file, project):
         "oxidized",
         "-ec",
         (
+            "test -x /usr/bin/dumb-init; "
+            "command -v runsvdir >/dev/null; "
             "test -r /etc/oxidized/config; "
             "test -r /etc/atlas-oxidized/router.db; "
             "test -r /home/oxidized/.ssh/known_hosts; "

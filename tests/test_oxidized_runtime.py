@@ -107,4 +107,4 @@ def test_wait_entrypoint_transitions_to_official_init():
     module = load_module()
     assert 'ruby "$WAIT_SERVER" &' in module.WAIT_ENTRYPOINT
     assert 'while ! has_inventory' in module.WAIT_ENTRYPOINT
-    assert 'exec /sbin/my_init' in module.WAIT_ENTRYPOINT
+    assert 'exec /usr/bin/dumb-init -- runsvdir -P /etc/service' in module.WAIT_ENTRYPOINT

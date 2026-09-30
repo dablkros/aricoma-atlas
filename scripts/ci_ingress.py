@@ -55,6 +55,8 @@ def fixtures(seed_inventory=True):
         from scripts.deploy_oxidized import prepare_runtime
         oxidized = yaml.safe_load((ROOT / "deployment/oxidized.yaml").read_text())
         oxidized["oxidized"]["interval"] = 0
+        # CI-only checkout: keep interval=0 through subsequent runtime generation.
+        write_yaml(ROOT / "deployment/oxidized.yaml", oxidized)
         file = prepare_runtime(oxidized, root=ROOT)
         settings_file = file.parent / "config"
         settings = yaml.safe_load(settings_file.read_text())
