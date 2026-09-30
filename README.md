@@ -258,6 +258,18 @@ docker info
 
 Odporúčané je používať samostatný Python virtual environment.
 
+Deploy explicitne nastavuje práva bind-mount konfigurácie NetBoxu: adresáre
+`configuration/` na `0755`, súbory na `0644`. Táto konfigurácia nesmie obsahovať
+plaintext heslá; Atlas ich dodáva z OpenBao cez prostredie kontajnera. Nastavenie
+funguje aj pri `umask 077`. Ostatné runtime súbory, AppRole identity a privátne
+kľúče sa týmto krokom nesprístupňujú.
+
+Pri chybe `PermissionError: /etc/netbox/config/` skontroluj práva tohto mountu.
+NetBox Docker 5.1.1 túto chybu môže zobraziť spolu s „Waiting on DB“, pretože
+štartovací skript opakuje príkaz Django, ktorý načítava aj konfiguráciu.
+Zvýšenie timeoutu tento problém nevyrieši. Opakovaný deploy opraví práva
+konfigurácie bez odstránenia databázových volumes.
+
 ---
 
 # Python virtual environment

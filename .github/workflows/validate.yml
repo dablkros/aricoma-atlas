@@ -479,6 +479,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          umask 077
           python3 scripts/deploy_atlas.py --prepare-only 2>&1 \
             | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
           for component in netbox oxidized proxy; do
@@ -492,6 +493,7 @@ jobs:
         shell: bash
         run: |
           set -o pipefail
+          umask 077
 
           python3 scripts/deploy_atlas.py 2>&1 \
             | sed -E \
