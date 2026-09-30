@@ -50,6 +50,10 @@ jobs:
         run: |
           python3 -m py_compile scripts/*.py
           python3 -m py_compile atlas/*.py
+          python3 -m py_compile tests/*.py
+
+      - name: Test ingress deployment and certificate validation
+        run: python3 -m unittest discover -s tests -v
 
       # ---------------------------------------------------------------------
       # Atlas configuration files
@@ -66,6 +70,8 @@ jobs:
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
               Path("deployment/netbox.yaml"),
+              Path("deployment/oxidized.yaml"),
+              Path("deployment/proxy.example.yaml"),
           ]
 
           for path in files:
@@ -408,6 +414,24 @@ jobs:
       # Fresh Atlas deployment
       # ---------------------------------------------------------------------
 
+      - name: Prepare ephemeral CI certificates and DNS
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
+      - name: Verify prepare-only does not start application containers
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/deploy_atlas.py --prepare-only 2>&1 \
+            | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+          for component in netbox oxidized proxy; do
+            if docker ps --filter "label=com.docker.compose.project=atlas-${component}" --format '{{.ID}}' | grep -q .; then
+              echo "[ERROR] prepare-only started ${component} containers"
+              exit 1
+            fi
+          done
+
       - name: Deploy fresh Atlas
         shell: bash
         run: |
@@ -534,6 +558,9 @@ jobs:
       # Idempotency
       # ---------------------------------------------------------------------
 
+      - name: Verify ingress and seed Oxidized persistence check
+        run: python3 scripts/ci_ingress.py snapshot
+
       - name: Verify second Atlas deployment
         shell: bash
         run: |
@@ -548,6 +575,9 @@ jobs:
       # ---------------------------------------------------------------------
       # Final verification
       # ---------------------------------------------------------------------
+
+      - name: Verify ingress and preserved Oxidized state
+        run: python3 scripts/ci_ingress.py compare
 
       - name: Verify containers
         run: |
@@ -581,6 +611,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
           if [ -d ".runtime/netbox-docker" ]; then
             (
               cd .runtime/netbox-docker
@@ -750,6 +785,11 @@ jobs:
         run: |
           python3 -m pip install -r requirements.txt
 
+      - name: Prepare HEAD ingress certificates and DNS
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
       # ---------------------------------------------------------------------
       # Upgrade existing Atlas deployment
       # ---------------------------------------------------------------------
@@ -841,6 +881,9 @@ jobs:
       # Idempotency after upgrade
       # ---------------------------------------------------------------------
 
+      - name: Verify upgraded ingress and seed Oxidized persistence check
+        run: python3 scripts/ci_ingress.py snapshot
+
       - name: Verify post-upgrade idempotency
         shell: bash
         run: |
@@ -852,6 +895,9 @@ jobs:
 
           echo "[OK] Post-upgrade deployment is idempotent"
 
+      - name: Verify post-upgrade ingress and preserved Oxidized state
+        run: python3 scripts/ci_ingress.py compare
+
       # ---------------------------------------------------------------------
       # Cleanup
       # ---------------------------------------------------------------------
@@ -860,6 +906,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
           if [ -d ".runtime/netbox-docker" ]; then
             (
               cd .runtime/netbox-docker

@@ -24,6 +24,8 @@ from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
 )
+from atlas.deployment import NETBOX_NETWORK, ensure_network, write_private  # noqa: E402
+from atlas.proxy import load_config as load_proxy_config  # noqa: E402
 
 
 CONFIG_FILE = (
@@ -946,6 +948,9 @@ def write_compose_override(
         ]
     )
 
+    if listen_address != "127.0.0.1":
+        raise RuntimeError("NetBox bootstrap port must bind to 127.0.0.1; use Nginx for external access")
+
     # Secrets are deliberately NOT written into this
     # generated Compose file. Docker Compose resolves
     # these placeholders from the deploy process
@@ -984,10 +989,30 @@ def write_compose_override(
             "true",
     }
 
+    proxy_file = Path(os.environ.get("ATLAS_PROXY_CONFIG", ROOT / ".runtime/proxy.yaml"))
+    if proxy_file.exists():
+        proxy = load_proxy_config(proxy_file, validate_tls=False)
+        hostname = proxy["services"]["netbox"]["hostname"]
+        https_port = proxy["proxy"]["https_port"]
+        origin = f"https://{hostname}" + (f":{https_port}" if https_port != 443 else "")
+        for environment in (netbox_environment, worker_environment):
+            environment["ALLOWED_HOSTS"] = f"{hostname} localhost 127.0.0.1"
+            environment["CSRF_TRUSTED_ORIGINS"] = origin
+        write_private(
+            runtime_dir / "configuration/atlas_proxy.py",
+            'SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")\n'
+            'SESSION_COOKIE_SECURE = True\nCSRF_COOKIE_SECURE = True\n',
+            0o644,
+        )
+
     override = {
         "services": {
             "netbox": {
                 "image": image,
+                "networks": {
+                    "default": {},
+                    "atlas_web": {"aliases": ["atlas-netbox"]},
+                },
                 "restart":
                     "unless-stopped",
                 "ports": [
@@ -1034,6 +1059,9 @@ def write_compose_override(
                         "${ATLAS_NETBOX_REDIS_CACHE_PASSWORD}",
                 },
             },
+        },
+        "networks": {
+            "atlas_web": {"external": True, "name": NETBOX_NETWORK},
         },
     }
 
@@ -1906,6 +1934,8 @@ def main():
         pull_images(
             runtime_dir
         )
+
+        ensure_network(NETBOX_NETWORK)
 
         start_netbox_core(
             runtime_dir

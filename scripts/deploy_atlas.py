@@ -20,6 +20,7 @@ from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
 )
+from atlas.proxy import load_config as load_proxy_config  # noqa: E402
 
 
 SCRIPTS_DIR = ROOT / "scripts"
@@ -33,6 +34,8 @@ NETBOX_DEPLOY_SCRIPT = (
     SCRIPTS_DIR
     / "deploy_netbox.py"
 )
+OXIDIZED_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_oxidized.py"
+PROXY_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_proxy.py"
 
 OPENBAO_IDENTITY_FILE = (
     ROOT
@@ -62,8 +65,8 @@ def parse_args():
         "--prepare-only",
         action="store_true",
         help=(
-            "Prepare NetBox runtime and secrets "
-            "without starting NetBox containers. "
+            "Prepare NetBox, Oxidized and Nginx runtimes and secrets "
+            "without starting their containers. "
             "OpenBao is still started because it "
             "is the secrets source of truth."
         ),
@@ -246,7 +249,7 @@ def verify_openbao_ready():
 
 def deploy_openbao():
     header(
-        "ATLAS STAGE 1/2 - OPENBAO"
+        "ATLAS STAGE 1/4 - OPENBAO"
     )
 
     read_fd, write_fd = os.pipe()
@@ -330,7 +333,7 @@ def deploy_openbao():
 
 def deploy_netbox(args):
     header(
-        "ATLAS STAGE 2/2 - NETBOX"
+        "ATLAS STAGE 2/4 - NETBOX"
     )
 
     netbox_args = []
@@ -353,6 +356,16 @@ def deploy_netbox(args):
     ok(
         "NetBox stage completed"
     )
+
+
+def deploy_oxidized(args):
+    header("ATLAS STAGE 3/4 - OXIDIZED")
+    run_script(OXIDIZED_DEPLOY_SCRIPT, ["--prepare-only"] if args.prepare_only else [])
+
+
+def deploy_proxy(args):
+    header("ATLAS STAGE 4/4 - NGINX HTTPS INGRESS")
+    run_script(PROXY_DEPLOY_SCRIPT, ["--prepare-only"] if args.prepare_only else [])
 
 
 # ===========================================================================
@@ -429,6 +442,8 @@ def print_result(args):
     print(
         "Secrets source of truth: OpenBao"
     )
+    print("Oxidized: prepared only" if args.prepare_only else "Oxidized: ready (inventory initially empty)")
+    print("Nginx: prepared only" if args.prepare_only else "Nginx: ready")
 
 
 # ===========================================================================
@@ -440,6 +455,8 @@ def main():
     args = parse_args()
 
     try:
+        # Validate customer DNS, subnets and CA certificates before any deployment.
+        load_proxy_config()
         header(
             "ARICOMA ATLAS DEPLOY"
         )
@@ -455,6 +472,8 @@ def main():
         deploy_netbox(
             args
         )
+        deploy_oxidized(args)
+        deploy_proxy(args)
 
         print_result(
             args

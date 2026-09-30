@@ -1,0 +1,128 @@
+#!/usr/bin/env python3
+"""CI-only certificates and real HTTPS/OpenBao/persistence checks (no production secrets)."""
+
+import argparse
+import json
+import os
+import subprocess
+import sys
+from pathlib import Path
+
+import requests
+import yaml
+
+ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+
+from atlas.deployment import compose, connect_openbao, run, write_private, write_yaml  # noqa: E402
+from atlas.proxy import SECRET_PATH, load_config  # noqa: E402
+
+
+def fixtures():
+    runtime = ROOT / ".runtime/ci-tls"
+    runtime.mkdir(parents=True, exist_ok=True)
+    os.chmod(ROOT / ".runtime", 0o700)
+    os.chmod(runtime, 0o700)
+    ca, ca_key = runtime / "ca.crt", runtime / "ca.key"
+    certificate, key = runtime / "server.crt", runtime / "server.key"
+    run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
+         "-subj", "/CN=Atlas ephemeral CI CA", "-keyout", str(ca_key), "-out", str(ca),
+         "-addext", "basicConstraints=critical,CA:TRUE"])
+    csr = runtime / "server.csr"
+    run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=netbox.atlas.test",
+         "-keyout", str(key), "-out", str(csr)])
+    extension = runtime / "extensions.cnf"
+    extension.write_text("subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test\n"
+                         "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n")
+    run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
+         "-CAcreateserial", "-days", "2", "-out", str(certificate), "-extfile", str(extension)])
+    for private in (key, ca_key):
+        os.chmod(private, 0o600)
+    config = yaml.safe_load((ROOT / "deployment/proxy.example.yaml").read_text())
+    config["proxy"].update({"listen_address": "127.0.0.1", "https_port": 8443,
+                            # Docker SNAT for runner-to-container traffic; CI only.
+                            "allowed_networks": ["127.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]})
+    config["tls"]["ca_certificate"] = str(ca)
+    for name, service in config["services"].items():
+        service.update({"hostname": f"{name}.atlas.test", "certificate": str(certificate),
+                        "private_key": str(key)})
+    write_yaml(ROOT / ".runtime/proxy.yaml", config)
+    print("[OK] Ephemeral CI CA and ingress configuration prepared")
+
+
+def verify(snapshot=False, compare=False):
+    config = load_config()
+    client, token = connect_openbao()
+    try:
+        secret = client.kv_read(token, SECRET_PATH)
+    finally:
+        client.revoke_self(token)
+    session = requests.Session()
+    session.trust_env = False
+    session.verify = config["tls"]["ca_certificate"]
+    port = config["proxy"]["https_port"]
+    oxidized = f"https://{config['services']['oxidized']['hostname']}:{port}"
+    for path in ("/", "/nodes.json", "/node/fetch/nonexistent", "/reload.json"):
+        response = session.get(oxidized + path, timeout=15, allow_redirects=False)
+        if response.status_code != 401:
+            raise RuntimeError(f"Unauthenticated {path} was not rejected: {response.status_code}")
+    response = session.get(oxidized + "/nodes.json", auth=(secret["username"], "wrong-password"), timeout=15)
+    if response.status_code != 401:
+        raise RuntimeError("Invalid password was not rejected")
+    response = session.get(oxidized + "/nodes.json", auth=(secret["username"], secret["password"]), timeout=15)
+    if response.status_code != 200 or not isinstance(response.json(), list):
+        raise RuntimeError("Authenticated Oxidized API is unavailable")
+    netbox = f"https://{config['services']['netbox']['hostname']}:{port}"
+    response = session.get(netbox + "/login/", timeout=15)
+    if response.status_code != 200 or "csrftoken" not in session.cookies:
+        raise RuntimeError("NetBox HTTPS login is unavailable")
+    # A real login POST catches origin/proxy/secure-cookie regressions.
+    client, token = connect_openbao()
+    try:
+        admin = client.kv_read(token, "netbox/admin")
+    finally:
+        client.revoke_self(token)
+    response = session.post(netbox + "/login/", data={
+        "username": admin["username"], "password": admin["password"],
+        "csrfmiddlewaretoken": session.cookies["csrftoken"],
+    }, headers={"Referer": netbox + "/login/", "Origin": netbox}, timeout=15, allow_redirects=False)
+    if response.status_code != 302 or "sessionid" not in session.cookies:
+        raise RuntimeError("NetBox HTTPS login POST failed")
+    file = ROOT / ".runtime/oxidized/docker-compose.yml"
+    container = compose(file, "atlas-oxidized", "ps", "-q", "oxidized")
+    inspected = json.loads(run(["docker", "inspect", container]))[0]
+    if any(inspected["NetworkSettings"]["Ports"].values()):
+        raise RuntimeError("Oxidized has published host ports; authentication can be bypassed")
+    repo = "/home/oxidized/.config/oxidized/repository.git"
+    def git(*args):
+        return run(["docker", "exec", "-i", container, "gosu", "oxidized", "git", f"--git-dir={repo}", *args], input="")
+    if snapshot:
+        # Seed an actual Git commit even though the initial device source is empty.
+        run(["docker", "exec", container, "gosu", "oxidized", "git", "init", "--bare", repo])
+        tree = git("mktree")
+        commit = run(["docker", "exec", "-e", "GIT_AUTHOR_NAME=Atlas CI", "-e", "GIT_AUTHOR_EMAIL=ci@localhost",
+                      "-e", "GIT_COMMITTER_NAME=Atlas CI", "-e", "GIT_COMMITTER_EMAIL=ci@localhost",
+                      container, "gosu", "oxidized", "git", f"--git-dir={repo}", "commit-tree", tree, "-m", "CI persistence marker"])
+        git("update-ref", "refs/heads/atlas-ci", commit)
+        write_private(ROOT / ".runtime/ci-ingress-snapshot.json", json.dumps({"secret": secret, "commit": commit}))
+    if compare:
+        previous = json.loads((ROOT / ".runtime/ci-ingress-snapshot.json").read_text())
+        if previous["secret"] != secret or git("rev-parse", "refs/heads/atlas-ci") != previous["commit"]:
+            raise RuntimeError("Oxidized credentials or Git history changed during redeployment")
+    print("[OK] Trusted HTTPS, authentication, NetBox login and port isolation verified")
+    if compare:
+        print("[OK] Credentials and Oxidized Git history survived redeployment")
+
+
+def main():
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("operation", choices=["fixtures", "verify", "snapshot", "compare"])
+    args = parser.parse_args()
+    if args.operation == "fixtures":
+        fixtures()
+    else:
+        verify(snapshot=args.operation == "snapshot", compare=args.operation == "compare")
+
+
+if __name__ == "__main__":
+    main()
