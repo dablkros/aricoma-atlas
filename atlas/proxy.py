@@ -74,7 +74,7 @@ def validate_certificate(name, service, ca):
     except (OSError, ssl.SSLError) as exc:
         raise ValueError(f"Invalid certificate/key pair for {name}") from exc
     run(["openssl", "x509", "-in", certificate, "-noout", "-checkend", "0"])
-    run(["openssl", "verify", "-CAfile", ca, "-untrusted", certificate,
+    run(["openssl", "verify", "-x509_strict", "-CAfile", ca, "-untrusted", certificate,
          "-purpose", "sslserver", "-verify_hostname", service["hostname"], certificate])
 
 

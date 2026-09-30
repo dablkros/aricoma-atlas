@@ -418,6 +418,14 @@ jobs:
           python3 scripts/deploy_proxy.py
           python3 scripts/ci_ingress.py compare --oxidized-only
           python3 scripts/ci_ingress.py deny-network
+      - name: Diagnose ingress failure (ephemeral CI environment only)
+        if: failure()
+        run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" logs --tail=100 || true
+            fi
+          done
       - name: Clean up isolated integration environment
         if: always()
         run: |

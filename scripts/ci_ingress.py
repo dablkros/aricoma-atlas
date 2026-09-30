@@ -27,13 +27,17 @@ def fixtures(seed_inventory=True):
     certificate, key = runtime / "server.crt", runtime / "server.key"
     run(["openssl", "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-days", "2",
          "-subj", "/CN=Atlas ephemeral CI CA", "-keyout", str(ca_key), "-out", str(ca),
-         "-addext", "basicConstraints=critical,CA:TRUE"])
+         "-addext", "basicConstraints=critical,CA:TRUE",
+         "-addext", "keyUsage=critical,keyCertSign,cRLSign",
+         "-addext", "subjectKeyIdentifier=hash"])
     csr = runtime / "server.csr"
     run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=netbox.atlas.test",
          "-keyout", str(key), "-out", str(csr)])
     extension = runtime / "extensions.cnf"
     extension.write_text("subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test\n"
-                         "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n")
+                         "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n"
+                         "keyUsage=critical,digitalSignature,keyEncipherment\n"
+                         "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
     run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
          "-CAcreateserial", "-days", "2", "-out", str(certificate), "-extfile", str(extension)])
     for private in (key, ca_key):
