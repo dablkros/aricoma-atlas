@@ -50,6 +50,10 @@ jobs:
         run: |
           python3 -m py_compile scripts/*.py
           python3 -m py_compile atlas/*.py
+          python3 -m py_compile tests/*.py
+
+      - name: Test ingress deployment and certificate validation
+        run: python3 -m unittest discover -s tests -v
 
       # ---------------------------------------------------------------------
       # Atlas configuration files
@@ -66,6 +70,8 @@ jobs:
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
               Path("deployment/netbox.yaml"),
+              Path("deployment/oxidized.yaml"),
+              Path("deployment/proxy.example.yaml"),
           ]
 
           for path in files:
@@ -374,6 +380,62 @@ jobs:
             -v \
             --remove-orphans
 
+  oxidized-ingress-integration:
+    name: Oxidized HTTPS ingress integration
+    runs-on: ubuntu-latest
+    needs: [validate]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install dependencies and prepare ephemeral TLS
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 scripts/ci_ingress.py fixtures --empty-inventory
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+      - name: Deploy OpenBao
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/deploy_openbao.py 2>&1 | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+      - name: Verify protected ingress with empty device inventory
+        run: |
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py waiting
+      - name: Start native Oxidized with a non-collecting loopback fixture
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py snapshot --oxidized-only
+      - name: Verify redeployment, persistence and network restrictions
+        run: |
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py compare --oxidized-only
+          python3 scripts/ci_ingress.py deny-network
+      - name: Diagnose ingress failure (ephemeral CI environment only)
+        if: failure()
+        run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" logs --tail=100 || true
+            fi
+          done
+      - name: Clean up isolated integration environment
+        if: always()
+        run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
+          docker compose -f deployment/openbao/docker-compose.yml down -v --remove-orphans || true
+
   atlas-integration:
     name: Full Atlas integration
     runs-on: ubuntu-latest
@@ -407,6 +469,24 @@ jobs:
       # ---------------------------------------------------------------------
       # Fresh Atlas deployment
       # ---------------------------------------------------------------------
+
+      - name: Prepare ephemeral CI certificates and DNS
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
+      - name: Verify prepare-only does not start application containers
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/deploy_atlas.py --prepare-only 2>&1 \
+            | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+          for component in netbox oxidized proxy; do
+            if docker ps --filter "label=com.docker.compose.project=atlas-${component}" --format '{{.ID}}' | grep -q .; then
+              echo "[ERROR] prepare-only started ${component} containers"
+              exit 1
+            fi
+          done
 
       - name: Deploy fresh Atlas
         shell: bash
@@ -534,6 +614,9 @@ jobs:
       # Idempotency
       # ---------------------------------------------------------------------
 
+      - name: Verify ingress and seed Oxidized persistence check
+        run: python3 scripts/ci_ingress.py snapshot
+
       - name: Verify second Atlas deployment
         shell: bash
         run: |
@@ -548,6 +631,9 @@ jobs:
       # ---------------------------------------------------------------------
       # Final verification
       # ---------------------------------------------------------------------
+
+      - name: Verify ingress and preserved Oxidized state
+        run: python3 scripts/ci_ingress.py compare
 
       - name: Verify containers
         run: |
@@ -581,6 +667,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
           if [ -d ".runtime/netbox-docker" ]; then
             (
               cd .runtime/netbox-docker
@@ -750,6 +841,11 @@ jobs:
         run: |
           python3 -m pip install -r requirements.txt
 
+      - name: Prepare HEAD ingress certificates and DNS
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
       # ---------------------------------------------------------------------
       # Upgrade existing Atlas deployment
       # ---------------------------------------------------------------------
@@ -841,6 +937,9 @@ jobs:
       # Idempotency after upgrade
       # ---------------------------------------------------------------------
 
+      - name: Verify upgraded ingress and seed Oxidized persistence check
+        run: python3 scripts/ci_ingress.py snapshot
+
       - name: Verify post-upgrade idempotency
         shell: bash
         run: |
@@ -852,6 +951,9 @@ jobs:
 
           echo "[OK] Post-upgrade deployment is idempotent"
 
+      - name: Verify post-upgrade ingress and preserved Oxidized state
+        run: python3 scripts/ci_ingress.py compare
+
       # ---------------------------------------------------------------------
       # Cleanup
       # ---------------------------------------------------------------------
@@ -860,6 +962,11 @@ jobs:
         if: always()
         shell: bash
         run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
           if [ -d ".runtime/netbox-docker" ]; then
             (
               cd .runtime/netbox-docker

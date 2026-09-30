@@ -1,0 +1,18 @@
+# Copy to .runtime/proxy.yaml and fill in values for this customer VM.
+# No DNS names, certificates or management networks are assumed.
+proxy:
+  docker_image: "docker.io/library/nginx:1.30.5"
+  listen_address: ""
+  https_port: 443
+  allowed_networks: []
+tls:
+  ca_certificate: ""
+services:
+  netbox:
+    hostname: ""
+    certificate: ""
+    private_key: ""
+  oxidized:
+    hostname: ""
+    certificate: ""
+    private_key: ""

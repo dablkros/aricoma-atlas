@@ -6,6 +6,8 @@ Aktuálna beta verzia nasadzuje a pripravuje najmä:
 
 - **OpenBao** ako centrálny secrets backend,
 - **NetBox 4.7.1** cez Docker Compose,
+- **Oxidized 0.37.0** s lokálnou Git históriou konfigurácií,
+- spoločný **Nginx HTTPS proxy** s certifikátmi internej CA a autentifikáciou Oxidized,
 - PostgreSQL a Valkey backend služby pre NetBox,
 - Atlas NetBox baseline,
 - Atlas Device Catalog,
@@ -18,7 +20,7 @@ Hlavný deployment workflow sa spúšťa jedným príkazom:
 python scripts/deploy_atlas.py
 ```
 
-`deploy_atlas.py` je nadradený orchestrátor. Najskôr pripraví OpenBao, overí jeho readiness a až potom pokračuje nasadením NetBoxu.
+`deploy_atlas.py` je nadradený orchestrátor: overí konfiguráciu zákazníckeho HTTPS vstupu, pripraví OpenBao a overí jeho readiness, potom nasadí NetBox, Oxidized a Nginx. Pred prvým spustením je potrebné pripraviť `.runtime/proxy.yaml`, DNS a certifikáty podľa sekcie nižšie.
 
 ---
 
@@ -26,12 +28,14 @@ python scripts/deploy_atlas.py
 
 **Release:** `0.1.0-beta`
 
-Aktuálne testovaná kombinácia:
+Deklarovaná kombinácia pre tento deployment (výsledok integračných testov je v GitHub Actions):
 
 - OpenBao `2.7.0`
 - NetBox `4.7.1`
 - NetBox Docker `5.1.1`
 - NetBox image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
+- Oxidized image `docker.io/oxidized/oxidized:0.37.0`
+- Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose
 - Python virtual environment
 
@@ -65,21 +69,25 @@ Aktuálne testovaná kombinácia:
 
 Táto verzia je určená ako **beta baseline** a ešte nie je finálnym produkčným hardeningom.
 
-## TLS zatiaľ nie je dokončené
+## HTTPS vstup a zostávajúce TLS obmedzenia
 
 V aktuálnom beta prostredí:
 
 - OpenBao API používa lokálne HTTP,
 - OpenBao listener má `tls_disable = true`,
 - lokálne OpenBao API je bindnuté na loopback adresu,
-- NetBox je dostupný cez HTTP bez finálneho reverse-proxy TLS termination.
+- NetBox a Oxidized sú dostupné cez spoločný Nginx a HTTPS s certifikátmi zákazníckej internej CA,
+- NetBox bootstrap HTTP port ostáva iba na `127.0.0.1:8000`,
+- Oxidized web/API nemá publikovaný host port; prístup vedie cez Nginx Basic Auth,
+- Nginx vyžaduje management IP a explicitný zoznam povolených podsietí,
+- komunikácia Nginx → backend prebieha cez HTTP v oddelených lokálnych Docker sieťach.
 
 Pred produkčným nasadením je potrebné doplniť minimálne:
 
 1. TLS pre OpenBao,
 2. dôveryhodný CA trust a certificate verification v Python klientoch,
 3. odstránenie `tls_disable`,
-4. HTTPS/reverse proxy pred NetBoxom,
+4. overiť HTTPS vstup, DNS, povolené podsiete a izoláciu portov na zákazníckej VM,
 5. lifecycle certifikátov a ich obnovu.
 
 Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie certifikátu.
@@ -108,7 +116,7 @@ scripts/deploy_atlas.py
         │      ├── unsealed
         │      └── atlas-deployer login
         │
-        └── 2. NetBox
+        ├── 2. NetBox
                │
                ├── secrets z OpenBao
                ├── pinned netbox-docker
@@ -117,9 +125,22 @@ scripts/deploy_atlas.py
                ├── API token
                ├── Atlas baseline
                └── Atlas Device Catalog
+        │
+        ├── 3. Oxidized
+        │      ├── prázdny inventár: pripravený kontajner bez spusteného zberu
+        │      ├── persistentná Git história
+        │      └── web/API len v internej sieti
+        │
+        └── 4. Nginx
+               ├── samostatné DNS názvy služieb
+               ├── HTTPS s certifikátmi internej CA
+               ├── management subnet allowlist
+               └── Oxidized Basic Auth: secret v OpenBao
 ```
 
 Ak OpenBao stage zlyhá, NetBox stage sa nespustí.
+
+Nginx sa spustí až po dokončení backendov. Chýbajúca alebo neplatná proxy konfigurácia zastaví celý deploy už pri preflight kontrole.
 
 ---
 
@@ -132,7 +153,9 @@ aricoma-atlas/
 │       └── validate.yml
 │
 ├── atlas/
-│   └── openbao_client.py
+│   ├── openbao_client.py
+│   ├── deployment.py
+│   └── proxy.py
 │
 ├── catalog/
 │   ├── manifest.yaml
@@ -142,6 +165,8 @@ aricoma-atlas/
 │
 ├── deployment/
 │   ├── netbox.yaml
+│   ├── oxidized.yaml
+│   ├── proxy.example.yaml
 │   └── openbao/
 │       ├── docker-compose.yml
 │       ├── openbao.hcl
@@ -157,6 +182,9 @@ aricoma-atlas/
 │   ├── deploy_atlas.py
 │   ├── deploy_openbao.py
 │   ├── deploy_netbox.py
+│   ├── deploy_oxidized.py
+│   ├── deploy_proxy.py
+│   ├── ci_ingress.py
 │   ├── openbao_access.py
 │   ├── bootstrap_netbox.py
 │   ├── build_catalog.py
@@ -166,6 +194,8 @@ aricoma-atlas/
 │   └── audit_component_fields.py
 │
 ├── requirements.txt
+├── tests/
+│   └── test_ingress.py
 ├── .gitignore
 └── README.md
 ```
@@ -214,6 +244,9 @@ Host musí mať minimálne:
 - Python `venv`,
 - Docker,
 - Docker Compose plugin.
+- OpenSSL CLI pre kontrolu CA certifikátov a generovanie hashov.
+
+Pre loopback port isolation používaj Docker Engine 28 alebo novší. Staršie verzie majú známe obmedzenie izolácie portov publikovaných na loopback adresu. [Docker port publishing](https://docs.docker.com/engine/network/port-publishing/) (overené 30. 9. 2026).
 
 Overenie Dockeru:
 
@@ -258,6 +291,54 @@ Poznámka: na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať 
 ---
 
 # One-command Atlas deployment
+
+## Konfigurácia pre konkrétnu zákaznícku VM
+
+DNS názvy, management IP, povolené podsiete a certifikáty sa líšia podľa zákazníka. Nie sú pevne zapísané v repozitári.
+
+```bash
+mkdir -p .runtime
+chmod 700 .runtime
+cp deployment/proxy.example.yaml .runtime/proxy.yaml
+chmod 600 .runtime/proxy.yaml
+```
+
+Vyplň všetky prázdne hodnoty v `.runtime/proxy.yaml`:
+
+| Položka | Význam |
+|---|---|
+| `proxy.listen_address` | Konkrétna management IP tejto VM, nie `0.0.0.0`. |
+| `proxy.https_port` | HTTPS port, štandardne `443`. |
+| `proxy.allowed_networks` | Neprázdny zoznam povolených správcovských CIDR podsietí/VPN; `0.0.0.0/0` a `::/0` sa odmietnu. |
+| `tls.ca_certificate` | Absolútna cesta k PEM trust bundle zákazníckej internej CA. |
+| `services.netbox.hostname` | DNS názov NetBoxu smerujúci na management IP VM. |
+| `services.oxidized.hostname` | Samostatný DNS názov Oxidized smerujúci na rovnakú management IP. |
+| `services.*.certificate` | Absolútna cesta k PEM serverovému certifikátu, vrátane intermediate chain. |
+| `services.*.private_key` | Absolútna cesta k príslušnému nešifrovanému PEM privátnemu kľúču. |
+
+Certifikát musí pokrývať príslušný DNS názov. Jeden SAN certifikát môže pokrývať oba názvy, alebo možno použiť dva samostatné certifikáty. Klienti musia dôverovať internej CA. Deploy overuje zhodu certifikátu s kľúčom, platnosť, DNS meno a reťazec voči nastavenej CA; nevydáva certifikáty ani nemení zákaznícke DNS.
+
+Iný lokálny konfiguračný súbor možno zvoliť cez `ATLAS_PROXY_CONFIG`. Hodnoty `.runtime/`, certifikáty ani kľúče sa necommitujú. Výstupný runtime obsahuje lokálne kópie TLS súborov; chráň a zálohuj ho ako citlivé dáta.
+
+Na firewalli povoľ HTTPS na management IP iba zo správcovských sietí/VPN. Proxy zároveň uplatňuje CIDR allowlist. Pred proxy sa v tejto verzii nepredpokladá ďalší load balancer; Nginx používa skutočnú adresu spojenia a nedôveruje klientskému `X-Forwarded-For`.
+
+## Prihlasovanie a hranice prístupu
+
+Oxidized nemá vlastný používateľský login. Nginx chráni celý jeho web aj API pomocou Basic Auth cez HTTPS. [Nginx Basic Auth](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html), [oxidized-web](https://github.com/ytti/oxidized-web) (overené 30. 9. 2026).
+
+Pri prvom deployi `deploy_proxy.py` vygeneruje účet a uloží ho do KV v2 na `atlas/oxidized/web` (`username`, `password`). Pri opakovanom deployi sa hodnoty používajú znova. Chybný existujúci secret alebo chyba oprávnení zastaví deploy; heslo sa potichu nezmení. Nginx dostane iba SHA-512 crypt hash do `.runtime/proxy/oxidized.htpasswd`, nie plaintext heslo ani OpenBao token.
+
+Prihlásený administrátor s príslušným oprávnením môže secret načítať cez OpenBao CLI:
+
+```bash
+bao kv get -mount=atlas oxidized/web
+```
+
+Príkaz predpokladá už nastavenú bezpečnú autentifikáciu CLI a správnu adresu OpenBao. Výstup obsahuje heslo; neukladaj ho do zdieľaných logov.
+
+NetBox používa svoje vlastné používateľské účty a API tokeny. Nginx pred neho nepridáva Basic Auth. OpenBao zostáva dostupné iba lokálne na loopback; proxy ho nesprístupňuje.
+
+Basic Auth účet pre Oxidized má prístup k celému jeho rozhraniu, vrátane API. Táto verzia nerieši individuálne roly, read-only používateľov ani SSO. Prístup majú dostať iba poverení správcovia.
 
 Hlavný entrypoint:
 
@@ -305,6 +386,12 @@ Atlas baseline
         │
         ▼
 Atlas Device Catalog
+        │
+        ▼
+Oxidized + Git volume
+        │
+        ▼
+Nginx HTTPS + Oxidized Basic Auth
         │
         ▼
 ARICOMA ATLAS READY
@@ -682,7 +769,7 @@ Atlas orchestrátor podporuje:
 python scripts/deploy_atlas.py --prepare-only
 ```
 
-OpenBao stage sa pripraví a overí. NetBox stage pripraví runtime a Compose konfiguráciu bez štartu NetBox kontajnerov.
+OpenBao sa spustí a overí. NetBox, Oxidized a Nginx pripravia runtime, Compose konfiguráciu a potrebné secrets bez štartu svojich kontajnerov. Aj tento režim vyžaduje platnú zákaznícku proxy konfiguráciu a certifikáty.
 
 Samostatne je možné použiť aj:
 
@@ -1046,6 +1133,10 @@ OpenBao
 readiness gate
   ↓
 NetBox
+  ↓
+Oxidized
+  ↓
+Nginx
 ```
 
 ---
@@ -1097,6 +1188,32 @@ Zabezpečuje:
 - Atlas bootstrap.
 
 ---
+
+# `deploy_oxidized.py`
+
+```bash
+python scripts/deploy_oxidized.py
+python scripts/deploy_oxidized.py --prepare-only
+```
+
+Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť `atlas-oxidized-web` a named volume `atlas-oxidized-data`. Volume obsahuje Git históriu a zapisovateľný runtime; opakovaný deploy ho nemaže. Zálohuj ho mimo VM spolu s OpenBao a NetBox dátami. Nepoužívaj `down -v` pri bežnom upgrade.
+
+Prvé nasadenie vytvorí prázdny `.runtime/oxidized/router.db`. Oxidized 0.37.0 odmieta prázdny zdroj (`NoNodesFound`), preto deploy v tomto stave pripraví kontajner a volume, ale zber nespustí. Nginx aj tak vyžaduje prihlásenie; po úspešnej autentifikácii vráti `503`, kým backend nie je spustený. Po dodaní platného inventára znovu spusti `deploy_oxidized.py`. Vyprázdnenie bootstrap inventára a redeploy zastaví zber bez odstránenia histórie. [Oxidized 0.37.0 — Core](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/core.rb).
+
+Existujúci inventár a `.runtime/oxidized/config` sa zachovávajú. Deployment týmto krokom **nezálohuje žiadne reálne zariadenie** a neimplementuje synchronizáciu NetBox → Oxidized.
+
+Budúca Atlas aplikácia bude čítať schválené zariadenia, management IP a platformy z NetBoxu, prekladať platformu na Oxidized model a získavať zariadeniové credentials z OpenBao. Oxidized dostane pripravený zdroj cez interné API. Tieto účty sa odlišujú od Basic Auth účtu webového rozhrania. SSH overovanie host kľúčov je zapnuté; pred zapojením zariadení treba pripraviť dôveryhodné host kľúče a otestovať jeden reálny backup.
+
+# `deploy_proxy.py`
+
+```bash
+python scripts/deploy_proxy.py
+python scripts/deploy_proxy.py --prepare-only
+```
+
+Vyžaduje zákaznícku proxy konfiguráciu a pripravené OpenBao. Vygeneruje/použije secret `atlas/oxidized/web`, vytvorí Nginx runtime a overí konfiguráciu pred štartom. Proxy je pripojený na webové siete oboch backendov, nie na NetBox databázovú sieť. Pri redeployi sa proxy kontajner obnoví, aby načítal certifikáty a hash; počas tohto kroku môže krátko vypadnúť webový prístup.
+
+Obnova certifikátu: obnov zdrojové PEM súbory na cestách uvedených v `.runtime/proxy.yaml` a spusti `deploy_proxy.py`. Rotácia webového hesla: oprávnený správca aktualizuje `password` na `atlas/oxidized/web` (minimálne 20 znakov), potom spustí `deploy_proxy.py`. Automatické vydávanie/obnova certifikátov nie sú implementované.
 
 # `bootstrap_netbox.py`
 
@@ -1398,6 +1515,25 @@ Aktuálna validácia môže zahŕňať:
 
 CI nesmie vyžadovať produkčné secrets.
 
+Nové ingress testy pokrývajú:
+
+- validáciu zákazníckej konfigurácie, certifikátu, názvu a privátneho kľúča,
+- zachovanie hesla pri redeployi a zastavenie pri chybách OpenBao,
+- HTTPS s dočasnou CI CA, bez vypínania certificate verification,
+- odmietnutie chýbajúceho/zlého hesla pre Oxidized web/API,
+- skutočný NetBox login POST cez HTTPS vrátane CSRF,
+- neprítomnosť publikovaných portov Oxidized,
+- prázdny produkčný inventár: zber je zastavený a proxy stále vyžaduje autentifikáciu,
+- odmietnutie klienta mimo povolenej podsiete aj pri podvrhnutom `X-Forwarded-For`,
+- zachovanie Oxidized Git commit-u a credentials pri opakovanom deployi,
+- upgrade pôvodného Atlasu na verziu s proxy/Oxidized a zachovanie NetBox dát.
+
+`scripts/ci_ingress.py` vytvára certifikáty iba pre izolovaný CI runner. Jeho DNS mená, širšie lokálne CIDR rozsahy a krátka platnosť certifikátov sa nepoužívajú pri zákazníckom nasadení. Pre natívne Oxidized testy sa použije iba loopback fixture s `interval: 0`, takže sa nespúšťajú SSH zbery. Lokálne testy bez Dockeru:
+
+```bash
+python -m unittest discover -s tests -v
+```
+
 ---
 
 # Versioning
@@ -1455,6 +1591,9 @@ Aktuálna `0.1.0-beta` zahŕňa:
 - NetBox Docker `5.1.1`,
 - PostgreSQL + Valkey,
 - OpenBao-backed NetBox secrets,
+- Oxidized deployment s persistentnou Git históriou a prázdnym počiatočným inventárom,
+- Nginx HTTPS proxy s internou CA a CIDR allowlistom,
+- OpenBao-backed Basic Auth pre Oxidized web/API,
 - automatický NetBox superuser,
 - automatický NetBox API token,
 - Atlas baseline,
@@ -1477,7 +1616,7 @@ Pred označením Atlas deploymentu ako produkčného je potrebné minimálne dor
 
 - TLS pre OpenBao,
 - CA trust a certificate verification,
-- HTTPS/reverse proxy pre NetBox,
+- lifecycle certifikátov a overenie proxy/firewall izolácie na zákazníckej VM,
 - produkčný audit-log destination a rotáciu,
 - backup/restore OpenBao Raft storage,
 - backup/restore NetBox PostgreSQL,
@@ -1494,10 +1633,10 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 Ďalšie fázy projektu môžu zahŕňať:
 
 - Checkmk deployment a provisioning,
-- Oxidized deployment a provisioning,
+- automatické napĺňanie Oxidized inventára z NetBoxu cez Atlas aplikáciu,
 - napojenie oboch služieb na spoločné device credentials v OpenBao,
 - Atlas aplikačnú vrstvu,
-- reverse proxy,
+- individuálne prístupy/SSO pre proxy,
 - centrálne logging/monitoring,
 - zákaznícke deployment profily,
 - produkčný TLS hardening.
@@ -1538,6 +1677,10 @@ OpenBao
 NetBox deployment
    +
 Atlas NetBox bootstrap
+   +
+Oxidized deployment a Git história
+   +
+Nginx HTTPS a chránený Oxidized web/API
    +
 pripravené runtime identity pre ďalšie služby
 ```

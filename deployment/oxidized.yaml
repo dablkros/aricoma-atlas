@@ -1,0 +1,9 @@
+oxidized:
+  docker_image: "docker.io/oxidized/oxidized:0.37.0"
+  interval: 3600
+  threads: 10
+  timeout: 20
+runtime:
+  directory: ".runtime/oxidized"
+  compose_project: "atlas-oxidized"
+  startup_timeout: 120
