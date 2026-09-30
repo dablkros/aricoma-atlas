@@ -442,7 +442,7 @@ def print_result(args):
     print(
         "Secrets source of truth: OpenBao"
     )
-    print("Oxidized: prepared only" if args.prepare_only else "Oxidized: ready (inventory initially empty)")
+    print("Oxidized: prepared only" if args.prepare_only else "Oxidized: deployed (collection requires device inventory)")
     print("Nginx: prepared only" if args.prepare_only else "Nginx: ready")
 
 

@@ -109,6 +109,10 @@ def render_nginx(config):
             authentication = ('        auth_basic "Atlas Oxidized";\n'
                               '        auth_basic_user_file /etc/atlas/oxidized.htpasswd;\n')
         authorization = '            proxy_set_header Authorization "";\n' if name == "oxidized" else ""
+        unavailable = ""
+        if name == "oxidized":
+            unavailable = ('        error_page 502 504 =503 @oxidized_unavailable;\n'
+                           '        location @oxidized_unavailable { return 503 "Oxidized backend unavailable.\\n"; }\n')
         servers.append(f"""
     server {{
         listen 8443 ssl;
@@ -119,6 +123,7 @@ def render_nginx(config):
         deny all;
         satisfy all;
 {authentication}
+{unavailable}
         location / {{
             set $backend http://{upstream};
             proxy_pass $backend;

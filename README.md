@@ -127,7 +127,7 @@ scripts/deploy_atlas.py
                └── Atlas Device Catalog
         │
         ├── 3. Oxidized
-        │      ├── prázdny inventár pri prvom nasadení
+        │      ├── prázdny inventár: pripravený kontajner bez spusteného zberu
         │      ├── persistentná Git história
         │      └── web/API len v internej sieti
         │
@@ -1198,7 +1198,9 @@ python scripts/deploy_oxidized.py --prepare-only
 
 Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť `atlas-oxidized-web` a named volume `atlas-oxidized-data`. Volume obsahuje Git históriu a zapisovateľný runtime; opakovaný deploy ho nemaže. Zálohuj ho mimo VM spolu s OpenBao a NetBox dátami. Nepoužívaj `down -v` pri bežnom upgrade.
 
-Prvé nasadenie vytvorí prázdny `.runtime/oxidized/router.db`. Existujúci inventár a `.runtime/oxidized/config` sa zachovávajú. Deployment týmto krokom **nezálohuje žiadne reálne zariadenie** a neimplementuje synchronizáciu NetBox → Oxidized.
+Prvé nasadenie vytvorí prázdny `.runtime/oxidized/router.db`. Oxidized 0.37.0 odmieta prázdny zdroj (`NoNodesFound`), preto deploy v tomto stave pripraví kontajner a volume, ale zber nespustí. Nginx aj tak vyžaduje prihlásenie; po úspešnej autentifikácii vráti `503`, kým backend nie je spustený. Po dodaní platného inventára znovu spusti `deploy_oxidized.py`. Vyprázdnenie bootstrap inventára a redeploy zastaví zber bez odstránenia histórie. [Oxidized 0.37.0 — Core](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/core.rb).
+
+Existujúci inventár a `.runtime/oxidized/config` sa zachovávajú. Deployment týmto krokom **nezálohuje žiadne reálne zariadenie** a neimplementuje synchronizáciu NetBox → Oxidized.
 
 Budúca Atlas aplikácia bude čítať schválené zariadenia, management IP a platformy z NetBoxu, prekladať platformu na Oxidized model a získavať zariadeniové credentials z OpenBao. Oxidized dostane pripravený zdroj cez interné API. Tieto účty sa odlišujú od Basic Auth účtu webového rozhrania. SSH overovanie host kľúčov je zapnuté; pred zapojením zariadení treba pripraviť dôveryhodné host kľúče a otestovať jeden reálny backup.
 
@@ -1521,10 +1523,12 @@ Nové ingress testy pokrývajú:
 - odmietnutie chýbajúceho/zlého hesla pre Oxidized web/API,
 - skutočný NetBox login POST cez HTTPS vrátane CSRF,
 - neprítomnosť publikovaných portov Oxidized,
+- prázdny produkčný inventár: zber je zastavený a proxy stále vyžaduje autentifikáciu,
+- odmietnutie klienta mimo povolenej podsiete aj pri podvrhnutom `X-Forwarded-For`,
 - zachovanie Oxidized Git commit-u a credentials pri opakovanom deployi,
 - upgrade pôvodného Atlasu na verziu s proxy/Oxidized a zachovanie NetBox dát.
 
-`scripts/ci_ingress.py` vytvára certifikáty iba pre izolovaný CI runner. Jeho DNS mená, širšie lokálne CIDR rozsahy a krátka platnosť certifikátov sa nepoužívajú pri zákazníckom nasadení. Lokálne testy bez Dockeru:
+`scripts/ci_ingress.py` vytvára certifikáty iba pre izolovaný CI runner. Jeho DNS mená, širšie lokálne CIDR rozsahy a krátka platnosť certifikátov sa nepoužívajú pri zákazníckom nasadení. Pre natívne Oxidized testy sa použije iba loopback fixture s `interval: 0`, takže sa nespúšťajú SSH zbery. Lokálne testy bez Dockeru:
 
 ```bash
 python -m unittest discover -s tests -v

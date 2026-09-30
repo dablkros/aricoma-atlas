@@ -18,7 +18,7 @@ from atlas.deployment import compose, connect_openbao, run, write_private, write
 from atlas.proxy import SECRET_PATH, load_config  # noqa: E402
 
 
-def fixtures():
+def fixtures(seed_inventory=True):
     runtime = ROOT / ".runtime/ci-tls"
     runtime.mkdir(parents=True, exist_ok=True)
     os.chmod(ROOT / ".runtime", 0o700)
@@ -47,10 +47,23 @@ def fixtures():
         service.update({"hostname": f"{name}.atlas.test", "certificate": str(certificate),
                         "private_key": str(key)})
     write_yaml(ROOT / ".runtime/proxy.yaml", config)
+    if seed_inventory:
+        from scripts.deploy_oxidized import prepare_runtime
+        oxidized = yaml.safe_load((ROOT / "deployment/oxidized.yaml").read_text())
+        oxidized["oxidized"]["interval"] = 0
+        file = prepare_runtime(oxidized, root=ROOT)
+        settings_file = file.parent / "config"
+        settings = yaml.safe_load(settings_file.read_text())
+        settings["interval"] = 0
+        write_yaml(settings_file, settings)
+        os.chmod(settings_file, 0o644)
+        # Real Oxidized refuses an empty source; the CI fixture is loopback only
+        # and interval=0 prevents SSH jobs. This is never a production device.
+        (file.parent / "router.db").write_text("127.0.0.2:ios\n")
     print("[OK] Ephemeral CI CA and ingress configuration prepared")
 
 
-def verify(snapshot=False, compare=False):
+def verify(snapshot=False, compare=False, oxidized_only=False):
     config = load_config()
     client, token = connect_openbao()
     try:
@@ -72,22 +85,23 @@ def verify(snapshot=False, compare=False):
     response = session.get(oxidized + "/nodes.json", auth=(secret["username"], secret["password"]), timeout=15)
     if response.status_code != 200 or not isinstance(response.json(), list):
         raise RuntimeError("Authenticated Oxidized API is unavailable")
-    netbox = f"https://{config['services']['netbox']['hostname']}:{port}"
-    response = session.get(netbox + "/login/", timeout=15)
-    if response.status_code != 200 or "csrftoken" not in session.cookies:
-        raise RuntimeError("NetBox HTTPS login is unavailable")
-    # A real login POST catches origin/proxy/secure-cookie regressions.
-    client, token = connect_openbao()
-    try:
-        admin = client.kv_read(token, "netbox/admin")
-    finally:
-        client.revoke_self(token)
-    response = session.post(netbox + "/login/", data={
-        "username": admin["username"], "password": admin["password"],
-        "csrfmiddlewaretoken": session.cookies["csrftoken"],
-    }, headers={"Referer": netbox + "/login/", "Origin": netbox}, timeout=15, allow_redirects=False)
-    if response.status_code != 302 or "sessionid" not in session.cookies:
-        raise RuntimeError("NetBox HTTPS login POST failed")
+    if not oxidized_only:
+        netbox = f"https://{config['services']['netbox']['hostname']}:{port}"
+        response = session.get(netbox + "/login/", timeout=15)
+        if response.status_code != 200 or "csrftoken" not in session.cookies:
+            raise RuntimeError("NetBox HTTPS login is unavailable")
+        # A real login POST catches origin/proxy/secure-cookie regressions.
+        client, token = connect_openbao()
+        try:
+            admin = client.kv_read(token, "netbox/admin")
+        finally:
+            client.revoke_self(token)
+        response = session.post(netbox + "/login/", data={
+            "username": admin["username"], "password": admin["password"],
+            "csrfmiddlewaretoken": session.cookies["csrftoken"],
+        }, headers={"Referer": netbox + "/login/", "Origin": netbox}, timeout=15, allow_redirects=False)
+        if response.status_code != 302 or "sessionid" not in session.cookies:
+            raise RuntimeError("NetBox HTTPS login POST failed")
     file = ROOT / ".runtime/oxidized/docker-compose.yml"
     container = compose(file, "atlas-oxidized", "ps", "-q", "oxidized")
     inspected = json.loads(run(["docker", "inspect", container]))[0]
@@ -109,19 +123,73 @@ def verify(snapshot=False, compare=False):
         previous = json.loads((ROOT / ".runtime/ci-ingress-snapshot.json").read_text())
         if previous["secret"] != secret or git("rev-parse", "refs/heads/atlas-ci") != previous["commit"]:
             raise RuntimeError("Oxidized credentials or Git history changed during redeployment")
-    print("[OK] Trusted HTTPS, authentication, NetBox login and port isolation verified")
+    print("[OK] Trusted HTTPS, Oxidized authentication and port isolation verified")
     if compare:
         print("[OK] Credentials and Oxidized Git history survived redeployment")
 
 
+def verify_waiting():
+    config = load_config()
+    client, token = connect_openbao()
+    try:
+        secret = client.kv_read(token, SECRET_PATH)
+    finally:
+        client.revoke_self(token)
+    session = requests.Session()
+    session.trust_env = False
+    session.verify = config["tls"]["ca_certificate"]
+    url = f"https://{config['services']['oxidized']['hostname']}:{config['proxy']['https_port']}/nodes.json"
+    if session.get(url, timeout=15).status_code != 401:
+        raise RuntimeError("Empty-inventory ingress is not authenticated")
+    if session.get(url, auth=(secret["username"], secret["password"]), timeout=15).status_code != 503:
+        raise RuntimeError("Empty inventory must report backend unavailable after authentication")
+    file = ROOT / ".runtime/oxidized/docker-compose.yml"
+    container = compose(file, "atlas-oxidized", "ps", "--all", "-q", "oxidized")
+    if not container or json.loads(run(["docker", "inspect", container]))[0]["State"]["Running"]:
+        raise RuntimeError("Empty-inventory Oxidized must be prepared without collecting")
+    print("[OK] Empty inventory is explicitly stopped; HTTPS still requires authentication")
+
+
+def verify_network_denial():
+    path = ROOT / ".runtime/proxy.yaml"
+    config = load_config(path)
+    original = path.read_text()
+    client, token = connect_openbao()
+    try:
+        secret = client.kv_read(token, SECRET_PATH)
+    finally:
+        client.revoke_self(token)
+    try:
+        config["proxy"]["allowed_networks"] = ["192.0.2.0/24"]
+        write_yaml(path, config)
+        run([sys.executable, str(ROOT / "scripts/deploy_proxy.py")])
+        session = requests.Session()
+        session.trust_env = False
+        session.verify = config["tls"]["ca_certificate"]
+        url = f"https://{config['services']['oxidized']['hostname']}:{config['proxy']['https_port']}/nodes.json"
+        for headers in ({}, {"X-Forwarded-For": "192.0.2.20"}):
+            if session.get(url, auth=(secret["username"], secret["password"]), headers=headers, timeout=15).status_code != 403:
+                raise RuntimeError("Management CIDR restriction can be bypassed")
+    finally:
+        write_private(path, original)
+        run([sys.executable, str(ROOT / "scripts/deploy_proxy.py")])
+    print("[OK] Unauthorized client network is denied, including spoofed X-Forwarded-For")
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=["fixtures", "verify", "snapshot", "compare"])
+    parser.add_argument("operation", choices=["fixtures", "verify", "snapshot", "compare", "waiting", "deny-network"])
+    parser.add_argument("--oxidized-only", action="store_true")
+    parser.add_argument("--empty-inventory", action="store_true")
     args = parser.parse_args()
     if args.operation == "fixtures":
-        fixtures()
+        fixtures(seed_inventory=not args.empty_inventory)
+    elif args.operation == "waiting":
+        verify_waiting()
+    elif args.operation == "deny-network":
+        verify_network_denial()
     else:
-        verify(snapshot=args.operation == "snapshot", compare=args.operation == "compare")
+        verify(snapshot=args.operation == "snapshot", compare=args.operation == "compare", oxidized_only=args.oxidized_only)
 
 
 if __name__ == "__main__":

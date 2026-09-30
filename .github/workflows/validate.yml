@@ -380,6 +380,54 @@ jobs:
             -v \
             --remove-orphans
 
+  oxidized-ingress-integration:
+    name: Oxidized HTTPS ingress integration
+    runs-on: ubuntu-latest
+    needs: [validate]
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+          cache: "pip"
+      - name: Install dependencies and prepare ephemeral TLS
+        run: |
+          python3 -m pip install -r requirements.txt
+          python3 scripts/ci_ingress.py fixtures --empty-inventory
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+      - name: Deploy OpenBao
+        shell: bash
+        run: |
+          set -o pipefail
+          python3 scripts/deploy_openbao.py 2>&1 | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+      - name: Verify protected ingress with empty device inventory
+        run: |
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py waiting
+      - name: Start native Oxidized with a non-collecting loopback fixture
+        run: |
+          python3 scripts/ci_ingress.py fixtures
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py snapshot --oxidized-only
+      - name: Verify redeployment, persistence and network restrictions
+        run: |
+          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_proxy.py
+          python3 scripts/ci_ingress.py compare --oxidized-only
+          python3 scripts/ci_ingress.py deny-network
+      - name: Clean up isolated integration environment
+        if: always()
+        run: |
+          for component in proxy oxidized; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
+            fi
+          done
+          docker compose -f deployment/openbao/docker-compose.yml down -v --remove-orphans || true
+
   atlas-integration:
     name: Full Atlas integration
     runs-on: ubuntu-latest
