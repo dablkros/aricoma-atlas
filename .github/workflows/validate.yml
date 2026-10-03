@@ -50,12 +50,9 @@ jobs:
       # ---------------------------------------------------------------------
 
       - name: Validate Python syntax
-        run: |
-          python3 -m py_compile scripts/*.py
-          python3 -m py_compile atlas/*.py
-          python3 -m py_compile tests/*.py
+        run: python3 -m compileall -q atlas scripts tests
 
-      - name: Test ingress deployment and certificate validation
+      - name: Run Atlas unit tests
         run: python3 -m unittest discover -s tests -v
 
       # ---------------------------------------------------------------------

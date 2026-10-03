@@ -302,7 +302,7 @@ install_python_environment() {
         "${VENV_DIR}/bin/python3" -m pip install -r "${ATLAS_ROOT}/requirements.txt"
 
     runuser -u "$ATLAS_USER" -- env HOME="$ATLAS_HOME" \
-        "${VENV_DIR}/bin/python3" -c 'import requests, yaml; print("Python dependencies import successfully")'
+        "${VENV_DIR}/bin/python3" -c 'import fastapi, pydantic_settings, requests, uvicorn, yaml; print("Python dependencies import successfully")'
 
     ok "Atlas Python dependencies installed"
 }

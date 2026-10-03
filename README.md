@@ -203,8 +203,24 @@ aricoma-atlas/
 │       └── validate.yml
 │
 ├── atlas/
+│   ├── api/
+│   │   ├── main.py
+│   │   ├── routes/
+│   │   │   ├── health.py
+│   │   │   └── oxidized.py
+│   │   └── schemas/
+│   ├── services/
+│   │   ├── netbox.py
+│   │   ├── openbao.py
+│   │   └── oxidized.py
+│   ├── devices/
+│   ├── prophylaxis/
+│   ├── config.py
+│   ├── logging.py
+│   ├── device_credentials.py
 │   ├── openbao_client.py
 │   ├── deployment.py
+│   ├── platforms.py
 │   └── proxy.py
 │
 ├── bin/
@@ -332,7 +348,7 @@ Cieľový host musí mať:
 
 - podporovaný Linux so `sudo`,
 - Git,
-- Python 3 a modul `venv`,
+- Python 3.10 alebo novší a modul `venv`,
 - OpenSSL CLI,
 - prístup k Docker registru a potrebným Git repozitárom,
 - pripravenú management IP, DNS a firewall pravidlá,
@@ -386,7 +402,31 @@ Overenie:
 python3 --version
 ```
 
-V dokumentácii a skriptoch používaj explicitne `python3`. Na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať `NotOpenSSLWarning` kvôli LibreSSL; beta flow tým nemusí byť blokovaný, ale produkcia má používať podporovaný Python/OpenSSL stack.
+FastAPI 0.142.2 vyžaduje Python 3.10 alebo novší. V dokumentácii a skriptoch používaj explicitne `python3`. Na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať `NotOpenSSLWarning` kvôli LibreSSL; beta flow tým nemusí byť blokovaný, ale produkcia má používať podporovaný Python/OpenSSL stack.
+
+## Atlas backend API — Milestone 1
+
+Lokálne spustenie po aktivácii virtual environmentu:
+
+```bash
+uvicorn atlas.api.main:app --host 127.0.0.1 --port 8081
+```
+
+Liveness kontrola:
+
+```bash
+curl -i http://127.0.0.1:8081/api/health
+```
+
+Očakávané telo odpovede:
+
+```json
+{"status":"ok","service":"Aricoma Atlas","version":"0.1.2-beta","environment":"development"}
+```
+
+Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Podporované premenné v tomto milestone sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
+
+`GET /api/health` je iba liveness kontrola procesu. Nekontroluje NetBox, OpenBao ani Oxidized; externé dependency/readiness kontroly patria do samostatného endpointu v ďalšom milestone.
 
 ---
 
@@ -1889,7 +1929,7 @@ GitHub Actions
 Pred commitom:
 
 ```bash
-python3 -m py_compile scripts/*.py atlas/*.py
+python3 -m compileall -q atlas scripts tests
 python3 -m unittest discover -s tests -v
 git status
 git diff --cached --check
