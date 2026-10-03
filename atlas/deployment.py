@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from atlas.openbao_client import OpenBaoClient, OpenBaoError
+from atlas.openbao_client import OpenBaoClient, OpenBaoNotFound
 
 ROOT = Path(__file__).resolve().parent.parent
 NETBOX_NETWORK = "atlas-netbox-web"
@@ -94,7 +94,5 @@ def connect_openbao():
 def optional_secret(client, token, path):
     try:
         return client.kv_read(token, path)
-    except OpenBaoError as exc:
-        if "HTTP 404" in str(exc):
-            return None
-        raise
+    except OpenBaoNotFound:
+        return None

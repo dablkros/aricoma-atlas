@@ -1348,6 +1348,29 @@ def ensure_runtime_identity(
     )
 
 
+def reconcile_runtime_role(root_token, role_name):
+    """Reconcile one runtime policy, AppRole, and machine identity."""
+    if role_name not in RUNTIME_ROLES:
+        raise RuntimeError(f"Unknown OpenBao runtime role: {role_name}")
+
+    spec = RUNTIME_ROLES[role_name]
+    ensure_runtime_policy(
+        root_token,
+        role_name,
+        spec["policy_file"],
+    )
+    ensure_runtime_role(
+        root_token,
+        role_name,
+        spec.get("additional_policies", []),
+    )
+    ensure_runtime_identity(
+        root_token,
+        role_name,
+        spec["identity_file"],
+    )
+
+
 def validate_runtime_identities(optional_roles=()):
     for role_name, spec in RUNTIME_ROLES.items():
         identity = load_identity_file(
@@ -1537,13 +1560,6 @@ def bootstrap_openbao(root_token):
         DEVICE_CREDENTIALS_POLICY_FILE,
     )
 
-    for role_name, spec in RUNTIME_ROLES.items():
-        ensure_runtime_policy(
-            root_token,
-            role_name,
-            spec["policy_file"],
-        )
-
     # AppRole MUST exist before creating any roles.
     ensure_approle_auth(
         root_token
@@ -1565,20 +1581,8 @@ def bootstrap_openbao(root_token):
         root_token
     )
 
-    for role_name, spec in RUNTIME_ROLES.items():
-        ensure_runtime_role(
-            root_token,
-            role_name,
-            spec.get(
-                "additional_policies",
-                [],
-            ),
-        )
-        ensure_runtime_identity(
-            root_token,
-            role_name,
-            spec["identity_file"],
-        )
+    for role_name in RUNTIME_ROLES:
+        reconcile_runtime_role(root_token, role_name)
 
     ok(
         "OpenBao bootstrap completed"

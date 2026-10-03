@@ -20,6 +20,7 @@ from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
 )
+from scripts import deploy_openbao as openbao_deployment  # noqa: E402
 
 
 OPENBAO_URL = (
@@ -191,7 +192,15 @@ def select_root_ttl():
     )
 
 
-def generate_temporary_root(client):
+def run_controlled_root_action(client, root_token, action):
+    """Run one privileged operation and always attempt token revocation."""
+    try:
+        return action(root_token)
+    finally:
+        client.revoke_self(root_token)
+
+
+def generate_temporary_root(client, action=None, requested_ttl=None):
     header(
         "TEMPORARY ROOT ACCESS"
     )
@@ -200,13 +209,13 @@ def generate_temporary_root(client):
         client
     )
 
-    ttl = select_root_ttl()
+    ttl = requested_ttl or select_root_ttl()
 
     if not ttl:
         print(
             "Cancelled."
         )
-        return
+        return False
 
     operator_token = (
         client.login_from_identity(
@@ -238,7 +247,7 @@ def generate_temporary_root(client):
             print(
                 "Cancelled."
             )
-            return
+            return False
 
         client.cancel_root_generation(
             operator_token
@@ -387,7 +396,7 @@ def generate_temporary_root(client):
         print(
             "Cancelled."
         )
-        return
+        return False
 
     except Exception:
         if attempt_active:
@@ -403,6 +412,14 @@ def generate_temporary_root(client):
     root_token = temporary[
         "token"
     ]
+
+    if action is not None:
+        run_controlled_root_action(client, root_token, action)
+
+        ok(
+            "Temporary root token revoked after the controlled operation"
+        )
+        return True
 
     root_info = client.lookup_self(
         root_token
@@ -470,6 +487,27 @@ def generate_temporary_root(client):
     ok(
         "Temporary root token revoked"
     )
+
+
+def reconcile_backend_policy(client):
+    """Apply the current atlas-backend policy without exposing a root token."""
+
+    def reconcile(root_token):
+        openbao_deployment.reconcile_runtime_role(
+            root_token,
+            "atlas-backend",
+        )
+
+    applied = generate_temporary_root(
+        client,
+        action=reconcile,
+        requested_ttl="15m",
+    )
+    if not applied:
+        print("[INFO] atlas-backend reconcile was cancelled")
+        return False
+    ok("atlas-backend policy and AppRole reconciled")
+    return True
 
 
 # ===========================================================================
@@ -584,16 +622,19 @@ def menu():
             "1. Generate Atlas deployer token"
         )
         print(
-            "2. Generate temporary root token"
+            "2. Reconcile atlas-backend policy"
         )
         print(
-            "3. Revoke token"
+            "3. Generate temporary root token"
         )
         print(
-            "4. Inspect token"
+            "4. Revoke token"
         )
         print(
-            "5. Exit"
+            "5. Inspect token"
+        )
+        print(
+            "6. Exit"
         )
         print()
 
@@ -608,21 +649,26 @@ def menu():
                 )
 
             elif choice == "2":
-                generate_temporary_root(
+                reconcile_backend_policy(
                     client
                 )
 
             elif choice == "3":
-                revoke_token(
+                generate_temporary_root(
                     client
                 )
 
             elif choice == "4":
-                inspect_token(
+                revoke_token(
                     client
                 )
 
             elif choice == "5":
+                inspect_token(
+                    client
+                )
+
+            elif choice == "6":
                 return
 
             else:

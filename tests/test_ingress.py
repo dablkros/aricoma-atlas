@@ -9,7 +9,7 @@ from unittest.mock import patch
 import yaml
 
 from atlas import proxy
-from atlas.openbao_client import OpenBaoError
+from atlas.openbao_client import OpenBaoError, OpenBaoNotFound
 
 
 def customer_config():
@@ -33,7 +33,7 @@ class FakeBao:
         if self.error:
             raise self.error
         if self.value is None:
-            raise OpenBaoError("HTTP 404")
+            raise OpenBaoNotFound("not found")
         return copy.deepcopy(self.value)
 
     def kv_write(self, token, path, value):

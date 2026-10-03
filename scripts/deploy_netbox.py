@@ -23,6 +23,7 @@ if str(ROOT) not in sys.path:
 from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
+    OpenBaoNotFound,
 )
 from atlas.deployment import NETBOX_NETWORK, ensure_network, write_private  # noqa: E402
 from atlas.proxy import load_config as load_proxy_config  # noqa: E402
@@ -779,17 +780,11 @@ def openbao_read_optional(
             path,
         )
 
+    except OpenBaoNotFound:
+        return None
     except OpenBaoError as exc:
-        # OpenBaoClient currently raises on a missing
-        # KV v2 path. Treat only HTTP 404 as "absent";
-        # all authentication/policy/server errors remain
-        # fatal.
-        if "HTTP 404" in str(exc):
-            return None
-
         raise RuntimeError(
-            f"Unable to read OpenBao secret "
-            f"atlas/{path}: {exc}"
+            f"Unable to read OpenBao secret atlas/{path}"
         ) from exc
 
 
