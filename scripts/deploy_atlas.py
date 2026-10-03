@@ -35,6 +35,7 @@ NETBOX_DEPLOY_SCRIPT = (
     / "deploy_netbox.py"
 )
 OXIDIZED_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_oxidized.py"
+BACKEND_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_backend.py"
 PROXY_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_proxy.py"
 
 OPENBAO_IDENTITY_FILE = (
@@ -65,7 +66,8 @@ def parse_args():
         "--prepare-only",
         action="store_true",
         help=(
-            "Prepare NetBox, Oxidized and Nginx runtimes and secrets "
+            "Prepare NetBox, Oxidized, Atlas backend and Nginx runtimes "
+            "and secrets "
             "without starting their containers. "
             "OpenBao is still started because it "
             "is the secrets source of truth."
@@ -249,7 +251,7 @@ def verify_openbao_ready():
 
 def deploy_openbao():
     header(
-        "ATLAS STAGE 1/4 - OPENBAO"
+        "ATLAS STAGE 1/5 - OPENBAO"
     )
 
     read_fd, write_fd = os.pipe()
@@ -333,7 +335,7 @@ def deploy_openbao():
 
 def deploy_netbox(args):
     header(
-        "ATLAS STAGE 2/4 - NETBOX"
+        "ATLAS STAGE 2/5 - NETBOX"
     )
 
     netbox_args = []
@@ -359,13 +361,27 @@ def deploy_netbox(args):
 
 
 def deploy_oxidized(args):
-    header("ATLAS STAGE 3/4 - OXIDIZED")
-    run_script(OXIDIZED_DEPLOY_SCRIPT, ["--prepare-only"] if args.prepare_only else [])
+    header("ATLAS STAGE 3/5 - OXIDIZED")
+    run_script(
+        OXIDIZED_DEPLOY_SCRIPT,
+        ["--prepare-only"] if args.prepare_only else [],
+    )
+
+
+def deploy_backend(args):
+    header("ATLAS STAGE 4/5 - ATLAS BACKEND")
+    run_script(
+        BACKEND_DEPLOY_SCRIPT,
+        ["--prepare-only"] if args.prepare_only else [],
+    )
 
 
 def deploy_proxy(args):
-    header("ATLAS STAGE 4/4 - NGINX HTTPS INGRESS")
-    run_script(PROXY_DEPLOY_SCRIPT, ["--prepare-only"] if args.prepare_only else [])
+    header("ATLAS STAGE 5/5 - NGINX HTTPS INGRESS")
+    run_script(
+        PROXY_DEPLOY_SCRIPT,
+        ["--prepare-only"] if args.prepare_only else [],
+    )
 
 
 # ===========================================================================
@@ -442,7 +458,16 @@ def print_result(args):
     print(
         "Secrets source of truth: OpenBao"
     )
-    print("Oxidized: prepared only" if args.prepare_only else "Oxidized: ready (waits for inventory when empty)")
+    print(
+        "Oxidized: prepared only"
+        if args.prepare_only
+        else "Oxidized: ready (waits for inventory when empty)"
+    )
+    print(
+        "Atlas backend: prepared only"
+        if args.prepare_only
+        else "Atlas backend: ready on 127.0.0.1:8081"
+    )
     print("Nginx: prepared only" if args.prepare_only else "Nginx: ready")
 
 
@@ -473,6 +498,7 @@ def main():
             args
         )
         deploy_oxidized(args)
+        deploy_backend(args)
         deploy_proxy(args)
 
         print_result(

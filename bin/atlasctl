@@ -9,6 +9,7 @@ ATLAS_HOME="/home/atlas"
 ATLAS_ROOT="/opt/aricoma-atlas"
 PYTHON="${ATLAS_ROOT}/.venv/bin/python3"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
+BACKEND_COMPOSE="${RUNTIME_DIR}/backend/docker-compose.yml"
 PROXY_CONFIG="${ATLAS_PROXY_CONFIG:-${RUNTIME_DIR}/proxy.yaml}"
 OXIDIZED_INVENTORY_DIR="${ATLAS_OXIDIZED_RUN_DIR:-/run/atlas/oxidized}"
 
@@ -25,6 +26,7 @@ Usage:
   sudo atlasctl oxidized host-key scan HOST [--port PORT]
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT]
   sudo atlasctl oxidized logs [docker compose logs options]
+  sudo atlasctl backend logs [docker compose logs options]
 
 Commands:
   deploy                Deploy or reconcile the full Atlas stack.
@@ -33,6 +35,7 @@ Commands:
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
+  backend logs          Show Atlas backend container logs.
 EOF
 }
 
@@ -110,6 +113,28 @@ show_status() {
     docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' \
         | awk 'NR==1 || /atlas-/'
 
+    printf '\nAtlas backend:\n'
+    if [[ ! -f "$BACKEND_COMPOSE" ]]; then
+        printf '  state: NOT_PREPARED\n'
+    else
+        local backend_container backend_state
+        backend_container="$(
+            docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
+                ps -q backend 2>/dev/null || true
+        )"
+        if [[ -z "$backend_container" ]]; then
+            printf '  state: STOPPED\n'
+        else
+            backend_state="$(
+                docker inspect --format \
+                    '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                    "$backend_container" 2>/dev/null || printf 'UNKNOWN'
+            )"
+            printf '  state: %s\n' "$backend_state"
+        fi
+        printf '  health: http://127.0.0.1:8081/api/health\n'
+    fi
+
     local source="${OXIDIZED_INVENTORY_DIR}/router.json"
     printf '\nOxidized:\n'
 
@@ -130,6 +155,11 @@ oxidized_logs() {
     [[ -f "$compose_file" ]] || die "Oxidized runtime is not prepared"
     shift 0
     exec docker compose -f "$compose_file" -p atlas-oxidized logs "$@" oxidized
+}
+
+backend_logs() {
+    [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
+    exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend logs "$@" backend
 }
 
 main() {
@@ -194,6 +224,19 @@ main() {
                 logs)
                     shift
                     oxidized_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        backend)
+            shift
+            case "${1:-}" in
+                logs)
+                    shift
+                    backend_logs "$@"
                     ;;
                 *)
                     usage

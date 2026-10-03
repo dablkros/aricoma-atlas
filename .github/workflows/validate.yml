@@ -72,6 +72,7 @@ jobs:
               Path("catalog/baseline/custom_fields.yaml"),
               Path("deployment/netbox.yaml"),
               Path("deployment/oxidized.yaml"),
+              Path("deployment/backend.yaml"),
               Path("deployment/proxy.example.yaml"),
           ]
 
@@ -96,6 +97,40 @@ jobs:
 
           print("[OK] Atlas YAML validation completed")
           PY
+
+      - name: Build Atlas backend image
+        run: |
+          trap 'docker rm --force atlas-backend-ci >/dev/null 2>&1 || true' EXIT
+
+          docker build \
+            --file deployment/backend/Dockerfile \
+            --tag aricoma-atlas-backend:ci \
+            --build-arg ATLAS_VERSION=ci \
+            --build-arg PYTHON_BASE_IMAGE=docker.io/library/python:3.13.16-slim-bookworm \
+            .
+
+          docker run \
+            --detach \
+            --name atlas-backend-ci \
+            --read-only \
+            --tmpfs /tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777 \
+            --cap-drop ALL \
+            --security-opt no-new-privileges \
+            aricoma-atlas-backend:ci
+
+          for attempt in $(seq 1 30); do
+            status="$(docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' atlas-backend-ci)"
+            if [ "${status}" = "healthy" ]; then
+              break
+            fi
+            if [ "${status}" = "unhealthy" ] || [ "${status}" = "exited" ]; then
+              docker logs atlas-backend-ci
+              exit 1
+            fi
+            sleep 2
+          done
+
+          test "$(docker inspect --format '{{.State.Health.Status}}' atlas-backend-ci)" = "healthy"
 
       # ---------------------------------------------------------------------
       # OpenBao deployment

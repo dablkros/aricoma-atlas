@@ -7,6 +7,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **OpenBao 2.7.0** ako centrálny secrets backend,
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
+- **Atlas FastAPI backend 0.1.2-beta** zostavený a spustený v samostatnom kontajneri,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,
@@ -31,6 +32,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
+sudo atlasctl backend logs -f
 ```
 
 Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, DNS a TLS súbory podľa sekcie **Inštalácia a deployment na čistej VM**. Priame `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a diagnostiku.
@@ -39,9 +41,9 @@ Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, D
 
 # Aktuálny stav
 
-**Release:** `v0.1.2-beta`
+**Posledný vydaný release:** `v0.1.2-beta`
 
-Táto dokumentácia opisuje release `v0.1.2-beta`.
+Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
 Aktuálne overený clean-install flow zahŕňa:
 
@@ -66,6 +68,8 @@ Deklarovaná kombinácia pre tento deployment:
 - NetBox Docker `5.1.1`
 - NetBox image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
+- Atlas backend image `aricoma-atlas-backend:0.1.2-beta`
+- Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
 - Python 3 virtual environment
@@ -108,6 +112,8 @@ V aktuálnom beta prostredí:
 - OpenBao listener má `tls_disable = true`,
 - OpenBao API je bindnuté na loopback adresu,
 - NetBox a Oxidized sú publikované cez spoločný Nginx a HTTPS,
+- Atlas backend je publikovaný iba na loopback adrese `127.0.0.1:8081`,
+- Atlas backend zatiaľ nie je pripojený do Nginx, pretože Milestone 1 nemá API autentifikáciu,
 - Oxidized web/API nemá publikovaný host port,
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
@@ -181,7 +187,13 @@ deploy.sh / atlasctl deploy
     │      ├── strict SSH host-key verification
     │      └── web/API iba v internej Docker sieti
     │
-    └── 4. Nginx
+    ├── 4. Atlas backend
+    │      ├── lokálny build z pripnutého checkoutu
+    │      ├── non-root kontajner s read-only root filesystemom
+    │      ├── healthcheck GET /api/health
+    │      └── host bind iba 127.0.0.1:8081
+    │
+    └── 5. Nginx
            ├── samostatné DNS názvy služieb
            ├── HTTPS s certifikátmi internej CA
            ├── management subnet allowlist
@@ -233,6 +245,9 @@ aricoma-atlas/
 │       └── custom_fields.yaml
 │
 ├── deployment/
+│   ├── backend.yaml
+│   ├── backend/
+│   │   └── Dockerfile
 │   ├── netbox.yaml
 │   ├── oxidized.yaml
 │   ├── proxy.example.yaml
@@ -253,6 +268,7 @@ aricoma-atlas/
 │   ├── deploy_openbao.py
 │   ├── deploy_netbox.py
 │   ├── deploy_oxidized.py
+│   ├── deploy_backend.py
 │   ├── deploy_proxy.py
 │   ├── openbao_access.py
 │   ├── bootstrap_netbox.py
@@ -266,6 +282,7 @@ aricoma-atlas/
 ├── install.sh
 ├── deploy.sh
 ├── requirements.txt
+├── .dockerignore
 ├── .gitignore
 └── README.md
 ```
@@ -315,6 +332,8 @@ Typický nainštalovaný runtime:
 ├── openbao-checkmk.json
 ├── openbao-oxidized.json
 ├── netbox-docker/
+├── backend/
+│   └── docker-compose.yml
 └── oxidized/
     ├── config
     └── ssh/
@@ -405,6 +424,17 @@ python3 --version
 FastAPI 0.142.2 vyžaduje Python 3.10 alebo novší. V dokumentácii a skriptoch používaj explicitne `python3`. Na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať `NotOpenSSLWarning` kvôli LibreSSL; beta flow tým nemusí byť blokovaný, ale produkcia má používať podporovaný Python/OpenSSL stack.
 
 ## Atlas backend API — Milestone 1
+
+Pri štandardnom nasadení `sudo atlasctl deploy` zostaví image z aktuálneho nainštalovaného Git checkoutu, spustí backend ako štvrtú z piatich fáz a počká na stav `healthy`. Konfigurácia image, portu a timeoutu je v `deployment/backend.yaml`; generovaný Compose runtime je v `.runtime/backend/docker-compose.yml`.
+
+Backend je na hoste zámerne dostupný iba lokálne:
+
+```bash
+curl -i http://127.0.0.1:8081/api/health
+sudo atlasctl backend logs -f
+```
+
+Verejné sprístupnenie cez Nginx je odložené do momentu, keď bude definovaná autentifikácia a autorizácia Atlas API.
 
 Lokálne spustenie po aktivácii virtual environmentu:
 
@@ -593,6 +623,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
+sudo atlasctl backend logs [docker compose logs options]
 ```
 
 Význam:
@@ -604,6 +635,7 @@ Význam:
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |
 | `sudo atlasctl oxidized reconcile` | Overí runtime mounty a zosúladí/reloadne Oxidized inventory. |
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
+| `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
 
 ## Prihlasovanie a hranice prístupu
 
@@ -1027,13 +1059,14 @@ Priamy vývojový vstup:
 python3 scripts/deploy_atlas.py --prepare-only
 ```
 
-OpenBao sa spustí a overí. NetBox, Oxidized a Nginx pripravia runtime, Compose konfiguráciu a potrebné secrets bez štartu svojich aplikačných kontajnerov. Aj tento režim vyžaduje platnú proxy konfiguráciu a certifikáty.
+OpenBao sa spustí a overí. NetBox, Oxidized, Atlas backend a Nginx pripravia runtime, Compose konfiguráciu a potrebné secrets bez štartu svojich aplikačných kontajnerov. Aj tento režim vyžaduje platnú proxy konfiguráciu a certifikáty.
 
 Samostatne možno použiť:
 
 ```bash
 python3 scripts/deploy_netbox.py --prepare-only
 python3 scripts/deploy_oxidized.py --prepare-only
+python3 scripts/deploy_backend.py --prepare-only
 python3 scripts/deploy_proxy.py --prepare-only
 ```
 
@@ -1400,8 +1433,12 @@ NetBox
   ↓
 Oxidized
   ↓
+Atlas backend
+  ↓
 Nginx
 ```
+
+Atlas backend sa zostaví lokálne z rovnakého commitu, ktorý nasadil `install.sh`. Deployment ho publikuje iba na `127.0.0.1:8081` a pokračuje k Nginx až po úspešnom kontajnerovom healthchecku.
 
 ---
 
@@ -2022,6 +2059,8 @@ pinned NetBox Docker/image
         +
 pinned Oxidized image/configuration
         +
+Atlas FastAPI backend image/configuration
+        +
 Nginx ingress configuration
 ```
 
@@ -2108,7 +2147,7 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 
 Ďalšie fázy projektu:
 
-- Atlas aplikačná vrstva,
+- aplikačná logika nad existujúcim Atlas FastAPI skeletonom,
 - GUI/API nad existujúcim výberom NetBox zariadení a reconcile logikou,
 - pending-approval evidencia a riadená rotácia SSH host keys,
 - automatická validácia prvého backupu po schválení zariadenia,
