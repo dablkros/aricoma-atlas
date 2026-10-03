@@ -66,3 +66,5 @@ devicetype-library/
 # ---------------------------------------------------------------------------
 
 .runtime/
+router.json
+known_hosts

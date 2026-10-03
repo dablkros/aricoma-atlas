@@ -52,7 +52,7 @@ def fixtures(seed_inventory=True):
                         "private_key": str(key)})
     write_yaml(ROOT / ".runtime/proxy.yaml", config)
     if seed_inventory:
-        from scripts.deploy_oxidized import prepare_runtime
+        from scripts.deploy_oxidized import inventory_path, prepare_runtime
         oxidized = yaml.safe_load((ROOT / "deployment/oxidized.yaml").read_text())
         oxidized["oxidized"]["interval"] = 0
         # CI-only checkout: keep interval=0 through subsequent runtime generation.
@@ -64,8 +64,19 @@ def fixtures(seed_inventory=True):
         write_yaml(settings_file, settings)
         os.chmod(settings_file, 0o644)
         # Real Oxidized refuses an empty source; the CI fixture is loopback only
-        # and interval=0 prevents SSH jobs. This is never a production device.
-        (file.parent / "router.db").write_text("127.0.0.2:ios\n")
+        # and interval=0 prevents SSH jobs. Values are isolated test data.
+        inventory = [{
+            "name": "CI-OXIDIZED-FIXTURE",
+            "ip": "127.0.0.2",
+            "model": "ios",
+            "username": "ci-fixture",
+            "password": "ci-fixture-only",
+        }]
+        write_private(
+            inventory_path(oxidized, root=ROOT),
+            json.dumps(inventory, indent=2) + "\n",
+            mode=0o644,
+        )
     print("[OK] Ephemeral CI CA and ingress configuration prepared")
 
 

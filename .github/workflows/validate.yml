@@ -14,6 +14,9 @@ on:
 permissions:
   contents: read
 
+env:
+  ATLAS_OXIDIZED_RUN_DIR: /tmp/atlas/oxidized
+
 jobs:
   validate:
     name: Validate Atlas
@@ -104,8 +107,10 @@ jobs:
       - name: Validate OpenBao deployment files
         run: |
           required_files=(
+            deployment/tmpfiles.d/aricoma-atlas.conf
             deployment/openbao/docker-compose.yml
             deployment/openbao/openbao.hcl
+            deployment/openbao/policies/atlas-backend.hcl
             deployment/openbao/policies/atlas-deployer.hcl
             deployment/openbao/policies/atlas-operator.hcl
             deployment/openbao/policies/device-credentials-read.hcl
@@ -422,18 +427,18 @@ jobs:
 
       - name: Verify protected ingress with empty device inventory
         run: |
-          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_oxidized.py --ci-prepared-inventory
           python3 scripts/deploy_proxy.py
           python3 scripts/ci_ingress.py waiting
       - name: Start native Oxidized with a non-collecting loopback fixture
         run: |
           python3 scripts/ci_ingress.py fixtures
-          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_oxidized.py --ci-prepared-inventory
           python3 scripts/deploy_proxy.py
           python3 scripts/ci_ingress.py snapshot --oxidized-only
       - name: Verify redeployment, persistence and network restrictions
         run: |
-          python3 scripts/deploy_oxidized.py
+          python3 scripts/deploy_oxidized.py --ci-prepared-inventory
           python3 scripts/deploy_proxy.py
           python3 scripts/ci_ingress.py compare --oxidized-only
           python3 scripts/ci_ingress.py deny-network

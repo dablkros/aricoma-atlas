@@ -61,6 +61,21 @@ DEVICE_CREDENTIALS_POLICY_FILE = (
 )
 
 RUNTIME_ROLES = {
+    "atlas-backend": {
+        "policy_file": (
+            ROOT
+            / "deployment"
+            / "openbao"
+            / "policies"
+            / "atlas-backend.hcl"
+        ),
+        "identity_file": (
+            ROOT
+            / ".runtime"
+            / "openbao-backend.json"
+        ),
+        "additional_policies": [],
+    },
     "netbox-runtime": {
         "policy_file": (
             ROOT
@@ -1333,13 +1348,19 @@ def ensure_runtime_identity(
     )
 
 
-def validate_runtime_identities():
+def validate_runtime_identities(optional_roles=()):
     for role_name, spec in RUNTIME_ROLES.items():
         identity = load_identity_file(
             spec["identity_file"]
         )
 
         if not identity:
+            if role_name in optional_roles:
+                info(
+                    f"{role_name} identity is not bootstrapped on this "
+                    "existing OpenBao instance"
+                )
+                continue
             raise RuntimeError(
                 f"{role_name} machine identity is missing. "
                 "This OpenBao instance predates the runtime-role bootstrap; "
@@ -1689,7 +1710,9 @@ def main():
                     "authentication successful"
                 )
 
-                validate_runtime_identities()
+                validate_runtime_identities(
+                    optional_roles={"atlas-backend"},
+                )
 
             else:
                 info(

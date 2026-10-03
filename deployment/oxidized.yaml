@@ -5,5 +5,6 @@ oxidized:
   timeout: 20
 runtime:
   directory: ".runtime/oxidized"
+  inventory_directory: "/run/atlas/oxidized"
   compose_project: "atlas-oxidized"
   startup_timeout: 120

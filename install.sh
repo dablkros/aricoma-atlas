@@ -60,6 +60,8 @@ validate_source_repo() {
         die "Missing scripts/deploy_netbox.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \
         die "Missing scripts/import_site_config.py in ${source_dir}"
+    [[ -f "${source_dir}/deployment/tmpfiles.d/aricoma-atlas.conf" ]] || \
+        die "Missing deployment/tmpfiles.d/aricoma-atlas.conf in ${source_dir}"
     [[ -x "${source_dir}/bin/atlasctl" ]] || \
         die "Missing executable bin/atlasctl in ${source_dir}"
     [[ -f "${source_dir}/requirements.txt" ]] || \
@@ -343,16 +345,39 @@ install_admin_cli() {
     ok "Installed /usr/local/sbin/atlasctl"
 }
 
+install_runtime_tmpfiles() {
+    header "ATLAS EPHEMERAL RUNTIME"
+
+    install -m 0644 -o root -g root \
+        "${ATLAS_ROOT}/deployment/tmpfiles.d/aricoma-atlas.conf" \
+        /etc/tmpfiles.d/aricoma-atlas.conf
+
+    systemd-tmpfiles --create /etc/tmpfiles.d/aricoma-atlas.conf
+
+    ok "Prepared /run/atlas/oxidized ephemeral inventory runtime"
+}
+
 verify_installation() {
     header "INSTALLATION VERIFY"
 
     [[ -x "${VENV_DIR}/bin/python3" ]] || die "Atlas Python virtual environment is missing"
     [[ -f "${ATLAS_ROOT}/scripts/deploy_atlas.py" ]] || die "Atlas deploy script is missing"
     [[ -x /usr/local/sbin/atlasctl ]] || die "atlasctl is not installed"
+    [[ -f /etc/tmpfiles.d/aricoma-atlas.conf ]] || die "Atlas tmpfiles configuration is missing"
     [[ "$(stat -c '%a' "$ATLAS_ROOT")" == "750" ]] || die "${ATLAS_ROOT} must have mode 0750"
     [[ "$(stat -c '%G' "$ATLAS_ROOT")" == "$ATLAS_ADMIN_GROUP" ]] || die "${ATLAS_ROOT} must be grouped to ${ATLAS_ADMIN_GROUP}"
     [[ "$(stat -c '%a' "$RUNTIME_DIR")" == "700" ]] || die "${RUNTIME_DIR} must have mode 0700"
     [[ "$(stat -c '%U:%G' "$RUNTIME_DIR")" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "${RUNTIME_DIR} must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
+    [[ "$(stat -c '%a' /run/atlas)" == "710" ]] || die "/run/atlas must have mode 0710"
+    [[ "$(stat -c '%U:%G' /run/atlas)" == "root:${ATLAS_GROUP}" ]] || die "/run/atlas must be owned by root:${ATLAS_GROUP}"
+    [[ "$(stat -c '%a' /run/atlas/oxidized)" == "755" ]] || die "/run/atlas/oxidized must have mode 0755"
+    [[ "$(stat -c '%U:%G' /run/atlas/oxidized)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
+    [[ "$(stat -c '%a' /run/atlas/oxidized/router.json)" == "644" ]] || die "/run/atlas/oxidized/router.json must have mode 0644"
+    [[ "$(stat -c '%U:%G' /run/atlas/oxidized/router.json)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized/router.json must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
+    "${VENV_DIR}/bin/python3" -c \
+        'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, list)' \
+        /run/atlas/oxidized/router.json || \
+        die "Ephemeral router.json must contain a JSON array"
 
     runuser -u "$ATLAS_USER" -- docker info >/dev/null
     runuser -u "$ATLAS_USER" -- docker compose version >/dev/null
@@ -382,6 +407,7 @@ main() {
     install_python_environment
     install_site_configuration "$source_dir"
     install_admin_cli
+    install_runtime_tmpfiles
     verify_installation
 
     header "ATLAS HOST READY"
