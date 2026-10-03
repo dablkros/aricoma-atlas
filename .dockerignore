@@ -1,0 +1,13 @@
+**
+!requirements.txt
+!atlas/
+!atlas/**
+!catalog/
+!catalog/**
+!deployment/
+!deployment/backend/
+!deployment/backend/Dockerfile
+
+atlas/**/__pycache__/
+atlas/**/*.pyc
+atlas/**/*.pyo

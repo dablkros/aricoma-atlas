@@ -1,0 +1,17 @@
+backend:
+  version: "0.1.2-beta"
+  docker_image: "aricoma-atlas-backend:0.1.2-beta"
+  python_base_image: "docker.io/library/python:3.13.16-slim-bookworm"
+  dockerfile: "deployment/backend/Dockerfile"
+  environment: "production"
+  log_level: "INFO"
+
+runtime:
+  directory: ".runtime/backend"
+  compose_project: "atlas-backend"
+  startup_timeout: 120
+
+network:
+  listen_address: "127.0.0.1"
+  host_port: 8081
+  container_port: 8000

@@ -58,6 +58,12 @@ validate_source_repo() {
         die "Missing scripts/deploy_atlas.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/deploy_netbox.py" ]] || \
         die "Missing scripts/deploy_netbox.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/deploy_backend.py" ]] || \
+        die "Missing scripts/deploy_backend.py in ${source_dir}"
+    [[ -f "${source_dir}/deployment/backend.yaml" ]] || \
+        die "Missing deployment/backend.yaml in ${source_dir}"
+    [[ -f "${source_dir}/deployment/backend/Dockerfile" ]] || \
+        die "Missing deployment/backend/Dockerfile in ${source_dir}"
     [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \
         die "Missing scripts/import_site_config.py in ${source_dir}"
     [[ -f "${source_dir}/deployment/tmpfiles.d/aricoma-atlas.conf" ]] || \
@@ -68,8 +74,8 @@ validate_source_repo() {
         die "Missing requirements.txt in ${source_dir}"
 
     local dirty
-    dirty="$(source_git "$source_dir" status --porcelain --untracked-files=no)"
-    [[ -z "$dirty" ]] || die "Source repository has modified tracked files. Commit or discard them before installing."
+    dirty="$(source_git "$source_dir" status --porcelain)"
+    [[ -z "$dirty" ]] || die "Source repository has uncommitted changes. Commit or discard them before installing."
 }
 
 validate_os() {
@@ -362,6 +368,9 @@ verify_installation() {
 
     [[ -x "${VENV_DIR}/bin/python3" ]] || die "Atlas Python virtual environment is missing"
     [[ -f "${ATLAS_ROOT}/scripts/deploy_atlas.py" ]] || die "Atlas deploy script is missing"
+    [[ -x "${ATLAS_ROOT}/scripts/deploy_backend.py" ]] || die "Atlas backend deploy script is missing or not executable"
+    [[ -f "${ATLAS_ROOT}/deployment/backend.yaml" ]] || die "Atlas backend deployment configuration is missing"
+    [[ -f "${ATLAS_ROOT}/deployment/backend/Dockerfile" ]] || die "Atlas backend Dockerfile is missing"
     [[ -x /usr/local/sbin/atlasctl ]] || die "atlasctl is not installed"
     [[ -f /etc/tmpfiles.d/aricoma-atlas.conf ]] || die "Atlas tmpfiles configuration is missing"
     [[ "$(stat -c '%a' "$ATLAS_ROOT")" == "750" ]] || die "${ATLAS_ROOT} must have mode 0750"
@@ -382,13 +391,10 @@ verify_installation() {
     runuser -u "$ATLAS_USER" -- docker info >/dev/null
     runuser -u "$ATLAS_USER" -- docker compose version >/dev/null
     runuser -u "$ATLAS_USER" -- env HOME="$ATLAS_HOME" \
-        "${VENV_DIR}/bin/python3" -m py_compile \
-        "${ATLAS_ROOT}/scripts/deploy_atlas.py" \
-        "${ATLAS_ROOT}/scripts/deploy_netbox.py" \
-        "${ATLAS_ROOT}/scripts/deploy_openbao.py" \
-        "${ATLAS_ROOT}/scripts/deploy_oxidized.py" \
-        "${ATLAS_ROOT}/scripts/deploy_proxy.py" \
-        "${ATLAS_ROOT}/scripts/import_site_config.py"
+        PYTHONPYCACHEPREFIX="${RUNTIME_DIR}/pycache" \
+        "${VENV_DIR}/bin/python3" -m compileall -q \
+        "${ATLAS_ROOT}/atlas" \
+        "${ATLAS_ROOT}/scripts"
 
     ok "Host is ready for Atlas deployment"
 }
