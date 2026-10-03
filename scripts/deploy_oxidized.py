@@ -698,8 +698,8 @@ def deploy_runtime(config, file, source, inventory):
     compose(file, project, "pull")
     validate_runtime(file, project)
     compose(file, project, "up", "-d", "--force-recreate", "oxidized")
-    reload_inventory(file, project, inventory, timeout)
     wait_healthy(file, project, "oxidized", timeout)
+    reload_inventory(file, project, inventory, timeout)
 
     if inventory:
         print("[OK] Oxidized ready on its private container network")
