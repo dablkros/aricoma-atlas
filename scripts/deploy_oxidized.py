@@ -580,8 +580,8 @@ def validate_runtime(file, project):
             "test -r /etc/oxidized/config; "
             "test -r /etc/atlas-oxidized/router.json; "
             "test -r /home/oxidized/.ssh/known_hosts; "
-            "test -x /etc/atlas-oxidized/entrypoint.sh; "
-            "test -r /etc/atlas-oxidized/waiting_server.rb"
+            f"test -x {OXIDIZED_WAIT_ENTRYPOINT}; "
+            f"test -r {OXIDIZED_WAIT_SERVER}"
         ),
         capture=True,
         check=False,
