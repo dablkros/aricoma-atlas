@@ -2,9 +2,10 @@
 
 import re
 from functools import lru_cache
+from pathlib import Path
 from typing import Literal
 
-from pydantic import Field, field_validator
+from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from atlas import __version__
@@ -22,6 +23,12 @@ class Settings(BaseSettings):
     environment: Literal["development", "test", "production"] = "development"
     api_prefix: str = "/api"
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    openbao_url: AnyHttpUrl = "http://127.0.0.1:18200"
+    openbao_identity_file: Path = Path(".runtime/openbao-backend.json")
+    netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
+    oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
+    http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
+    http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 
     model_config = SettingsConfigDict(
         env_file=".env",
@@ -30,6 +37,7 @@ class Settings(BaseSettings):
         case_sensitive=False,
         extra="ignore",
         frozen=True,
+        validate_default=True,
     )
 
     @field_validator("api_prefix")
@@ -45,6 +53,22 @@ class Settings(BaseSettings):
     @classmethod
     def normalize_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
+
+    @field_validator("openbao_url", "netbox_url", "oxidized_url")
+    @classmethod
+    def validate_dependency_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
+        if value.username or value.password or value.query or value.fragment:
+            raise ValueError(
+                "dependency URLs must not contain credentials, query, or fragment"
+            )
+        return value
+
+    @field_validator("openbao_identity_file")
+    @classmethod
+    def validate_identity_file(cls, value: Path) -> Path:
+        if not value.name or ".." in value.parts:
+            raise ValueError("openbao_identity_file must identify a file")
+        return value
 
 
 @lru_cache(maxsize=1)

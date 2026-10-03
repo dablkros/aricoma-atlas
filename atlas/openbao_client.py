@@ -9,11 +9,32 @@ import requests
 
 
 class OpenBaoError(RuntimeError):
+    """OpenBao failure with an optional machine-readable HTTP status."""
+
+    def __init__(self, message, *, status_code=None):
+        super().__init__(message)
+        self.status_code = status_code
+
+
+class OpenBaoConnectionError(OpenBaoError):
+    pass
+
+
+class OpenBaoAuthenticationError(OpenBaoError):
+    pass
+
+
+class OpenBaoInvalidResponse(OpenBaoError):
+    pass
+
+
+class OpenBaoIdentityError(OpenBaoError):
     pass
 
 
 class OpenBaoNotFound(OpenBaoError):
-    pass
+    def __init__(self, message, *, status_code=404):
+        super().__init__(message, status_code=status_code)
 
 
 class OpenBaoClient:
@@ -57,17 +78,35 @@ class OpenBaoClient:
             )
 
         except requests.RequestException:
-            raise OpenBaoError("Unable to contact OpenBao") from None
+            raise OpenBaoConnectionError("Unable to contact OpenBao") from None
 
         if response.status_code not in expected:
-            error_type = OpenBaoNotFound if response.status_code == 404 else OpenBaoError
+            if response.status_code == 404:
+                error_type = OpenBaoNotFound
+            elif response.status_code in {401, 403}:
+                error_type = OpenBaoAuthenticationError
+            else:
+                error_type = OpenBaoError
             raise error_type(
-                f"OpenBao API {method} {path} "
-                f"failed with HTTP "
-                f"{response.status_code}"
+                f"OpenBao request failed with HTTP {response.status_code}",
+                status_code=response.status_code,
             )
 
         return response
+
+    @staticmethod
+    def _json_object(response):
+        try:
+            data = response.json()
+        except ValueError:
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned an invalid JSON response"
+            ) from None
+        if not isinstance(data, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned an invalid response object"
+            )
+        return data
 
     # =======================================================================
     # Status
@@ -79,7 +118,7 @@ class OpenBaoClient:
             "sys/seal-status",
         )
 
-        return response.json()
+        return self._json_object(response)
 
     # =======================================================================
     # Identity
@@ -90,7 +129,7 @@ class OpenBaoClient:
         path = Path(path)
 
         if not path.exists():
-            raise OpenBaoError(
+            raise OpenBaoIdentityError(
                 f"OpenBao identity file not found: "
                 f"{path}"
             )
@@ -106,16 +145,26 @@ class OpenBaoClient:
             OSError,
             json.JSONDecodeError,
         ) as exc:
-            raise OpenBaoError(
+            raise OpenBaoIdentityError(
                 f"Unable to read OpenBao identity: "
                 f"{path}"
             ) from exc
 
+        if not isinstance(data, dict):
+            raise OpenBaoIdentityError(
+                f"Invalid OpenBao identity file: {path}"
+            )
+
         role_id = data.get("role_id")
         secret_id = data.get("secret_id")
 
-        if not role_id or not secret_id:
-            raise OpenBaoError(
+        if (
+            not isinstance(role_id, str)
+            or not role_id.strip()
+            or not isinstance(secret_id, str)
+            or not secret_id.strip()
+        ):
+            raise OpenBaoIdentityError(
                 f"Invalid OpenBao identity file: "
                 f"{path}"
             )
@@ -139,14 +188,15 @@ class OpenBaoClient:
             },
         )
 
-        token = (
-            response.json()
-            .get("auth", {})
-            .get("client_token")
-        )
+        auth = self._json_object(response).get("auth", {})
+        if not isinstance(auth, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid authentication data"
+            )
+        token = auth.get("client_token")
 
         if not token:
-            raise OpenBaoError(
+            raise OpenBaoInvalidResponse(
                 "AppRole login did not "
                 "return a token"
             )
@@ -174,10 +224,15 @@ class OpenBaoClient:
             token=token,
         )
 
-        data = response.json().get(
+        data = self._json_object(response).get(
             "data",
             {},
         )
+
+        if not isinstance(data, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid token metadata"
+            )
 
         return data
 
@@ -205,7 +260,7 @@ class OpenBaoClient:
             token=operator_token,
         )
 
-        body = response.json()
+        body = self._json_object(response)
 
         return body.get(
             "data",
@@ -223,7 +278,7 @@ class OpenBaoClient:
             payload={},
         )
 
-        body = response.json()
+        body = self._json_object(response)
 
         data = body.get(
             "data",
@@ -280,7 +335,7 @@ class OpenBaoClient:
             },
         )
 
-        body = response.json()
+        body = self._json_object(response)
 
         return body.get(
             "data",
@@ -394,10 +449,15 @@ class OpenBaoClient:
             },
         )
 
-        auth = response.json().get(
+        auth = self._json_object(response).get(
             "auth",
             {},
         )
+
+        if not isinstance(auth, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid authentication data"
+            )
 
         token = auth.get(
             "client_token"
@@ -496,11 +556,17 @@ class OpenBaoClient:
             token=token,
         )
 
-        return (
-            response.json()
-            .get("data", {})
-            .get("data", {})
-        )
+        envelope = self._json_object(response).get("data", {})
+        if not isinstance(envelope, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned an invalid KV response"
+            )
+        data = envelope.get("data", {})
+        if not isinstance(data, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid KV data"
+            )
+        return data
 
 
     def kv_write(

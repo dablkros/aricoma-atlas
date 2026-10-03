@@ -2,7 +2,9 @@ import importlib.util
 import subprocess
 import unittest
 from pathlib import Path
-from unittest.mock import DEFAULT, call, patch
+from unittest.mock import DEFAULT, Mock, call, patch
+
+from scripts import openbao_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -16,7 +18,7 @@ spec.loader.exec_module(deploy_openbao)
 
 
 class OpenBaoBootstrapTests(unittest.TestCase):
-    def test_backend_policy_is_limited_to_device_credential_reads(self):
+    def test_backend_policy_is_limited_to_required_read_paths(self):
         policy_file = (
             ROOT
             / "deployment"
@@ -28,11 +30,27 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         self.assertEqual(
             policy_file.read_text(encoding="utf-8").strip(),
             (
+                'path "atlas/data/netbox/api" {\n'
+                '  capabilities = ["read"]\n'
+                '}\n\n'
                 'path "atlas/data/devices/credentials/*" {\n'
                 '  capabilities = ["read"]\n'
                 '}'
             ),
         )
+
+        policy = policy_file.read_text(encoding="utf-8")
+        for forbidden in (
+            "list",
+            "create",
+            "update",
+            "delete",
+            "netbox/admin",
+            "postgres",
+            "redis",
+            "atlas-deployer",
+        ):
+            self.assertNotIn(forbidden, policy.lower())
 
     def test_backend_runtime_role_uses_its_own_policy_and_ignored_identity(self):
         backend = deploy_openbao.RUNTIME_ROLES["atlas-backend"]
@@ -103,8 +121,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             "ensure_machine_identity": DEFAULT,
             "ensure_operator_role": DEFAULT,
             "create_operator_identity": DEFAULT,
-            "ensure_runtime_role": DEFAULT,
-            "ensure_runtime_identity": DEFAULT,
+            "reconcile_runtime_role": DEFAULT,
         }
 
         with patch.multiple(deploy_openbao, **replacements) as mocked:
@@ -114,21 +131,10 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
         self.assertEqual(result, "test-app-token")
 
-        for role_name, role in deploy_openbao.RUNTIME_ROLES.items():
-            mocked["ensure_runtime_policy"].assert_any_call(
+        for role_name in deploy_openbao.RUNTIME_ROLES:
+            mocked["reconcile_runtime_role"].assert_any_call(
                 "test-root-token",
                 role_name,
-                role["policy_file"],
-            )
-            mocked["ensure_runtime_role"].assert_any_call(
-                "test-root-token",
-                role_name,
-                role.get("additional_policies", []),
-            )
-            mocked["ensure_runtime_identity"].assert_any_call(
-                "test-root-token",
-                role_name,
-                role["identity_file"],
             )
 
         self.assertEqual(
@@ -140,6 +146,79 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 "oxidized-runtime",
             },
         )
+
+    def test_runtime_role_reconcile_updates_policy_role_and_identity(self):
+        with patch.object(
+            deploy_openbao,
+            "ensure_runtime_policy",
+        ) as policy, patch.object(
+            deploy_openbao,
+            "ensure_runtime_role",
+        ) as role, patch.object(
+            deploy_openbao,
+            "ensure_runtime_identity",
+        ) as identity:
+            deploy_openbao.reconcile_runtime_role(
+                "temporary-root",
+                "atlas-backend",
+            )
+
+        spec = deploy_openbao.RUNTIME_ROLES["atlas-backend"]
+        policy.assert_called_once_with(
+            "temporary-root",
+            "atlas-backend",
+            spec["policy_file"],
+        )
+        role.assert_called_once_with("temporary-root", "atlas-backend", [])
+        identity.assert_called_once_with(
+            "temporary-root",
+            "atlas-backend",
+            spec["identity_file"],
+        )
+
+    def test_existing_install_reconcile_uses_controlled_temporary_root(self):
+        client = object()
+        with patch.object(
+            openbao_access,
+            "generate_temporary_root",
+        ) as generate:
+            generate.return_value = True
+            result = openbao_access.reconcile_backend_policy(client)
+
+        self.assertTrue(result)
+        generate.assert_called_once()
+        self.assertIs(generate.call_args.args[0], client)
+        self.assertEqual(generate.call_args.kwargs["requested_ttl"], "15m")
+
+        with patch.object(
+            openbao_access.openbao_deployment,
+            "reconcile_runtime_role",
+        ) as reconcile:
+            generate.call_args.kwargs["action"]("temporary-root")
+
+        reconcile.assert_called_once_with("temporary-root", "atlas-backend")
+
+        with patch.object(
+            openbao_access,
+            "generate_temporary_root",
+            return_value=False,
+        ):
+            self.assertFalse(openbao_access.reconcile_backend_policy(client))
+
+    def test_controlled_root_action_revokes_token_after_failure(self):
+        client = Mock()
+
+        def fail(_token):
+            raise RuntimeError("policy update failed")
+
+        with self.assertRaisesRegex(RuntimeError, "policy update failed"):
+            openbao_access.run_controlled_root_action(
+                client,
+                "temporary-root",
+                fail,
+            )
+
+        client.revoke_self.assert_called_once_with("temporary-root")
 
     def test_deployer_and_operator_approles_remain_separate(self):
         with patch.object(deploy_openbao, "api_request") as api_request:

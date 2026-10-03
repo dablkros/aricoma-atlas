@@ -13,7 +13,12 @@ from atlas.device_credentials import (
     DeviceValidationError, credential_path, oxidized_reference,
     resolve_oxidized_device, validate_admin_secret, validate_snmp_secret,
 )
-from atlas.openbao_client import OpenBaoClient, OpenBaoError, OpenBaoNotFound
+from atlas.openbao_client import (
+    OpenBaoAuthenticationError,
+    OpenBaoClient,
+    OpenBaoError,
+    OpenBaoNotFound,
+)
 from atlas.platforms import (
     ROOT, default_platform, enrich_device_types, load_platform_config, provision_platforms,
 )
@@ -255,9 +260,14 @@ class CredentialTests(unittest.TestCase):
                 validate_snmp_secret(secret)
 
     def test_openbao_http_errors_do_not_echo_response_or_token(self):
-        for status, expected in ((404, OpenBaoNotFound), (403, OpenBaoError), (500, OpenBaoError)):
+        for status, expected in (
+            (404, OpenBaoNotFound),
+            (403, OpenBaoAuthenticationError),
+            (500, OpenBaoError),
+        ):
             response = Mock(status_code=status, text="sensitive-body")
             with patch("atlas.openbao_client.requests.request", return_value=response):
                 with self.assertRaises(expected) as raised:
                     OpenBaoClient().kv_read("sensitive-token", "devices/credentials/cisco/p/admin")
             self.assertNotIn("sensitive", str(raised.exception))
+            self.assertEqual(raised.exception.status_code, status)

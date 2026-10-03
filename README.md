@@ -454,9 +454,47 @@ Očakávané telo odpovede:
 {"status":"ok","service":"Aricoma Atlas","version":"0.1.2-beta","environment":"development"}
 ```
 
-Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Podporované premenné v tomto milestone sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
+Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
 
-`GET /api/health` je iba liveness kontrola procesu. Nekontroluje NetBox, OpenBao ani Oxidized; externé dependency/readiness kontroly patria do samostatného endpointu v ďalšom milestone.
+`GET /api/health` zostáva iba liveness kontrola procesu. Nekontroluje NetBox, OpenBao ani Oxidized.
+
+## Atlas backend API — Milestone 2
+
+Milestone 2 pridáva bezpečnú read-only dependency vrstvu a samostatný readiness endpoint. Kontrakty endpointov sú zámerne oddelené:
+
+| Endpoint | Význam | HTTP odpoveď |
+| --- | --- | --- |
+| `GET /api/health` | proces FastAPI beží | `200` bez ohľadu na stav externých služieb |
+| `GET /api/ready` | OpenBao, NetBox a Oxidized sú použiteľné | `200` pri úspechu, inak `503` |
+
+Readiness overuje, že OpenBao je dostupné, inicializované a odomknuté a že funguje AppRole login identity `atlas-backend`. Následne cez token uložený výhradne v OpenBao vykoná lacný read-only NetBox request a načíta Oxidized `nodes.json`. Prázdne Oxidized pole `[]` je pripravený stav, nie chyba. Kontrola nevykonáva žiadny zápis do OpenBao, NetBoxu ani Oxidized a nevolá Oxidized `/reload`.
+
+Bezpečné dependency nastavenia:
+
+```text
+ATLAS_OPENBAO_URL
+ATLAS_OPENBAO_IDENTITY_FILE
+ATLAS_NETBOX_URL
+ATLAS_OXIDIZED_URL
+ATLAS_HTTP_CONNECT_TIMEOUT
+ATLAS_HTTP_READ_TIMEOUT
+```
+
+Identity súbor obsahujúci `role_id` a `secret_id` zostáva mimo Git. OpenBao token sa cacheuje iba v pamäti procesu; po odmietnutí už cacheovaného tokenu sa vykoná najviac jeden nový AppRole login a jeden opakovaný request. NetBox token zostáva iba na `atlas/netbox/api`, key `token`, a nekopíruje sa do `.env` ani do iného konfiguračného súboru.
+
+Lokálne manuálne overenie po nastavení URL a dostupnosti `.runtime/openbao-backend.json`:
+
+```bash
+python3 -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8081
+curl -i http://127.0.0.1:8081/api/health
+curl -i http://127.0.0.1:8081/api/ready
+```
+
+Chybová odpoveď readiness obsahuje iba stav dependency a bezpečný dôvod, napríklad `connection_failed`, `authentication_failed`, `sealed` alebo `unavailable`. Neobsahuje raw exception, token ani heslo.
+
+### Prevádzkové obmedzenie tohto milestone
+
+Existujúci Milestone 1 backend kontajner ostáva zámerne bez nového secret mountu a bez pripojenia do interných sietí OpenBao, NetBoxu a Oxidized. Zapojenie identity súboru a Docker sietí je blocker pre neskoršie kontajnerové použitie `/api/ready`, ale Docker deployment Atlas API je podľa rozsahu Milestone 2 non-goal. Kontajnerový healthcheck preto správne naďalej používa `/api/health`, nie dependency readiness.
 
 ---
 
@@ -796,7 +834,9 @@ Oddelená operator identita pre autentifikovaný `generate-root` workflow. Nepou
 
 ## `atlas-backend`
 
-Runtime machine identita pre budúcu Atlas aplikáciu. Samostatná policy `atlas-backend` povoľuje iba čítanie device credentials pod `atlas/data/devices/credentials/*`; neposkytuje list ani práva na zápis alebo mazanie.
+Runtime machine identita Atlas aplikácie. Samostatná policy `atlas-backend` povoľuje iba `read` pre presný NetBox token path `atlas/data/netbox/api` a device credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis, mazanie, root operácie ani prístup k NetBox admin, PostgreSQL, Redis alebo deployer secretom.
+
+Fresh OpenBao bootstrap túto policy, AppRole a machine identity vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile atlas-backend policy`. Operácia vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
 
 ## `netbox-runtime`
 
@@ -914,6 +954,7 @@ python3 scripts/openbao_access.py
 Helper aktuálne podporuje napríklad:
 
 - vytvorenie krátkodobého Atlas deployer tokenu,
+- zosúladenie `atlas-backend` policy, AppRole a lokálnej machine identity na existujúcej inštalácii,
 - quorum-based temporary root workflow,
 - revoke tokenu,
 - inspect tokenu.
