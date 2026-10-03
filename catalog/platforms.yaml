@@ -1,0 +1,92 @@
+# Reviewed against the pinned Device Type Library; see docs/device-model.md.
+# Matching happens ONLY while building/provisioning Device Types, never at runtime.
+version: 1
+platforms:
+  cisco-ios: {name: Cisco IOS, manufacturer: Cisco}
+  cisco-ios-xe: {name: Cisco IOS XE, manufacturer: Cisco}
+  cisco-nxos: {name: Cisco NX-OS, manufacturer: Cisco}
+  cisco-cbs: {name: Cisco CBS, manufacturer: Cisco}
+  fortios: {name: FortiOS, manufacturer: Fortinet}
+  fortiap: {name: FortiAP, manufacturer: Fortinet}
+  fortianalyzer: {name: FortiAnalyzer, manufacturer: Fortinet}
+  junos: {name: Juniper Junos, manufacturer: Juniper}
+
+# Explicit fields avoid confusing filenames, display models and slugs.
+# Multiple matches to different platforms are an error, not first-match-wins.
+platform_mappings:
+  Cisco:
+    - slugs: ['cisco-ws-c2960x-*', 'cisco-ws-c2960xr-*']
+      platform: cisco-ios
+    - slugs:
+        - 'cisco-c9200-*'
+        - 'cisco-c9200l-*'
+        - 'cisco-c9200cx-*'
+        - 'cisco-c9300-*'
+        - 'cisco-c9300l-*'
+        - 'cisco-c9300lm-*'
+        - 'cisco-c9300x-*'
+        - 'cisco-c9500-*'
+        - 'cisco-c9500x-*'
+        - 'cisco-ws-c3650-*'
+        - 'cisco-ws-c3850-*'
+        - 'cisco-catalyst-3850-48pt-12-mgig-plus-36-gig-upoe'
+        - 'cisco-c8200-*'
+        - 'cisco-c8300-*'
+        - 'cisco-isr4221'
+        - 'cisco-isr4321'
+        - 'cisco-isr4331'
+        - 'cisco-isr4351'
+        - 'cisco-isr4431'
+        - 'cisco-isr4451-x'
+        - 'cisco-isr4461-x'
+      platform: cisco-ios-xe
+    - slugs: ['cisco-cbs220-*', 'cisco-cbs250-*', 'cisco-cbs350-*']
+      platform: cisco-cbs
+    # No Nexus selected by the current manifest; do not assume N9K implies NX-OS (ACI).
+  Fortinet:
+    - slugs: ['fortinet-fg-*', 'fortinet-fgr-*', 'fortinet-fortigate-7081f', 'fortinet-fortigate-7121f']
+      platform: fortios
+    - slugs: ['fortinet-fap-*']
+      platform: fortiap
+    - slugs: ['fortinet-faz-*']
+      platform: fortianalyzer
+  Juniper:
+    - models:
+        - 'EX2200-*'
+        - 'EX2300-*'
+        - 'EX3300-*'
+        - 'EX3400-*'
+        - 'EX4000-*'
+        - 'EX4100-*'
+        - 'EX4200-*'
+        - 'EX4300-*'
+        - 'EX4400-*'
+        - 'EX4500-*'
+        - 'EX4550-*'
+        - 'EX4600-*'
+        - 'EX9204'
+        - 'EX9208'
+        - 'EX9214'
+        - 'MX[0-9]*'
+        - 'QFX3500-*'
+        - 'QFX5100-*'
+        - 'QFX5110-*'
+        - 'QFX5120-*'
+        - 'QFX5200-*'
+        - 'QFX5210-*'
+        - 'QFX10002-*'
+      platform: junos
+    # ACX/PTX, newer QFX (Junos OS Evolved), AP, NFX, NetScreen and SRX
+    # intentionally await a separate reviewed rule. No vendor-wide fallback.
+
+oxidized:
+  image: docker.io/oxidized/oxidized:0.37.0
+  source_commit: 3ff7335d85592993727f7dfa7a98cd70aedb87b0
+oxidized_platform_mapping:
+  cisco-ios: {model: ios}
+  cisco-ios-xe: {model: ios}
+  cisco-nxos: {model: nxos}
+  fortios: {model: fortigate}
+  junos: {model: junos}
+# CBS, FortiAP and hardware FortiAnalyzer are deliberately unmapped pending
+# driver/hardware validation. Presence of ciscosmb/fortios.rb is not that proof.

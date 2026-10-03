@@ -67,6 +67,7 @@ jobs:
 
           files = [
               Path("catalog/manifest.yaml"),
+              Path("catalog/platforms.yaml"),
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
               Path("deployment/netbox.yaml"),
@@ -208,6 +209,13 @@ jobs:
       - name: Build Atlas Device Catalog
         run: |
           python3 scripts/build_catalog.py
+          python3 - <<'PYCODE'
+          import json
+          from pathlib import Path
+          expected = json.loads(Path("docs/platform-audit.json").read_text())
+          actual = json.loads(Path("build/catalog-report.json").read_text())
+          assert actual == expected, "Refresh docs/platform-audit.json after a reviewed catalog/mapping change"
+          PYCODE
 
       - name: Audit Atlas Device Catalog
         run: |
@@ -401,6 +409,17 @@ jobs:
         run: |
           set -o pipefail
           python3 scripts/deploy_openbao.py 2>&1 | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+      - name: Verify declared drivers in the deployed Oxidized image
+        run: |
+          python3 - <<'PY'
+          import subprocess
+          from atlas.platforms import load_platform_config
+          config = load_platform_config()
+          models = sorted({v["model"] for v in config["oxidized_platform_mapping"].values()})
+          ruby = 'root = Gem::Specification.find_by_name("oxidized").full_gem_path; ARGV.each { |m| abort("Missing model: #{m}") unless File.file?(File.join(root, "lib/oxidized/model", "#{m}.rb")) }'
+          subprocess.run(["docker", "run", "--rm", "--entrypoint", "ruby", config["oxidized"]["image"], "-e", ruby, *models], check=True)
+          PY
+
       - name: Verify protected ingress with empty device inventory
         run: |
           python3 scripts/deploy_oxidized.py
@@ -616,6 +635,9 @@ jobs:
       # Idempotency
       # ---------------------------------------------------------------------
 
+      - name: Verify and seed NetBox platform and credential contract
+        run: python3 scripts/ci_device_model.py seed
+
       - name: Verify ingress and seed Oxidized persistence check
         run: python3 scripts/ci_ingress.py snapshot
 
@@ -633,6 +655,9 @@ jobs:
       # ---------------------------------------------------------------------
       # Final verification
       # ---------------------------------------------------------------------
+
+      - name: Verify device model idempotency and manual platform overrides
+        run: python3 scripts/ci_device_model.py verify
 
       - name: Verify ingress and preserved Oxidized state
         run: python3 scripts/ci_ingress.py compare

@@ -10,6 +10,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from atlas.platforms import (load_platform_config, default_platform, mapping_digest,
+                             catalog_platform_report, print_platform_report)
+
 MANIFEST = ROOT / "catalog" / "manifest.yaml"
 LIBRARY = ROOT / "devicetype-library"
 BUILD = ROOT / "build" / "device-types"
@@ -112,6 +116,8 @@ def main():
     }
 
     total = 0
+    platform_config = load_platform_config()
+    catalog_data = []
 
     for vendor, config in vendors.items():
         source_dir = LIBRARY / "device-types" / vendor
@@ -144,7 +150,12 @@ def main():
         destination.mkdir(parents=True, exist_ok=True)
 
         for source in sorted(selected):
-            shutil.copy2(source, destination / source.name)
+            data = yaml.safe_load(source.read_text(encoding="utf-8"))
+            data["default_platform"] = default_platform(data, platform_config)
+            catalog_data.append(data)
+            (destination / source.name).write_text(
+                yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
+            )
 
         count = len(selected)
         total += count
@@ -157,6 +168,9 @@ def main():
         print(f"[OK] {vendor:<20} {count:>5} device types")
 
     report["total"] = total
+    report["platform_mapping_sha256"] = mapping_digest()
+    report["platforms"] = catalog_platform_report(catalog_data, platform_config)
+    print_platform_report(report["platforms"])
 
     report_path = ROOT / "build" / "catalog-report.json"
 

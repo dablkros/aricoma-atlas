@@ -1,0 +1,1042 @@
+{
+  "catalog": {
+    "name": "Atlas Device Catalog",
+    "version": "0.1.0-beta",
+    "stage": "beta"
+  },
+  "upstream_commit": "517549215455824be5e3b89965353fd2210cc20c",
+  "vendors": {
+    "Cisco": {
+      "count": 238,
+      "patterns": [
+        "CBS*.yaml",
+        "SF*.yaml",
+        "SG*.yaml",
+        "SX*.yaml",
+        "RV*.yaml",
+        "WS-C2960X-*.yaml",
+        "WS-C2960XR-*.yaml",
+        "WS-C3650-*.yaml",
+        "WS-C3850-*.yaml",
+        "C9200-*.yaml",
+        "C9200L-*.yaml",
+        "C9200CX-*.yaml",
+        "Catalyst-9200CX-*.yaml",
+        "C9300-*.yaml",
+        "C9300L-*.yaml",
+        "C9300LM-*.yaml",
+        "C9300X-*.yaml",
+        "C9500-*.yaml",
+        "C9500X-*.yaml",
+        "Catalyst-9500X-*.yaml",
+        "ISR4*.yaml",
+        "C8200-*.yaml",
+        "C8300-*.yaml"
+      ]
+    },
+    "Fortinet": {
+      "count": 162,
+      "patterns": [
+        "*.yaml"
+      ]
+    },
+    "Juniper": {
+      "count": 290,
+      "patterns": [
+        "*.yaml"
+      ]
+    }
+  },
+  "total": 690,
+  "platform_mapping_sha256": "666bb95cf71e352148f2468c319d1fb99b259984c226d335fa2b87abf3b99fde",
+  "platforms": {
+    "mapped": 495,
+    "unmapped": 195,
+    "by_platform": {
+      "cisco-cbs": 21,
+      "cisco-ios": 20,
+      "cisco-ios-xe": 155,
+      "fortianalyzer": 3,
+      "fortiap": 21,
+      "fortios": 91,
+      "junos": 184
+    },
+    "unmapped_device_types": [
+      {
+        "manufacturer": "Cisco",
+        "model": "RV220W",
+        "slug": "cisco-rv220w"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SF100-16",
+        "slug": "cisco-sf100-16"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SF220-48P",
+        "slug": "cisco-sf220-48p"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SF350-24P",
+        "slug": "cisco-sf350-24p"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG200-08",
+        "slug": "cisco-sg200-08"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG250-10P",
+        "slug": "cisco-sg250-10p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG250-26",
+        "slug": "cisco-sg250-26-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG250-50HP",
+        "slug": "cisco-sg250-50hp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-10",
+        "slug": "cisco-sg300-10"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-10PP",
+        "slug": "cisco-sg300-10pp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-20",
+        "slug": "cisco-sg300-20"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-28",
+        "slug": "cisco-sg300-28"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-28MP",
+        "slug": "cisco-sg300-28mp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-28P",
+        "slug": "cisco-sg300-28p"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-28PP",
+        "slug": "cisco-sg300-28pp"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG300-52",
+        "slug": "cisco-sg300-52"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-10",
+        "slug": "cisco-sg350-10"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-10MP",
+        "slug": "cisco-sg350-10mp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-10P",
+        "slug": "cisco-sg350-10p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-28",
+        "slug": "cisco-sg350-28"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-28MP",
+        "slug": "cisco-sg350-28mp"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-28P",
+        "slug": "cisco-sg350-28p"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-28SFP",
+        "slug": "cisco-sg350-28sfp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-52",
+        "slug": "cisco-sg350-52"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-52MP",
+        "slug": "cisco-sg350-52mp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350-52P",
+        "slug": "cisco-sg350-52p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350X-24P",
+        "slug": "cisco-sg350x-24p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350X-48P",
+        "slug": "cisco-sg350x-48p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG350XG-24T",
+        "slug": "cisco-sg350xg-24t"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG355-10P",
+        "slug": "cisco-sg355-10p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG500-28",
+        "slug": "cisco-sg500-28-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG500-28P",
+        "slug": "cisco-sg500-28p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG500-52",
+        "slug": "cisco-sg500-52-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG500X-24",
+        "slug": "cisco-sg500x-24-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG500X-48",
+        "slug": "cisco-sg500x-48-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550X-24",
+        "slug": "cisco-sg550x-24-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550X-24MP",
+        "slug": "cisco-sg550x-24mp-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550X-24P",
+        "slug": "cisco-sg550x-24p-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550X-48",
+        "slug": "cisco-sg550x-48"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550X-48P",
+        "slug": "cisco-sg550x-48p"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG550XG-24F",
+        "slug": "cisco-sg550xg-24f-k9"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SX550X-16FT",
+        "slug": "cisco-sx550x-16ft"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FAC-200E",
+        "slug": "fortinet-fac-200e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiExtender 101F-EA",
+        "slug": "fortinet-fex-101f-ea"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiExtender 40D",
+        "slug": "fortinet-fex-40d"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "Fortinet Interface Module",
+        "slug": "fortinet-fim-7941f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiGate Module 7620F",
+        "slug": "fortinet-fpm-7620f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiRPS 100",
+        "slug": "fortinet-fortirps-100"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 1024D",
+        "slug": "fortinet-fs-1024d"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 1024E",
+        "slug": "fortinet-fs-1024e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 1048E",
+        "slug": "fortinet-fs-1048e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 108E-FPOE",
+        "slug": "fortinet-fs-108e-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 108E-POE",
+        "slug": "fortinet-fs-108e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 108F-FPOE",
+        "slug": "fortinet-fs-108f-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 108F-POE",
+        "slug": "fortinet-fs-108f-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 108F",
+        "slug": "fortinet-fs-108f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124E-FPOE",
+        "slug": "fortinet-fs-124e-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124E-POE",
+        "slug": "fortinet-fs-124e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124F-FPOE",
+        "slug": "fortinet-fs-124f-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124F-POE",
+        "slug": "fortinet-fs-124f-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124F",
+        "slug": "fortinet-fs-124f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 124G-FPOE",
+        "slug": "fortinet-fs-124g-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 148F-FPOE",
+        "slug": "fortinet-fs-148f-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 148F-POE",
+        "slug": "fortinet-fs-148f-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 148F",
+        "slug": "fortinet-fs-148f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 224D-FPOE",
+        "slug": "fortinet-fs-224d-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 224E-POE",
+        "slug": "fortinet-fs-224e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 224E",
+        "slug": "fortinet-fs-224e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 248E-FPOE",
+        "slug": "fortinet-fs-248e-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 248E-POE",
+        "slug": "fortinet-fs-248e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 3032E",
+        "slug": "fortinet-fs-3032e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 3032G",
+        "slug": "fortinet-fs-3032g"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 424E-FPOE",
+        "slug": "fortinet-fs-424e-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 424E-Fiber",
+        "slug": "fortinet-fs-424e-fiber"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 424E-POE",
+        "slug": "fortinet-fs-424e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 424E",
+        "slug": "fortinet-fs-424e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 448D-FPOE",
+        "slug": "fortinet-fs-448d-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 448D-POE",
+        "slug": "fortinet-fs-448d-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 448E-FPOE",
+        "slug": "fortinet-fs-448e-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 448E-POE",
+        "slug": "fortinet-fs-448e-poe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 448E",
+        "slug": "fortinet-fs-448e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 548D-FPOE",
+        "slug": "fortinet-fs-548d-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 648F-FPOE",
+        "slug": "fortinet-fs-648f-fpoe"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch 648F",
+        "slug": "fortinet-fs-648f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSwitch T1024E",
+        "slug": "fortinet-fs-t1024e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiSIEM 2000F",
+        "slug": "fortinet-fsm-2000f"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiWeb 2000E",
+        "slug": "fortinet-fwb-2000e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "FortiWeb 3000E",
+        "slug": "fortinet-fwb-3000e"
+      },
+      {
+        "manufacturer": "Fortinet",
+        "model": "SP-RACKTRAY-02",
+        "slug": "fortinet-sp-racktray-02"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX1100-AC",
+        "slug": "juniper-acx1100-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX2100-AC",
+        "slug": "juniper-acx2100-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX2100-DC",
+        "slug": "juniper-acx2100-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX2200-AC",
+        "slug": "juniper-acx2200-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX2200-DC",
+        "slug": "juniper-acx2200-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX4000",
+        "slug": "juniper-acx4000"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX5048-AC",
+        "slug": "juniper-acx5048-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX5048-DC",
+        "slug": "juniper-acx5048-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX5448-M",
+        "slug": "juniper-acx5448-m"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7020-AC",
+        "slug": "juniper-acx7020-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7024-AC",
+        "slug": "juniper-acx7024-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7024X",
+        "slug": "juniper-acx7024x"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-32C-AC-AO",
+        "slug": "juniper-acx7100-32c-ac-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-32C-DC-AO",
+        "slug": "juniper-acx7100-32c-dc-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-48L-AC-AI",
+        "slug": "juniper-acx7100-48l-ac-ai"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-48L-AC-AO",
+        "slug": "juniper-acx7100-48l-ac-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-48L-DC-AI",
+        "slug": "juniper-acx7100-48l-dc-ai"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7100-48L-DC-AO",
+        "slug": "juniper-acx7100-48l-dc-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX710DC",
+        "slug": "juniper-acx710dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "ACX7332",
+        "slug": "juniper-acx7332"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP33",
+        "slug": "juniper-ap33"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP34",
+        "slug": "juniper-ap34"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP36",
+        "slug": "juniper-ap36"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP36M",
+        "slug": "juniper-ap36m"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP41",
+        "slug": "juniper-ap41"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP43",
+        "slug": "juniper-ap43"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP45",
+        "slug": "juniper-ap45"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP45E",
+        "slug": "juniper-ap45e"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP47",
+        "slug": "juniper-ap47"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP63",
+        "slug": "juniper-ap63"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "AP64",
+        "slug": "juniper-ap64"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "NFX250",
+        "slug": "juniper-nfx250"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "NetScreen SSG-140",
+        "slug": "juniper-netscreen-ssg-140"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "PTX10002-36QDD",
+        "slug": "juniper-ptx10002-36qdd"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "PTX10003-80C",
+        "slug": "juniper-ptx10003-80c"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "PTX10004",
+        "slug": "juniper-ptx10004"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "PTX10008",
+        "slug": "juniper-ptx10008"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-32CD-AFI",
+        "slug": "juniper-qfx5130-32cd-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-32CD-AFO",
+        "slug": "juniper-qfx5130-32cd-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-32CD-D-AFI",
+        "slug": "juniper-qfx5130-32cd-d-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-32CD-D-AFO",
+        "slug": "juniper-qfx5130-32cd-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48C-AFI",
+        "slug": "juniper-qfx5130-48c-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48C-AFO",
+        "slug": "juniper-qfx5130-48c-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48C-D-AFI",
+        "slug": "juniper-qfx5130-48c-d-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48C-D-AFO",
+        "slug": "juniper-qfx5130-48c-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48CM-AFI",
+        "slug": "juniper-qfx5130-48cm-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48CM-AFO",
+        "slug": "juniper-qfx5130-48cm-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48CM-D-AFI",
+        "slug": "juniper-qfx5130-48cm-d-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130-48CM-D-AFO",
+        "slug": "juniper-qfx5130-48cm-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130E-32CD-AFI",
+        "slug": "juniper-qfx5130e-32cd-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130E-32CD-AFO",
+        "slug": "juniper-qfx5130e-32cd-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130E-32CD-D-AI",
+        "slug": "juniper-qfx5130e-32cd-d-ai"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5130E-32CD-D-AO",
+        "slug": "juniper-qfx5130e-32cd-d-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-128C-AFO",
+        "slug": "juniper-qfx5220-128c-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-128C-D-AFO",
+        "slug": "juniper-qfx5220-128c-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-128C",
+        "slug": "juniper-qfx5220-128c"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-32CD-AFI",
+        "slug": "juniper-qfx5220-32cd-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-32CD-AFO",
+        "slug": "juniper-qfx5220-32cd-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-32CD-D-AFI",
+        "slug": "juniper-qfx5220-32cd-d-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5220-32CD-D-AFO",
+        "slug": "juniper-qfx5220-32cd-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5230-64CD-AFI",
+        "slug": "juniper-qfx5230-64cd-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5230-64CD-AFO",
+        "slug": "juniper-qfx5230-64cd-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5230-64CD-D-AFI",
+        "slug": "juniper-qfx5230-64cd-d-afi"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5230-64CD-D-AFO",
+        "slug": "juniper-qfx5230-64cd-d-afo"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5240-64OD-AO",
+        "slug": "juniper-qfx5240-64od-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5240-64QD-AO",
+        "slug": "juniper-qfx5240-64qd-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-32OD-AO",
+        "slug": "juniper-qfx5241-32od-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-32OD-DO-T2",
+        "slug": "juniper-qfx5241-32od-do-t2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-32OD-DO",
+        "slug": "juniper-qfx5241-32od-do"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64OD-AO",
+        "slug": "juniper-qfx5241-64od-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64OD-DO-T2",
+        "slug": "juniper-qfx5241-64od-do-t2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64OD-DO",
+        "slug": "juniper-qfx5241-64od-do"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64QD-AO",
+        "slug": "juniper-qfx5241-64qd-ao"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64QD-DO-T2",
+        "slug": "juniper-qfx5241-64qd-do-t2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5241-64QD-DO",
+        "slug": "juniper-qfx5241-64qd-do"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5700-BASE-AC",
+        "slug": "juniper-qfx5700-base-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5700-BASE-DC",
+        "slug": "juniper-qfx5700-base-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5700E-BASE-AC",
+        "slug": "juniper-qfx5700e-base-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "QFX5700E-BASE-DC",
+        "slug": "juniper-qfx5700e-base-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX100B",
+        "slug": "juniper-srx100b"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX100H",
+        "slug": "juniper-srx100h"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX100H2",
+        "slug": "juniper-srx100h2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX110H2-VA",
+        "slug": "juniper-srx110h2-va"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX1500",
+        "slug": "juniper-srx1500"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX1600",
+        "slug": "juniper-srx1600"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX210HE2",
+        "slug": "juniper-srx210he2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX2300",
+        "slug": "juniper-srx2300"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX240H2-POE",
+        "slug": "juniper-srx240h2-poe"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX240H2",
+        "slug": "juniper-srx240h2"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX300",
+        "slug": "juniper-srx300"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX320-POE",
+        "slug": "juniper-srx320-poe"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX320",
+        "slug": "juniper-srx320"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX340",
+        "slug": "juniper-srx340"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX345-DC",
+        "slug": "juniper-srx345-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX345-DUAL-AC",
+        "slug": "juniper-srx345-dual-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX345",
+        "slug": "juniper-srx345"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX3600",
+        "slug": "juniper-srx3600"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX380",
+        "slug": "juniper-srx380"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX4100-AC",
+        "slug": "juniper-srx4100-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX4100-DC",
+        "slug": "juniper-srx4100-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX4200-AC",
+        "slug": "juniper-srx4200-ac"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX4200-DC",
+        "slug": "juniper-srx4200-dc"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX4600",
+        "slug": "juniper-srx4600"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX550",
+        "slug": "juniper-srx550"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX5800",
+        "slug": "juniper-srx5800"
+      },
+      {
+        "manufacturer": "Juniper",
+        "model": "SRX650",
+        "slug": "juniper-srx650"
+      }
+    ]
+  }
+}

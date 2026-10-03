@@ -12,6 +12,10 @@ class OpenBaoError(RuntimeError):
     pass
 
 
+class OpenBaoNotFound(OpenBaoError):
+    pass
+
+
 class OpenBaoClient:
     def __init__(
         self,
@@ -52,17 +56,15 @@ class OpenBaoClient:
                 timeout=self.timeout,
             )
 
-        except requests.RequestException as exc:
-            raise OpenBaoError(
-                f"Unable to contact OpenBao: {exc}"
-            ) from exc
+        except requests.RequestException:
+            raise OpenBaoError("Unable to contact OpenBao") from None
 
         if response.status_code not in expected:
-            raise OpenBaoError(
+            error_type = OpenBaoNotFound if response.status_code == 404 else OpenBaoError
+            raise error_type(
                 f"OpenBao API {method} {path} "
                 f"failed with HTTP "
-                f"{response.status_code}: "
-                f"{response.text}"
+                f"{response.status_code}"
             )
 
         return response

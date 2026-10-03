@@ -658,24 +658,24 @@ Fresh deploy flow po inicializácii explicitne čaká na Raft leader election pr
 
 # OpenBao KV v2
 
+NetBox ukladá iba explicitný `credential_profile`; username/password a SNMP secrets patria do OpenBao. Platformy, `DeviceType.default_platform`, audit nepokrytých typov a validácie pre budúci orchestrátor popisuje [device model](docs/device-model.md). Automatická synchronizácia Oxidized inventory zatiaľ nie je implementovaná.
+
 Atlas používa KV v2 mount:
 
 ```text
 atlas/
 ```
 
-Navrhnutý beta namespace:
+Device credential namespace (implementovaný dátový model; podrobnosti v [platform/credential kontrakte](docs/device-model.md)):
 
 ```text
 atlas/
 ├── devices/
 │   ├── credentials/
-│   │   ├── default
-│   │   ├── cisco
-│   │   ├── aruba
-│   │   └── ...
-│   └── snmp/
-│       └── ...
+│       └── <manufacturer.slug>/
+│           └── <credential_profile>/
+│               ├── admin
+│               └── snmp
 │
 ├── netbox/
 │   └── ...
@@ -687,7 +687,7 @@ atlas/
 
 Význam:
 
-- `atlas/devices/*` – spoločné credentials pre spravované zariadenia,
+- `atlas/devices/credentials/*` – spoločné credentials pre spravované zariadenia,
 - `atlas/netbox/*` – interné NetBox secrets,
 - `atlas/checkmk/*` – interné Checkmk secrets,
 - `atlas/oxidized/*` – interné Oxidized secrets.
@@ -766,7 +766,7 @@ device-credentials-read
 umožňuje runtime službám čítať spoločný strom:
 
 ```text
-atlas/devices/*
+atlas/devices/credentials/*
 ```
 
 Cieľom je, aby sa rovnaké credentials sieťových zariadení nemuseli duplikovať pre Checkmk, Oxidized a ďalšie Atlas aplikácie. App-specific secrets zostávajú oddelené.
