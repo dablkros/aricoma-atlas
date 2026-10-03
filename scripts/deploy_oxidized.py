@@ -51,7 +51,7 @@ WAIT_ENTRYPOINT = r'''#!/bin/sh
 set -eu
 
 SOURCE="/etc/atlas-oxidized/router.json"
-WAIT_SERVER="/etc/atlas-oxidized/waiting_server.rb"
+WAIT_SERVER="/etc/atlas-oxidized-runtime/waiting_server.rb"
 WAIT_PID=""
 
 has_inventory() {
