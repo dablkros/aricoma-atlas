@@ -4,11 +4,13 @@ IFS=$'\n\t'
 umask 0022
 
 ATLAS_USER="atlas"
+ATLAS_GROUP="atlas"
 ATLAS_HOME="/home/atlas"
 ATLAS_ROOT="/opt/aricoma-atlas"
 PYTHON="${ATLAS_ROOT}/.venv/bin/python3"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
 PROXY_CONFIG="${ATLAS_PROXY_CONFIG:-${RUNTIME_DIR}/proxy.yaml}"
+OXIDIZED_INVENTORY_DIR="${ATLAS_OXIDIZED_RUN_DIR:-/run/atlas/oxidized}"
 
 log() { printf '[INFO] %s\n' "$*"; }
 die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
@@ -20,6 +22,8 @@ Usage:
   sudo atlasctl status
   sudo atlasctl openbao
   sudo atlasctl oxidized reconcile
+  sudo atlasctl oxidized host-key scan HOST [--port PORT]
+  sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT]
   sudo atlasctl oxidized logs [docker compose logs options]
 
 Commands:
@@ -27,6 +31,7 @@ Commands:
   status                Show Atlas container and Oxidized inventory state.
   openbao               Open the interactive OpenBao access helper.
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
+  oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
 EOF
 }
@@ -55,7 +60,31 @@ atlas_env() {
         values+=("OPENBAO_URL=${OPENBAO_URL}")
     fi
 
+    values+=("ATLAS_OXIDIZED_RUN_DIR=${OXIDIZED_INVENTORY_DIR}")
+
     printf '%s\0' "${values[@]}"
+}
+
+prepare_oxidized_inventory_runtime() {
+    [[ "$OXIDIZED_INVENTORY_DIR" == /* ]] || \
+        die "ATLAS_OXIDIZED_RUN_DIR must be an absolute path"
+
+    install -d -m 0755 -o "$ATLAS_USER" -g "$ATLAS_GROUP" \
+        "$OXIDIZED_INVENTORY_DIR"
+
+    if [[ -L "${OXIDIZED_INVENTORY_DIR}/router.json" ]] || \
+       [[ -e "${OXIDIZED_INVENTORY_DIR}/router.json" && \
+          ! -f "${OXIDIZED_INVENTORY_DIR}/router.json" ]]; then
+        die "Oxidized router.json must be a regular file, not a symlink"
+    fi
+
+    if [[ ! -e "${OXIDIZED_INVENTORY_DIR}/router.json" ]]; then
+        printf '[]\n' > "${OXIDIZED_INVENTORY_DIR}/router.json"
+    fi
+
+    chown "$ATLAS_USER:$ATLAS_GROUP" \
+        "${OXIDIZED_INVENTORY_DIR}/router.json"
+    chmod 0644 "${OXIDIZED_INVENTORY_DIR}/router.json"
 }
 
 run_python_as_atlas() {
@@ -81,10 +110,12 @@ show_status() {
     docker ps -a --format 'table {{.Names}}\t{{.Status}}\t{{.Networks}}' \
         | awk 'NR==1 || /atlas-/'
 
-    local source="${RUNTIME_DIR}/oxidized/router.db"
+    local source="${OXIDIZED_INVENTORY_DIR}/router.json"
     printf '\nOxidized:\n'
 
-    if [[ ! -f "$source" ]] || ! grep -Ev '^[[:space:]]*(#|$)' "$source" 2>/dev/null | grep -q .; then
+    if [[ ! -f "$source" ]] || ! "$PYTHON" -c \
+        'import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if isinstance(data,list) and data else 1)' \
+        "$source" 2>/dev/null; then
         printf '  state: WAITING_FOR_INVENTORY\n'
         printf '  source: %s\n' "$source"
         return
@@ -111,6 +142,7 @@ main() {
             shift
             [[ -f "$PROXY_CONFIG" ]] || \
                 die "Atlas site proxy configuration is missing: ${PROXY_CONFIG}"
+            prepare_oxidized_inventory_runtime
             run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_atlas.py" "$@"
             ;;
         status)
@@ -126,7 +158,38 @@ main() {
             case "${1:-}" in
                 reconcile)
                     shift
-                    run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_oxidized.py" "$@"
+                    prepare_oxidized_inventory_runtime
+                    run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_oxidized.py" \
+                        --reconcile-only "$@"
+                    ;;
+                host-key)
+                    shift
+                    prepare_oxidized_inventory_runtime
+                    case "${1:-}" in
+                        scan)
+                            shift
+                            [[ -n "${1:-}" ]] || die "Host is required"
+                            local host=$1
+                            shift
+                            run_python_as_atlas \
+                                "${ATLAS_ROOT}/scripts/deploy_oxidized.py" \
+                                --host-key-scan "$host" "$@"
+                            ;;
+                        accept)
+                            shift
+                            [[ -n "${1:-}" && -n "${2:-}" ]] || \
+                                die "Host and SHA256 fingerprint are required"
+                            local host=$1 fingerprint=$2
+                            shift 2
+                            run_python_as_atlas \
+                                "${ATLAS_ROOT}/scripts/deploy_oxidized.py" \
+                                --host-key-accept "$host" "$fingerprint" "$@"
+                            ;;
+                        *)
+                            usage
+                            exit 2
+                            ;;
+                    esac
                     ;;
                 logs)
                     shift

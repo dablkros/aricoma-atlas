@@ -1,5 +1,6 @@
 import copy
 import importlib.util
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -114,22 +115,26 @@ class IngressTests(unittest.TestCase):
         spec = importlib.util.spec_from_file_location("deploy_oxidized", proxy.ROOT / "scripts/deploy_oxidized.py")
         module = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(module)
-        with tempfile.TemporaryDirectory() as directory, patch.object(module, "ROOT", Path(directory)):
+        with tempfile.TemporaryDirectory() as directory, \
+             patch.object(module, "ROOT", Path(directory)), \
+             patch.dict("os.environ", {"ATLAS_OXIDIZED_RUN_DIR": ""}):
             config = {"runtime": {"directory": ".runtime/oxidized"},
                       "oxidized": {"docker_image": "oxidized/oxidized:0.37.0", "interval": 3600,
                                    "threads": 10, "timeout": 20}}
-            file = module.prepare_runtime(config)
-            source = file.parent / "router.db"
+            file = module.prepare_runtime(config, root=Path(directory))
+            source = module.inventory_path(config, root=Path(directory))
 
             self.assertFalse(module.has_inventory(source))
 
-            source.write_text("# operator source remains intact\n")
-            module.prepare_runtime(config)
+            module.prepare_runtime(config, root=Path(directory))
 
-            self.assertEqual(source.read_text(), "# operator source remains intact\n")
+            self.assertEqual(json.loads(source.read_text()), [])
             self.assertFalse(module.has_inventory(source))
 
-            source.write_text("127.0.0.2:ios\n")
+            source.write_text(
+                '[{"name":"fixture","ip":"127.0.0.2","model":"ios",'
+                '"username":"ci","password":"ci-only"}]\n'
+            )
             self.assertTrue(module.has_inventory(source))
             compose = yaml.safe_load(file.read_text())
             self.assertNotIn("ports", compose["services"]["oxidized"])

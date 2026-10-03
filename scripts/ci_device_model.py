@@ -2,6 +2,7 @@
 """Verify the real NetBox API contract in the disposable Atlas integration job."""
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -54,6 +55,29 @@ def main():
                   "custom_fields": {"credential_profile": "ci-device-model", "oxidized_enabled": True}}
         inherited = client.post("/api/dcim/devices/", {**common, "name": "CI-INHERITED"})
         override = client.post("/api/dcim/devices/", {**common, "name": "CI-OVERRIDE", "platform": state["platforms"]["cisco-ios"]})
+        for index, device in enumerate((inherited, override), start=1):
+            interface = client.post(
+                "/api/dcim/interfaces/",
+                {
+                    "device": device["id"],
+                    "name": "mgmt0",
+                    "type": "virtual",
+                    "mgmt_only": True,
+                },
+            )
+            address = client.post(
+                "/api/ipam/ip-addresses/",
+                {
+                    "address": f"192.0.2.{index}/32",
+                    "status": "active",
+                    "assigned_object_type": "dcim.interface",
+                    "assigned_object_id": interface["id"],
+                },
+            )
+            client.patch(
+                f"/api/dcim/devices/{device['id']}/",
+                {"primary_ip4": address["id"]},
+            )
         assert related_id(inherited["platform"]) == state["platforms"]["cisco-ios-xe"]
         state["devices"] = {str(d["id"]): related_id(d["platform"]) for d in (inherited, override)}
         SNAPSHOT.write_text(json.dumps(state), encoding="utf-8")
@@ -80,6 +104,20 @@ def main():
             else:
                 raise AssertionError("Missing credential unexpectedly resolved")
         validate_snmp_secret(bao.kv_read(token, "devices/credentials/cisco/ci-device-model/snmp"))
+        inventory_file = (
+            Path(os.environ["ATLAS_OXIDIZED_RUN_DIR"])
+            / "router.json"
+        )
+        inventory = json.loads(inventory_file.read_text(encoding="utf-8"))
+        assert {entry["name"] for entry in inventory} == {
+            "CI-INHERITED",
+            "CI-OVERRIDE",
+        }, "Oxidized JSON inventory does not match NetBox desired state"
+        assert all(
+            entry.get("username") == "ci-fixture"
+            and entry.get("password") == "ci-only-ephemeral"
+            for entry in inventory
+        ), "Oxidized inventory was not injected from OpenBao"
     print(f"[OK] Device model {args.action}: platforms, catalog defaults, credential field and inheritance")
 
 

@@ -115,7 +115,7 @@ V aktuálnom beta prostredí:
 - Oxidized používa `secure: true` a odmieta neznáme SSH host keys,
 - zmena už dôveryhodného SSH host key sa nesmie automaticky prepísať.
 
-Aktuálny manuálny Oxidized inventory formát obsahuje zariadeniové meno/IP, model, username, password a enable secret v privátnom runtime súbore. Ide o beta akceptačný mechanizmus; súbor musí zostať mimo Git a s reštriktívnymi právami. Cieľový model presunie správu zariadeniových credentials do OpenBao a Atlas aplikácie.
+Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
 
 Pred produkčným nasadením je potrebné doplniť minimálne:
 
@@ -124,9 +124,8 @@ Pred produkčným nasadením je potrebné doplniť minimálne:
 3. odstránenie `tls_disable`,
 4. lifecycle a obnovu certifikátov,
 5. backup/restore OpenBao, NetBox a Oxidized Git dát,
-6. odstránenie plaintext zariadeniových credentials z manuálneho `router.db` workflow,
-7. riadený host-key approval/rotation proces,
-8. individuálne roly alebo SSO pre administratívny web/API prístup.
+6. definovaný host-key rotation proces so samostatným schválením,
+7. individuálne roly alebo SSO pre administratívny web/API prístup.
 
 Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie certifikátu a nesmie vypnúť SSH host-key verification ako náhradu za správu trustu.
 
@@ -178,7 +177,7 @@ deploy.sh / atlasctl deploy
     ├── 3. Oxidized
     │      ├── persistentný runtime a Git volume
     │      ├── WAITING_FOR_INVENTORY pri 0 zariadeniach
-    │      ├── CSV inventory + hodinový polling
+    │      ├── ephemeral JSONFile inventory + hodinový polling
     │      ├── strict SSH host-key verification
     │      └── web/API iba v internej Docker sieti
     │
@@ -225,6 +224,7 @@ aricoma-atlas/
 │       ├── docker-compose.yml
 │       ├── openbao.hcl
 │       └── policies/
+│           ├── atlas-backend.hcl
 │           ├── atlas-deployer.hcl
 │           ├── atlas-operator.hcl
 │           ├── device-credentials-read.hcl
@@ -294,20 +294,26 @@ Typický nainštalovaný runtime:
 │   └── oxidized.htpasswd
 ├── openbao-approle.json
 ├── openbao-operator.json
+├── openbao-backend.json
 ├── openbao-netbox.json
 ├── openbao-checkmk.json
 ├── openbao-oxidized.json
 ├── netbox-docker/
 └── oxidized/
     ├── config
-    ├── router.db
     └── ssh/
         └── known_hosts
 ```
 
+Ephemeral inventár je oddelený od persistentného runtime:
+
+```text
+/run/atlas/oxidized/router.json
+```
+
 OpenBao unseal keys sa do `.runtime/` neukladajú. Každý `openbao-*.json` obsahuje machine identity pre konkrétnu AppRole a musí zostať lokálny na danom serveri.
 
-Oxidized Git repository nie je v Git repozitári Atlasu. Je uložený v persistentnom Docker volume. `router.db` môže v aktuálnom beta manuálnom workflow obsahovať zariadeniové credentials; chráň ho rovnako ako secret file.
+Oxidized Git repository nie je v Git repozitári Atlasu. Je uložený v persistentnom Docker volume. `router.json` obsahuje dočasnú materializáciu credentials; po reštarte hosta ho vytvorí `systemd-tmpfiles` ako prázdne JSON pole a Atlas ho znovu zostaví z NetBoxu a OpenBao.
 
 Odporúčané minimum:
 
@@ -658,7 +664,7 @@ Fresh deploy flow po inicializácii explicitne čaká na Raft leader election pr
 
 # OpenBao KV v2
 
-NetBox ukladá iba explicitný `credential_profile`; username/password a SNMP secrets patria do OpenBao. Platformy, `DeviceType.default_platform`, audit nepokrytých typov a validácie pre budúci orchestrátor popisuje [device model](docs/device-model.md). Automatická synchronizácia Oxidized inventory zatiaľ nie je implementovaná.
+NetBox ukladá iba explicitný `credential_profile`; username/password a SNMP secrets patria do OpenBao. Platformy, `DeviceType.default_platform`, audit nepokrytých typov a validácie popisuje [device model](docs/device-model.md). Oxidized reconcile z tohto modelu zostavuje úplný desired-state inventár.
 
 Atlas používa KV v2 mount:
 
@@ -716,6 +722,10 @@ Používa sa pre deployment a bootstrap. Má oprávnenia potrebné na čítanie 
 
 Oddelená operator identita pre autentifikovaný `generate-root` workflow. Nepoužíva sa ako bežná aplikačná identita.
 
+## `atlas-backend`
+
+Runtime machine identita pre budúcu Atlas aplikáciu. Samostatná policy `atlas-backend` povoľuje iba čítanie device credentials pod `atlas/data/devices/credentials/*`; neposkytuje list ani práva na zápis alebo mazanie.
+
 ## `netbox-runtime`
 
 Runtime identita pripravená pre NetBox.
@@ -740,7 +750,7 @@ device-credentials-read
 
 ## `oxidized-runtime`
 
-Runtime identita pripravená pre budúce priame načítavanie Oxidized/device secrets z OpenBao.
+Runtime identita, ktorú Atlas reconcile používa na čítanie Oxidized/device secrets z OpenBao.
 
 Policies:
 
@@ -748,8 +758,6 @@ Policies:
 oxidized-runtime
 device-credentials-read
 ```
-
-Aktuálny manuálny Oxidized acceptance workflow ešte používa credentials v privátnom `router.db`. Existencia `oxidized-runtime` AppRole preto neznamená, že kontajner už automaticky synchronizuje credentials z OpenBao.
 
 Runtime policies sú navrhnuté ako read-only. Zápis a správa secrets zostáva deployment/Atlas aplikačnej vrstve.
 
@@ -771,7 +779,7 @@ atlas/devices/credentials/*
 
 Cieľom je, aby sa rovnaké credentials sieťových zariadení nemuseli duplikovať pre Checkmk, Oxidized a ďalšie Atlas aplikácie. App-specific secrets zostávajú oddelené.
 
-Toto je cieľový secret model. V aktuálnom beta manuálnom Oxidized onboarding teste sa inventory zapisuje do `router.db`; Atlas aplikácia má tento krok nahradiť riadeným zápisom inventory a čítaním credentials z OpenBao.
+Oxidized reconcile číta tento strom cez `oxidized-runtime`, v pamäti zostaví úplný desired-state inventár a atómovo nahradí ephemeral `router.json`.
 
 ---
 
@@ -1029,7 +1037,7 @@ Pri existujúcom deploymente má:
 - znovu použiť Oxidized web credentials,
 - obnoviť proxy kontajner iba podľa potreby.
 
-Secrets sa pri bežnom redeploymente neregenerujú. Zmena `router.db` sa aplikuje cez `sudo atlasctl oxidized reconcile`; nie je potrebné ručne reštartovať celý stack.
+Secrets sa pri bežnom redeploymente neregenerujú. Zmena NetBox zariadenia alebo jeho OpenBao credentials sa aplikuje cez `sudo atlasctl oxidized reconcile`; príkaz vykoná atómový zápis a natívny `GET /reload` bez recreate alebo restartu kontajnera.
 
 ---
 
@@ -1090,7 +1098,7 @@ Rizikové persistentné dáta zahŕňajú:
 - OpenBao Raft storage,
 - NetBox PostgreSQL a media volumes,
 - Oxidized Git volume `atlas-oxidized-data`,
-- `/opt/aricoma-atlas/.runtime/oxidized/router.db`,
+- `/run/atlas/oxidized/router.json` (ephemeral materializácia credentials),
 - `/opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts`,
 - site-specific proxy/TLS runtime.
 
@@ -1410,8 +1418,9 @@ Zabezpečuje:
 Oxidized `0.37.0` beží v samostatnom Compose projekte a používa:
 
 - runtime konfiguráciu z `/opt/aricoma-atlas/.runtime/oxidized/`,
-- CSV source `router.db`,
-- persistentný SSH trust store,
+- JSONFile source `/run/atlas/oxidized/router.json`,
+- credentials načítané počas reconcile z OpenBao,
+- persistentný a read-only pripojený SSH trust store,
 - persistentný Git output v Docker volume,
 - interný web/API listener na porte `8888`,
 - Nginx ako jediný podporovaný externý HTTPS vstup,
@@ -1428,10 +1437,10 @@ atlas-oxidized-oxidized-1
 Fresh deploy vytvorí prázdny:
 
 ```text
-/opt/aricoma-atlas/.runtime/oxidized/router.db
+/run/atlas/oxidized/router.json
 ```
 
-Prázdny inventár je podporovaný stav. Oxidized wrapper udrží kontajner a web/API zdravé, ale nespustí zariadeniové joby. Po prihlásení cez Nginx sa zobrazí stránka „Oxidized is ready and waiting for inventory.“ a inventory endpoint vracia prázdny zoznam.
+Súbor obsahuje `[]`. Prázdny inventár je podporovaný stav. Wrapper udrží kontajner a web/API zdravé, ale nespustí zariadeniové joby. Po prihlásení cez Nginx inventory endpoint vracia prázdny zoznam.
 
 Tento stav znamená:
 
@@ -1449,7 +1458,7 @@ Po pridaní prvého zariadenia spusti:
 sudo atlasctl oxidized reconcile
 ```
 
-Reconcile overí runtime mounty, reloadne inventory a aktivuje/zosúladí natívny Oxidized proces bez potreby ručného zásahu do kontajnera.
+Reconcile načíta zariadenia z NetBoxu, credentials z OpenBao, atómovo nahradí celý JSON súbor a až potom zavolá natívny Oxidized `GET /reload`. Príkaz nevykoná Compose `up`, recreate ani restart.
 
 ## Runtime a persistence
 
@@ -1458,23 +1467,26 @@ Host runtime:
 ```text
 /opt/aricoma-atlas/.runtime/oxidized/
 ├── config
-├── router.db
 └── ssh/
     └── known_hosts
+
+/run/atlas/oxidized/
+└── router.json
 ```
 
 Relevantné mounty:
 
 ```text
 config       → /etc/oxidized/config
-router.db    → /etc/atlas-oxidized/router.db
-ssh/         → /home/oxidized/.ssh/
+router.json  → /etc/atlas-oxidized/router.json:ro
+ssh/         → /home/oxidized/.ssh/:ro
 Git volume   → /home/oxidized/.config/oxidized/
 ```
 
 Dôležité vlastnosti:
 
-- `router.db` sa pri bežnom redeploymente zachováva,
+- `router.json` je ephemeral a po boote začína ako `[]`,
+- reconcile ho vždy znovu zostaví z aktuálneho desired state,
 - `known_hosts` je mimo kontajnera a zachováva sa pri recreate/redeployi,
 - Git repository je v persistentnom Docker volume `atlas-oxidized-data`,
 - `down -v`, volume prune alebo odstránenie volume zmaže Git históriu,
@@ -1482,29 +1494,11 @@ Dôležité vlastnosti:
 
 ## Inventory formát
 
-Aktuálny CSV mapping používa poradie:
+Inventár je JSON pole. Každý prvok obsahuje minimálne `name`, `ip`, `model`, `username` a `password`; voliteľne `enable`. Hodnoty sa nevypisujú do logov. Súbor je citlivý aj keď je ephemeral: neposielaj ho do ticketov ani diagnostických výstupov.
 
-```text
-name:model:username:password:enable
-```
+NetBox je zdroj identity zariadenia, management IP, platformy a príznaku `oxidized_enabled`. OpenBao je zdroj credentials. Ak je povolené zariadenie neúplné alebo jeho secret nemožno načítať, reconcile zlyhá pred zápisom a predchádzajúci inventár zostane zachovaný.
 
-Príklad:
-
-```text
-10.200.200.1:ios:admin:<PASSWORD>:<ENABLE_PASSWORD>
-```
-
-Mapping:
-
-```text
-name      → field 0
-model     → field 1
-username  → field 2
-password  → field 3
-enable    → field 4
-```
-
-`router.db` je v tomto režime citlivý secret file. Neposielaj jeho obsah do ticketov/logov a necommituj ho. Manuálny CSV onboarding je beta acceptance mechanizmus, nie finálny secret-delivery model.
+Súbor má mode `0644` a inventárový adresár `0755` kvôli read-only čítaniu kontajnerovým UID. Hostiteľský parent `/run/atlas` má mode `0710`, vlastní ho `root:atlas`, takže ostatní lokálni používatelia nevedia cestu prejsť. Do kontajnera sa inventárový adresár pripája read-only; adresárový mount zároveň zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná.
 
 ## SSH host-key trust
 
@@ -1516,24 +1510,23 @@ Oxidized má zapnuté strict host-key verification (`secure: true`). Dôveryhodn
 
 Interaktívne SSH pripojenie používateľa zapisuje do `~/.ssh/known_hosts`; tým sa automaticky nepridá trust pre Oxidized.
 
-Bezpečný manuálny acceptance flow:
+Bezpečný acceptance flow:
 
-1. pripoj sa na zariadenie a over fingerprint nezávislým spôsobom,
-2. pridaj overený public key do persistentného Oxidized `known_hosts`,
-3. pridaj inventory záznam,
-4. spusti reconcile,
-5. sleduj logy a potvrď prvý Git backup.
-
-Príklad kopírovania už overeného kľúča z používateľského `known_hosts`:
+1. zobraz kľúče, ktoré zariadenie aktuálne prezentuje:
 
 ```bash
-ssh-keygen -F 10.200.200.1 -f ~/.ssh/known_hosts \
-  | awk '!/^#/ {print "10.200.200.1 " $2 " " $3; exit}' \
-  | sudo tee -a \
-      /opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts
+sudo atlasctl oxidized host-key scan 10.200.200.1
 ```
 
-Potom:
+2. fingerprint over nezávislým kanálom, napríklad v konzole zariadenia alebo v schválenej dokumentácii,
+3. prijmi presný overený fingerprint:
+
+```bash
+sudo atlasctl oxidized host-key accept \
+  10.200.200.1 SHA256:OVERENY_FINGERPRINT
+```
+
+4. spusti reconcile a over prvý backup:
 
 ```bash
 sudo atlasctl oxidized reconcile
@@ -1541,7 +1534,27 @@ sudo atlasctl status
 sudo atlasctl oxidized logs -f
 ```
 
-Ak log obsahuje `Net::SSH::HostKeyUnknown`, inventory je načítaný a sieťová/SSH fáza sa dostala k overeniu identity zariadenia, ale kľúč ešte nie je dôveryhodný. Fingerprint najprv porovnaj; nevypínaj verification.
+`scan` trust nemení. `accept` uloží iba kľúč, ktorý zariadenie pri danom spustení skutočne prezentuje a ktorého fingerprint sa presne zhoduje. Opakované prijatie je no-op. Konflikt rovnakého key typu zlyhá bez zmeny `known_hosts`; rotácia preto vyžaduje samostatné preskúmanie a odstránenie starého kľúča mimo automatického reconcile.
+
+Ak log obsahuje `Net::SSH::HostKeyUnknown`, inventár je načítaný, ale kľúč ešte nie je dôveryhodný. Fingerprint najprv porovnaj; nevypínaj verification.
+
+## Pridanie a odstránenie zariadenia
+
+Pridanie:
+
+1. v NetBoxe nastav zariadenie, primary management IP, podporovanú platformu, `credential_profile` a `oxidized_enabled=true`,
+2. ulož príslušné credentials do OpenBao,
+3. explicitne prijmi overený SSH host key,
+4. spusti `sudo atlasctl oxidized reconcile`,
+5. over `/nodes.json`, log a prvý commit v Oxidized Git histórii.
+
+Odstránenie:
+
+1. nastav `oxidized_enabled=false` alebo odstráň zariadenie z NetBoxu,
+2. spusti `sudo atlasctl oxidized reconcile`,
+3. over, že zariadenie už nie je v `/nodes.json`.
+
+Výstup má `clean_obsolete_nodes: false`. Odstránenie zariadenia z inventára preto nemaže jeho existujúci konfiguračný súbor ani Git históriu. Mazanie persistentného Docker volume je samostatná deštruktívna operácia.
 
 ## Legacy SSH zariadenia
 
@@ -1578,30 +1591,6 @@ sudo atlasctl oxidized logs -f
 
 Do kontajnera vstupuj iba pri diagnostike. Bežné pridanie zariadenia nesmie vyžadovať manuálnu editáciu súborov vo vnútri kontajnera.
 
-## Budúca Atlas aplikácia
-
-Atlas aplikačná vrstva má automatizovať:
-
-```text
-schválené zariadenie v NetBoxe
-        ↓
-management IP + platforma/model
-        ↓
-načítanie credentials z OpenBao
-        ↓
-získanie SSH host key
-        ↓
-zobrazenie a schválenie fingerprintu
-        ↓
-atómový zápis known_hosts + inventory
-        ↓
-Oxidized reconcile
-        ↓
-prvý backup + Git verzia
-```
-
-Pri zmene host key má Atlas zber zastaviť a vyžiadať nové schválenie; nesmie starý kľúč potichu prepísať.
-
 ## `deploy_oxidized.py`
 
 Priamy vývojový entrypoint:
@@ -1611,7 +1600,24 @@ python3 scripts/deploy_oxidized.py
 python3 scripts/deploy_oxidized.py --prepare-only
 ```
 
-Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť, runtime mounty a persistentný Git volume. Existujúci inventár, trust a história sa pri bežnom redeploymente zachovávajú. Deployment sám nepridáva reálne zariadenia a zatiaľ neimplementuje synchronizáciu NetBox → Oxidized.
+Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť, runtime mounty a persistentný Git volume. Plný deploy zostaví inventár z NetBoxu a OpenBao pred štartom/reconcile služby. Prepínač `--reconcile-only` je prevádzková cesta bez Compose redeployu a používa ho `atlasctl`.
+
+## Clean-install acceptance checklist
+
+Tento checklist spusti až po review, commite a úspešnom CI na čistej podporovanej Ubuntu VM:
+
+1. nainštaluj Atlas cez `sudo ./install.sh` a over `sudo atlasctl status`,
+2. priprav site-specific proxy/TLS konfiguráciu a spusti `sudo atlasctl deploy`,
+3. bezpečne ulož 5 OpenBao unseal shares mimo Atlas servera; threshold je 3,
+4. s prázdnym NetBox desired state over autentizovaný `WAITING_FOR_INVENTORY` a `[]`,
+5. pridaj jedno testovacie zariadenie, jeho OpenBao secret a overený SSH host key,
+6. spusti reconcile, over zariadenie v `/nodes.json`, backup a prvý Git commit,
+7. pridaj druhé zariadenie a over add bez recreate/restartu kontajnera,
+8. zakáž alebo odstráň prvé zariadenie, spusti reconcile a over, že zmizlo z nodes, ale jeho Git história zostala,
+9. zopakuj `sudo atlasctl deploy` a over zachovanie secrets, trustu a Git histórie,
+10. reštartuj VM, odomkni OpenBao cez `sudo atlasctl deploy` a over, že ephemeral inventár sa znovu vytvoril z NetBoxu a OpenBao.
+
+Clean-install test zatiaľ nie je v tomto pracovnom strome vykonaný; je posledným acceptance testom po uzavretí a review všetkých P0.
 
 ---
 
@@ -1994,9 +2000,9 @@ Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup
 
 ---
 
-# Aktuálny beta scope
+# Historický scope tagu `v0.1.2-beta`
 
-`v0.1.2-beta` zahŕňa:
+Nasledujúci zoznam opisuje už vydaný tag, nie aktuálny pracovný strom. `v0.1.2-beta` zahŕňa:
 
 - `install.sh` a nainštalovaný strom `/opt/aricoma-atlas`,
 - `deploy.sh` a administračný wrapper `atlasctl`,
@@ -2049,8 +2055,7 @@ Pred označením Atlas deploymentu ako produkčného je potrebné minimálne dor
 - backup/restore Oxidized Git volume a runtime trustu,
 - dependency/version pinning pre produkčný Python runtime,
 - hardening Docker hosta a filesystem permissions,
-- migráciu zariadeniových credentials z CSV runtime do OpenBao-backed flow,
-- riadený SSH host-key enrollment a rotation,
+- formálny rotation/runbook proces pre už schválené SSH host keys,
 - explicitné per-platform legacy SSH profily,
 - individuálne prístupy, RBAC alebo SSO pre web/API,
 - opakovateľný clean-install, upgrade, reboot a disaster-recovery test.
@@ -2064,14 +2069,9 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 Ďalšie fázy projektu:
 
 - Atlas aplikačná vrstva,
-- výber schválených zariadení podľa NetBox custom fields,
-- automatické napĺňanie Oxidized inventára z NetBoxu,
-- mapovanie NetBox platformy na Oxidized model,
-- čítanie spoločných device credentials z OpenBao,
-- SSH host-key discovery, zobrazenie fingerprintu a explicitné schválenie,
-- atómový zápis `known_hosts` a inventory,
-- automatický reconcile a validácia prvého backupu,
-- detekcia host-key zmeny bez automatického prepisu,
+- GUI/API nad existujúcim výberom NetBox zariadení a reconcile logikou,
+- pending-approval evidencia a riadená rotácia SSH host keys,
+- automatická validácia prvého backupu po schválení zariadenia,
 - Checkmk deployment a provisioning,
 - napojenie Checkmk/Oxidized na spoločné device credentials,
 - individuálne prístupy alebo SSO pre proxy,
