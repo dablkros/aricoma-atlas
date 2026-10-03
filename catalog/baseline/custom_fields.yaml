@@ -95,3 +95,16 @@ custom_fields:
     related_object_filter: null
     choice_set: "Profylaxia checks"
     comments: ""
+
+  - name: "credential_profile"
+    object_types:
+      - "dcim.device"
+    type: "text"
+    label: "Credential profile"
+    group_name: "Atlas"
+    description: "Explicit OpenBao profile reference; never a username or password"
+    required: false
+    unique: false
+    default: null
+    validation_regex: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
+    is_cloneable: false

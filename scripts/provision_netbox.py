@@ -12,6 +12,10 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from atlas.platforms import (load_platform_config, provision_platforms, enrich_device_types,
+                             catalog_platform_report, print_platform_report, default_platform)
+
 CATALOG = ROOT / "build" / "device-types"
 
 NETBOX_URL = os.getenv(
@@ -48,6 +52,7 @@ DEVICE_TYPE_FIELDS = {
 IGNORED_DEVICE_TYPE_FIELDS = {
     # Device Type Library metadata.
     # These are NOT sent as JSON fields to NetBox DeviceType.
+    "default_platform",  # Resolved to a native FK by enrichment, never sent as a slug.
     "front_image",
     "rear_image",
     "is_powered",
@@ -456,6 +461,11 @@ class NetBoxClient:
             created.extend(result)
 
         return created
+
+    def patch(self, endpoint, payload):
+        response = self.session.patch(self._url(endpoint), json=payload, timeout=60)
+        response.raise_for_status()
+        return response.json()
 
     def status(self):
         return self.get(
@@ -999,6 +1009,8 @@ def provision_device_types(
     apply_changes,
     batch_size,
     verbose,
+    platforms=None,
+    platform_config=None,
 ):
     index = load_device_type_index(
         client
@@ -1052,6 +1064,10 @@ def provision_device_types(
             )
         else:
             payload = None
+
+        if apply_changes and platform_config is not None:
+            slug = default_platform(item["data"], platform_config)
+            payload["default_platform"] = platforms[slug]["id"] if slug else None
 
         pending.append(
             (
@@ -1460,6 +1476,16 @@ def provision(
     # Device Types
     # -----------------------------------------------------------------------
 
+    platform_config = load_platform_config()
+    # A single-type import only needs platforms for its selected manufacturers.
+    selected_vendors = {item["manufacturer"] for item in items}
+    platform_config["platforms"] = {
+        slug: value for slug, value in platform_config["platforms"].items()
+        if value["manufacturer"] in selected_vendors
+    }
+    platforms = provision_platforms(client, manufacturers, platform_config, apply_changes)
+    print_platform_report(catalog_platform_report([item["data"] for item in items], platform_config))
+
     device_types = (
         provision_device_types(
             client,
@@ -1468,12 +1494,16 @@ def provision(
             apply_changes,
             batch_size,
             verbose,
+            platforms,
+            platform_config,
         )
     )
 
     # -----------------------------------------------------------------------
     # Components
     # -----------------------------------------------------------------------
+
+    enrich_device_types(client, items, device_types, platforms, platform_config, apply_changes)
 
     dependencies = {}
 
@@ -1610,10 +1640,10 @@ def main():
             "[ERROR] --apply requires either "
             "--all or --device-type.\n\n"
             "Examples:\n"
-            "  python scripts/"
+            "  python3 scripts/"
             "provision_netbox.py "
             "--apply --device-type FG-60F\n"
-            "  python scripts/"
+            "  python3 scripts/"
             "provision_netbox.py "
             "--apply --all"
         )

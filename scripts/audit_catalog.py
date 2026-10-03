@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -7,6 +8,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from atlas.platforms import (load_platform_config, catalog_platform_report, print_platform_report)
+
 CATALOG = ROOT / "build" / "device-types"
 
 
@@ -27,6 +31,7 @@ COMPONENT_TYPES = [
 
 
 EXPECTED_TOP_LEVEL_KEYS = {
+    "default_platform",
     "manufacturer",
     "model",
     "slug",
@@ -55,6 +60,9 @@ def main():
     files = sorted(
         CATALOG.glob("*/*.yaml")
     )
+
+    print_platform_report(catalog_platform_report(
+        [yaml.safe_load(p.read_text(encoding="utf-8")) for p in files], load_platform_config()))
 
     component_counts = Counter()
     device_counts = Counter()

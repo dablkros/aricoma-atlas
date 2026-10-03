@@ -11,6 +11,9 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(ROOT))
+from atlas.platforms import mapping_digest
+
 SCRIPTS = ROOT / "scripts"
 
 MANIFEST_FILE = (
@@ -500,6 +503,9 @@ def catalog_status(
     # -----------------------------------------------------------------------
     # Catalog metadata
     # -----------------------------------------------------------------------
+
+    if report.get("platform_mapping_sha256") != mapping_digest():
+        reasons.append("platform mapping changed or enrichment is missing")
 
     expected_catalog = (
         manifest["catalog"]
@@ -1301,7 +1307,7 @@ def main():
         )
 
         print(
-            "  python scripts/"
+            "  python3 scripts/"
             "bootstrap_netbox.py --apply"
         )
 
