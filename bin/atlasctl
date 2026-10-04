@@ -72,7 +72,7 @@ prepare_oxidized_inventory_runtime() {
     [[ "$OXIDIZED_INVENTORY_DIR" == /* ]] || \
         die "ATLAS_OXIDIZED_RUN_DIR must be an absolute path"
 
-    install -d -m 0755 -o "$ATLAS_USER" -g "$ATLAS_GROUP" \
+    install -d -m 0750 -o "$ATLAS_USER" -g "$ATLAS_GROUP" \
         "$OXIDIZED_INVENTORY_DIR"
 
     if [[ -L "${OXIDIZED_INVENTORY_DIR}/router.json" ]] || \
@@ -87,7 +87,7 @@ prepare_oxidized_inventory_runtime() {
 
     chown "$ATLAS_USER:$ATLAS_GROUP" \
         "${OXIDIZED_INVENTORY_DIR}/router.json"
-    chmod 0644 "${OXIDIZED_INVENTORY_DIR}/router.json"
+    chmod 0640 "${OXIDIZED_INVENTORY_DIR}/router.json"
 }
 
 run_python_as_atlas() {

@@ -113,7 +113,7 @@ V aktuálnom beta prostredí:
 - OpenBao API je bindnuté na loopback adresu,
 - NetBox a Oxidized sú publikované cez spoločný Nginx a HTTPS,
 - Atlas backend je publikovaný iba na loopback adrese `127.0.0.1:8081`,
-- Atlas backend zatiaľ nie je pripojený do Nginx, pretože Milestone 1 nemá API autentifikáciu,
+- Atlas Operations UI nie je pripojené do Nginx, pretože používateľská autentifikácia je rozsah nasledujúceho milestone,
 - Oxidized web/API nemá publikovaný host port,
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
@@ -492,9 +492,124 @@ curl -i http://127.0.0.1:8081/api/ready
 
 Chybová odpoveď readiness obsahuje iba stav dependency a bezpečný dôvod, napríklad `connection_failed`, `authentication_failed`, `sealed` alebo `unavailable`. Neobsahuje raw exception, token ani heslo.
 
-### Prevádzkové obmedzenie tohto milestone
+### Kontajnerové zapojenie
 
-Existujúci Milestone 1 backend kontajner ostáva zámerne bez nového secret mountu a bez pripojenia do interných sietí OpenBao, NetBoxu a Oxidized. Zapojenie identity súboru a Docker sietí je blocker pre neskoršie kontajnerové použitie `/api/ready`, ale Docker deployment Atlas API je podľa rozsahu Milestone 2 non-goal. Kontajnerový healthcheck preto správne naďalej používa `/api/health`, nie dependency readiness.
+Od Milestone 4 má backend kontajner read-only mount AppRole identity, read-write mount výhradne na ephemeral Oxidized inventory adresár a pripojenie do troch interných aplikačných sietí. Neobsahuje Docker socket a beží pod numerickým UID/GID neprivilegovaného Atlas service accountu. Kontajnerový healthcheck naďalej používa lacný `/api/health`; dependency readiness je samostatný endpoint.
+
+## Atlas backend API — Milestone 3
+
+Milestone 3 pridáva prvú zápisovú orchestration operáciu:
+
+```http
+POST /api/oxidized/sync
+```
+
+Atlas načíta cez paginovaný NetBox API iba zariadenia s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta príslušné admin credentials z OpenBao. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback credentials.
+
+Spracovanie používa jedno spoločné jadro pre API aj `sudo atlasctl oxidized reconcile`:
+
+```text
+NetBox desired state
+        +
+OpenBao credentials
+        ↓
+canonical inventory zoradený podľa mena
+        ↓
+diff added / updated / removed / unchanged
+        ↓
+atomický zápis router.json iba pri zmene
+        ↓
+Oxidized GET /reload po zápise alebo pending retry
+```
+
+Zmena ľubovoľného runtime poľa vrátane hesla alebo enable secretu znamená `updated`, ale odpoveď a logy obsahujú iba názov zariadenia a bezpečný reason code. Plaintext credentials, tokeny a AppRole `secret_id` sa nevracajú.
+
+Safe reconciliation rozlišuje tieto situácie:
+
+- zariadenie odstránené z NetBoxu alebo s `oxidized_enabled=false` sa odstráni iba z runtime inventára,
+- chybné enabled zariadenie, ktoré už v inventári existuje, sa zachová a uvedie v `issues`,
+- chýbajúci secret alebo chybná secret schéma je per-device `error`; ostatné zariadenia pokračujú,
+- nedostupný NetBox alebo OpenBao, nefunkčná AppRole identita, poškodený current inventory alebo chyba zápisu ukončí celý sync bez vytvorenia inventára z neúplných dát,
+- súbežný sync dostane `409 sync_already_running`.
+
+Úspech a partial success vracajú `200`. Ak zápis prebehol, ale Oxidized reload zlyhal, odpoveď má `503`, `status=error`, `inventory_updated=true` a `oxidized_reloaded=false`; automatický rollback sa nevykonáva. Bezpečný marker v ephemeral runtime zabezpečí, že ďalší sync reload zopakuje aj bez ďalšieho prepisu inventára. Ak sa desired a current inventory zhodujú a žiadny reload nečaká, Atlas súbor neprepisuje a `/reload` nevolá.
+
+Príklad lokálneho volania backendu spusteného mimo kontajnera:
+
+```bash
+export ATLAS_OPENBAO_IDENTITY_FILE="$PWD/.runtime/openbao-backend.json"
+export ATLAS_OXIDIZED_INVENTORY_FILE=/run/atlas/oxidized/router.json
+python3 -m uvicorn atlas.api.main:app --host 127.0.0.1 --port 8081
+curl -sS -X POST http://127.0.0.1:8081/api/oxidized/sync
+curl -sS -X POST http://127.0.0.1:8081/api/oxidized/sync
+```
+
+Druhé volanie pri nezmenenom NetBoxe a OpenBao má vrátiť `inventory_changed=false`, nulové add/update/remove a nemá vyvolať ďalší zápis ani reload.
+
+Atlas touto operáciou synchronizuje iba desired runtime inventory. Configuration backup, polling, porovnanie konfigurácií a Git commit vykonáva Oxidized; sync nemaže zariadeniové secrets, NetBox objekty, uložené konfigurácie ani Oxidized Git históriu.
+
+### Kontajnerová dostupnosť
+
+Milestone 4 dopĺňa backend kontajneru AppRole identity, Oxidized runtime inventory a interné siete OpenBao, NetBoxu a Oxidized. `POST /api/oxidized/sync` preto používa v kontajnerovom deploymente tú istú `OxidizedSyncService` ako `sudo atlasctl oxidized reconcile`. Atlas API a UI zostávajú dostupné iba cez host loopback; Nginx ingress sa nemení.
+
+## Atlas Operations UI — Milestone 4
+
+FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je čisté HTML, CSS a vanilla JavaScript bez CDN, npm alebo Node build procesu. Poskytuje:
+
+- aplikačný stav Atlasu, OpenBao, NetBoxu a Oxidized,
+- porovnanie NetBox-enabled zariadení s aktuálnym runtime inventárom,
+- bezpečný zoznam zariadení obsahujúci iba `name`, `ip` a `model`,
+- explicitnú operáciu **Sync inventory**,
+- výsledok posledného syncu v aktuálnej browser session,
+- explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára.
+
+Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
+
+### API kontrakty pre Operations UI
+
+| Endpoint | Význam |
+| --- | --- |
+| `GET /api/health` | Lacná liveness kontrola procesu Atlas API. |
+| `GET /api/ready` | Použiteľnosť kritických dependencies; pri chybe vracia `503`. |
+| `GET /api/status` | Používateľský aggregate stav `healthy`, `degraded` alebo `unhealthy`. |
+| `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
+| `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
+| `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
+| `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
+
+`GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
+
+### CLI a API hranice
+
+| CLI operácia | UI/API ekvivalent | Rozdiel |
+| --- | --- | --- |
+| `atlasctl status` | `GET /api/status` | CLI môže navyše kontrolovať Docker, filesystem a host runtime; API zostáva bez host privileges. |
+| `atlasctl oxidized reconcile` | `POST /api/oxidized/sync` | Obe cesty používajú shared reconciliation service. |
+| prioritný Oxidized node | `POST /api/oxidized/devices/{name}/backup` | Požiadavka node iba zaradí; výsledok backupu spravuje Oxidized. |
+
+`atlasctl deploy` a `atlasctl openbao` nemajú UI ani API ekvivalent.
+
+### Bezpečný manuálny prístup
+
+Backend zostáva publikovaný iba na `127.0.0.1:8081`; Atlas hostname ani route sa do Nginx nepridáva. Na VM možno overiť liveness:
+
+```bash
+curl http://127.0.0.1:8081/api/health
+```
+
+Z administračnej workstation vytvor SSH tunnel:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@atlas-vm
+```
+
+Potom otvor:
+
+```text
+http://127.0.0.1:8081/
+```
+
+Tunnel sprístupní loopback port iba lokálnemu prehliadaču na workstation. Používateľská autentifikácia, RBAC a Nginx HTTPS ingress pre Atlas UI patria do Milestone 5.
 
 ---
 
@@ -701,6 +816,8 @@ OpenBao readiness gate
 NetBox runtime + secrets + healthcheck + bootstrap
         ↓
 Oxidized runtime + waiting/collection mode
+        ↓
+Atlas backend + Operations UI + healthcheck
         ↓
 Nginx HTTPS + Oxidized Basic Auth
         ↓
@@ -1614,9 +1731,9 @@ Dôležité vlastnosti:
 
 Inventár je JSON pole. Každý prvok obsahuje minimálne `name`, `ip`, `model`, `username` a `password`; voliteľne `enable`. Hodnoty sa nevypisujú do logov. Súbor je citlivý aj keď je ephemeral: neposielaj ho do ticketov ani diagnostických výstupov.
 
-NetBox je zdroj identity zariadenia, management IP, platformy a príznaku `oxidized_enabled`. OpenBao je zdroj credentials. Ak je povolené zariadenie neúplné alebo jeho secret nemožno načítať, reconcile zlyhá pred zápisom a predchádzajúci inventár zostane zachovaný.
+NetBox je zdroj identity zariadenia, management IP, platformy a príznaku `oxidized_enabled`. OpenBao je zdroj credentials. Neúplné enabled zariadenie alebo chýbajúci per-device secret sa uvedie v structured issues; ak už bolo zariadenie v current inventory, jeho posledná platná položka sa zachová. Globálne zlyhanie NetBoxu alebo OpenBao ukončí operáciu pred zápisom.
 
-Súbor má mode `0644` a inventárový adresár `0755` kvôli read-only čítaniu kontajnerovým UID. Hostiteľský parent `/run/atlas` má mode `0710`, vlastní ho `root:atlas`, takže ostatní lokálni používatelia nevedia cestu prejsť. Do kontajnera sa inventárový adresár pripája read-only; adresárový mount zároveň zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná.
+Súbor má mode `0640` a inventárový adresár `0750`; Oxidized proces používa GID hostiteľského inventárového adresára ako svoju primárnu runtime skupinu a mount zostáva read-only. Je to potrebné preto, že upstream image spúšťa aplikáciu cez `gosu oxidized`, ktoré zostaví skupiny procesu nanovo. Hostiteľský parent `/run/atlas` má mode `0710` a vlastní ho `root:atlas`. Adresárový mount zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná bez world-readable credentials.
 
 ## SSH host-key trust
 
@@ -1718,7 +1835,7 @@ python3 scripts/deploy_oxidized.py
 python3 scripts/deploy_oxidized.py --prepare-only
 ```
 
-Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť, runtime mounty a persistentný Git volume. Plný deploy zostaví inventár z NetBoxu a OpenBao pred štartom/reconcile služby. Prepínač `--reconcile-only` je prevádzková cesta bez Compose redeployu a používa ho `atlasctl`.
+Pripravuje pripnutý kontajner podľa `deployment/oxidized.yaml`, internú sieť, runtime mounty a persistentný Git volume. Plný deploy zostaví inventár z NetBoxu a OpenBao pred štartom služby. Prepínač `--reconcile-only` je prevádzková cesta bez Compose redeployu a používa ho `atlasctl`; volá rovnakú `OxidizedSyncService` ako API, nie druhú implementáciu diffu alebo resolution logiky.
 
 ## Clean-install acceptance checklist
 

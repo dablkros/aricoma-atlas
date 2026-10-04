@@ -727,6 +727,19 @@ jobs:
       # Cleanup
       # ---------------------------------------------------------------------
 
+      - name: Diagnose Full Atlas Oxidized failure (ephemeral CI environment only)
+        if: failure()
+        run: |
+          if [ -f ".runtime/oxidized/docker-compose.yml" ]; then
+            docker compose \
+              -p atlas-oxidized \
+              -f .runtime/oxidized/docker-compose.yml \
+              logs \
+              --tail=100 \
+              oxidized \
+              || true
+          fi
+
       - name: Clean up Atlas
         if: always()
         shell: bash

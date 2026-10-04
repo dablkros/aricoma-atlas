@@ -5,7 +5,6 @@ import logging
 from fastapi import APIRouter, Request, Response, status
 
 from atlas.api.schemas.readiness import DependencyStatuses, ReadinessResponse
-from atlas.services.errors import DependencyError
 
 
 logger = logging.getLogger("atlas.api.readiness")
@@ -20,20 +19,17 @@ router = APIRouter(tags=["health"])
     summary="Check whether required Atlas dependencies are ready",
 )
 def readiness(request: Request, response: Response) -> ReadinessResponse:
-    services = request.app.state.dependencies
-    states = {}
-    reasons = {}
-
-    for name in ("openbao", "netbox", "oxidized"):
-        try:
-            getattr(services, name).check_ready()
-            states[name] = "ok"
-        except DependencyError as exc:
-            states[name] = "error"
-            reasons[name] = exc.reason
-        except Exception:
-            states[name] = "error"
-            reasons[name] = "unavailable"
+    result = request.app.state.dependencies.platform_status.check()
+    dependency_names = ("openbao", "netbox", "oxidized")
+    states = {
+        name: "ok" if result.components[name].status == "healthy" else "error"
+        for name in dependency_names
+    }
+    reasons = {
+        name: result.components[name].reason
+        for name in dependency_names
+        if result.components[name].reason
+    }
 
     ready = all(value == "ok" for value in states.values())
     if not ready:

@@ -108,6 +108,13 @@ class NetBoxService:
         )
         self._validate_page(data)
 
+    def get_oxidized_devices(self) -> List[dict]:
+        """Return all explicitly enabled devices using NetBox pagination."""
+        return self.get_all(
+            "/api/dcim/devices/",
+            params={"cf_oxidized_enabled": "true"},
+        )
+
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> dict:
         token = self.openbao.get_netbox_api_token()
         return self._request_json(self._endpoint_url(endpoint), token, params=params)

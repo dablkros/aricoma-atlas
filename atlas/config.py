@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     openbao_identity_file: Path = Path(".runtime/openbao-backend.json")
     netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
     oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
+    oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 
@@ -63,11 +64,11 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("openbao_identity_file")
+    @field_validator("openbao_identity_file", "oxidized_inventory_file")
     @classmethod
-    def validate_identity_file(cls, value: Path) -> Path:
+    def validate_runtime_file(cls, value: Path) -> Path:
         if not value.name or ".." in value.parts:
-            raise ValueError("openbao_identity_file must identify a file")
+            raise ValueError("runtime path must identify a file")
         return value
 
 

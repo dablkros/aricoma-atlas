@@ -14,6 +14,7 @@ from atlas.openbao_client import OpenBaoClient, OpenBaoNotFound
 ROOT = Path(__file__).resolve().parent.parent
 NETBOX_NETWORK = "atlas-netbox-web"
 OXIDIZED_NETWORK = "atlas-oxidized-web"
+OPENBAO_NETWORK = "atlas-openbao-api"
 
 
 def run(command, **kwargs):
@@ -24,7 +25,7 @@ def run(command, **kwargs):
     return result.stdout.strip()
 
 
-def write_private(path, content, mode=0o600):
+def write_private(path, content, mode=0o600, group_id=None):
     path = Path(path)
     path.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(
@@ -34,6 +35,8 @@ def write_private(path, content, mode=0o600):
     temporary = Path(temporary_name)
     try:
         os.fchmod(descriptor, mode)
+        if group_id is not None:
+            os.fchown(descriptor, -1, int(group_id))
         with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
             handle.write(content)
             handle.flush()

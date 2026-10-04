@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="color-scheme" content="light">
+    <title>Aricoma Atlas — Operations</title>
+    <link rel="stylesheet" href="/static/styles.css">
+    <script src="/static/app.js" defer></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#main-content">Skip to content</a>
+
+    <header class="topbar">
+      <div class="brand" aria-label="Aricoma Atlas">
+        <span class="brand-mark" aria-hidden="true">A</span>
+        <div>
+          <p class="brand-name">ARICOMA ATLAS</p>
+          <p class="brand-subtitle">Network Infrastructure Orchestrator</p>
+        </div>
+      </div>
+      <div class="topbar-meta">
+        <span class="environment-label">Operations console</span>
+        <span id="connection-state" class="connection-state" role="status">
+          <span class="status-dot status-unknown" aria-hidden="true"></span>
+          Connecting
+        </span>
+      </div>
+    </header>
+
+    <main id="main-content" class="page-shell">
+      <section class="intro" aria-labelledby="page-title">
+        <div>
+          <p class="eyebrow">Local administration</p>
+          <h1 id="page-title">Operations overview</h1>
+          <p class="intro-copy">
+            Application health, Oxidized inventory reconciliation, and explicit
+            device backup requests from one local console.
+          </p>
+        </div>
+        <button id="refresh-button" class="button button-secondary" type="button">
+          <span class="button-icon" aria-hidden="true">↻</span>
+          Refresh
+        </button>
+      </section>
+
+      <div id="page-message" class="banner" role="alert" hidden></div>
+
+      <section class="panel" aria-labelledby="system-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">System</p>
+            <h2 id="system-heading">Platform status</h2>
+          </div>
+          <p id="last-refreshed" class="muted">Not refreshed yet</p>
+        </div>
+
+        <div id="component-grid" class="component-grid" aria-live="polite">
+          <article class="component-card" data-component="atlas">
+            <div class="component-icon" aria-hidden="true">AT</div>
+            <div>
+              <h3>Atlas</h3>
+              <p class="component-status"><span class="status-dot status-unknown"></span>Checking</p>
+            </div>
+          </article>
+          <article class="component-card" data-component="openbao">
+            <div class="component-icon" aria-hidden="true">OB</div>
+            <div>
+              <h3>OpenBao</h3>
+              <p class="component-status"><span class="status-dot status-unknown"></span>Checking</p>
+            </div>
+          </article>
+          <article class="component-card" data-component="netbox">
+            <div class="component-icon" aria-hidden="true">NB</div>
+            <div>
+              <h3>NetBox</h3>
+              <p class="component-status"><span class="status-dot status-unknown"></span>Checking</p>
+            </div>
+          </article>
+          <article class="component-card" data-component="oxidized">
+            <div class="component-icon" aria-hidden="true">OX</div>
+            <div>
+              <h3>Oxidized</h3>
+              <p class="component-status"><span class="status-dot status-unknown"></span>Checking</p>
+            </div>
+          </article>
+        </div>
+      </section>
+
+      <div class="two-column-layout">
+        <section class="panel inventory-panel" aria-labelledby="oxidized-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Oxidized</p>
+              <h2 id="oxidized-heading">Runtime inventory</h2>
+            </div>
+            <span id="inventory-health" class="status-pill status-pill-unknown">Unknown</span>
+          </div>
+
+          <dl class="metric-grid">
+            <div class="metric">
+              <dt>NetBox enabled</dt>
+              <dd id="netbox-device-count">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Runtime inventory</dt>
+              <dd id="runtime-device-count">—</dd>
+            </div>
+            <div class="metric">
+              <dt>Inventory issues</dt>
+              <dd id="inventory-issue-count">—</dd>
+            </div>
+          </dl>
+
+          <div class="operation-callout">
+            <div>
+              <h3>Reconcile inventory</h3>
+              <p>Build desired state from NetBox and OpenBao, then reload Oxidized only when required.</p>
+            </div>
+            <button id="sync-button" class="button button-primary" type="button">
+              <span class="button-label">Sync inventory</span>
+              <span class="button-progress" aria-hidden="true"></span>
+            </button>
+          </div>
+        </section>
+
+        <section class="panel result-panel" aria-labelledby="result-heading">
+          <div class="panel-heading">
+            <div>
+              <p class="section-kicker">Browser session</p>
+              <h2 id="result-heading">Last sync</h2>
+            </div>
+            <span id="result-status" class="status-pill status-pill-neutral">No run</span>
+          </div>
+
+          <div id="result-empty" class="empty-state">
+            <span class="empty-state-icon" aria-hidden="true">↔</span>
+            <p>No synchronization has been started in this browser session.</p>
+          </div>
+
+          <div id="result-content" hidden aria-live="polite">
+            <dl class="result-summary">
+              <div><dt>Added</dt><dd id="result-added">0</dd></div>
+              <div><dt>Updated</dt><dd id="result-updated">0</dd></div>
+              <div><dt>Removed</dt><dd id="result-removed">0</dd></div>
+              <div><dt>Unchanged</dt><dd id="result-unchanged">0</dd></div>
+              <div><dt>Skipped</dt><dd id="result-skipped">0</dd></div>
+              <div><dt>Errors</dt><dd id="result-errors">0</dd></div>
+            </dl>
+            <ul id="result-events" class="event-list"></ul>
+          </div>
+        </section>
+      </div>
+
+      <section class="panel devices-panel" aria-labelledby="devices-heading">
+        <div class="panel-heading devices-heading-row">
+          <div>
+            <p class="section-kicker">Devices</p>
+            <h2 id="devices-heading">Oxidized nodes</h2>
+          </div>
+          <p id="device-total" class="device-total">0 devices</p>
+        </div>
+
+        <div class="table-toolbar">
+          <div class="field-group search-field">
+            <label for="device-filter">Filter devices</label>
+            <input id="device-filter" type="search" placeholder="Name, IP, or model" autocomplete="off">
+          </div>
+          <div class="field-group sort-field">
+            <label for="device-sort">Sort by</label>
+            <select id="device-sort">
+              <option value="name">Name</option>
+              <option value="ip">IP address</option>
+              <option value="model">Model</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th scope="col">Name</th>
+                <th scope="col">IP address</th>
+                <th scope="col">Model</th>
+                <th scope="col"><span class="visually-hidden">Action</span></th>
+              </tr>
+            </thead>
+            <tbody id="device-table-body">
+              <tr><td colspan="4" class="table-message">Loading devices…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <p>Atlas Operations UI · loopback-only beta</p>
+      <p>Backup requests are queued; completion is handled by Oxidized.</p>
+    </footer>
+
+    <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
+  </body>
+</html>

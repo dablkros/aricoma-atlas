@@ -16,7 +16,14 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from atlas import __version__  # noqa: E402
-from atlas.deployment import compose, wait_healthy, write_yaml  # noqa: E402
+from atlas.deployment import (  # noqa: E402
+    NETBOX_NETWORK,
+    OPENBAO_NETWORK,
+    OXIDIZED_NETWORK,
+    compose,
+    wait_healthy,
+    write_yaml,
+)
 
 
 CONFIG_FILE = ROOT / "deployment/backend.yaml"
@@ -128,6 +135,28 @@ def prepare_runtime(config, root=ROOT):
     if root not in dockerfile.parents or not dockerfile.is_file():
         raise RuntimeError(f"Atlas backend Dockerfile not found: {dockerfile}")
 
+    identity_file = root / ".runtime/openbao-backend.json"
+    if identity_file.is_symlink() or not identity_file.is_file():
+        raise RuntimeError(
+            "Atlas backend AppRole identity is missing or is not a regular file"
+        )
+
+    inventory_directory = Path(
+        os.environ.get("ATLAS_OXIDIZED_RUN_DIR", "/run/atlas/oxidized")
+    )
+    if not inventory_directory.is_absolute():
+        raise RuntimeError("ATLAS_OXIDIZED_RUN_DIR must be an absolute path")
+    inventory_file = inventory_directory / "router.json"
+    if inventory_directory.is_symlink() or not inventory_file.is_file():
+        raise RuntimeError("Oxidized runtime inventory is not prepared")
+
+    runtime_user = os.geteuid()
+    runtime_group = os.getegid()
+    if runtime_user == 0:
+        raise RuntimeError(
+            "Atlas backend deployment must run as the Atlas service user"
+        )
+
     backend = config["backend"]
     network = config["network"]
     healthcheck = (
@@ -158,6 +187,21 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_APP_VERSION": backend["version"],
                         "ATLAS_ENVIRONMENT": backend["environment"],
                         "ATLAS_LOG_LEVEL": backend["log_level"],
+                        "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
+                        "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
+                        "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
+                        "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+                        "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+                    },
+                    "user": f"{runtime_user}:{runtime_group}",
+                    "volumes": [
+                        f"{identity_file}:/run/secrets/atlas-backend.json:ro",
+                        f"{inventory_directory}:/run/atlas/oxidized:rw",
+                    ],
+                    "networks": {
+                        "openbao": {},
+                        "netbox": {},
+                        "oxidized": {},
                     },
                     "ports": [
                         f"{network['listen_address']}:{network['host_port']}:{network['container_port']}"
@@ -175,7 +219,12 @@ def prepare_runtime(config, root=ROOT):
                         "start_period": "10s",
                     },
                 }
-            }
+            },
+            "networks": {
+                "openbao": {"external": True, "name": OPENBAO_NETWORK},
+                "netbox": {"external": True, "name": NETBOX_NETWORK},
+                "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
+            },
         },
     )
     os.chmod(compose_file, 0o600)

@@ -14,6 +14,7 @@ import sys
 import time
 from pathlib import Path
 
+import requests
 import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -31,20 +32,34 @@ from atlas.device_credentials import (  # noqa: E402
     DeviceValidationError,
     resolve_oxidized_device,
 )
-from atlas.openbao_client import OpenBaoClient, OpenBaoError  # noqa: E402
-from scripts.provision_netbox import NetBoxClient  # noqa: E402
+from atlas.openbao_client import OpenBaoClient  # noqa: E402
+from atlas.oxidized_inventory import (  # noqa: E402
+    canonical_inventory,
+    read_inventory as read_inventory_snapshot,
+    render_inventory as render_canonical_inventory,
+    validate_inventory as validate_canonical_inventory,
+    write_inventory as write_canonical_inventory,
+)
+from atlas.services.netbox import NetBoxService  # noqa: E402
+from atlas.services.errors import DependencyError  # noqa: E402
+from atlas.services.openbao import OpenBaoService  # noqa: E402
+from atlas.services.oxidized import OxidizedService  # noqa: E402
+from atlas.services.oxidized_sync import (  # noqa: E402
+    FileInventoryStore,
+    OxidizedSyncService,
+    resolved_inventory_entry,
+)
 
 
 OXIDIZED_CONFIG_PATH = "/etc/oxidized/config"
 OXIDIZED_SOURCE_PATH = "/etc/atlas-oxidized/router.json"
 OXIDIZED_WAIT_ENTRYPOINT = "/etc/atlas-oxidized-runtime/entrypoint.sh"
 OXIDIZED_WAIT_SERVER = "/etc/atlas-oxidized-runtime/waiting_server.rb"
+OXIDIZED_RUNNER = "/etc/service/oxidized/run"
 OXIDIZED_WEB_URL = "http://127.0.0.1:8888"
 DEFAULT_INVENTORY_DIRECTORY = "/run/atlas/oxidized"
 INVENTORY_FILE_NAME = "router.json"
-NETBOX_API_SECRET_PATH = "netbox/api"
-DEPLOYER_IDENTITY = ROOT / ".runtime/openbao-approle.json"
-OXIDIZED_IDENTITY = ROOT / ".runtime/openbao-oxidized.json"
+BACKEND_IDENTITY = ROOT / ".runtime/openbao-backend.json"
 
 
 WAIT_ENTRYPOINT = r'''#!/bin/sh
@@ -174,6 +189,85 @@ end
 '''
 
 
+OXIDIZED_RUN_SCRIPT = r'''#!/bin/sh
+set -eu
+
+SOURCE="/etc/atlas-oxidized/router.json"
+INVENTORY_DIRECTORY="/etc/atlas-oxidized"
+INVENTORY_GID="$(stat -c '%g' "$SOURCE")"
+DIRECTORY_GID="$(stat -c '%g' "$INVENTORY_DIRECTORY")"
+
+case "$INVENTORY_GID" in
+    *[!0-9]*|"")
+        echo "[ERROR] Invalid Oxidized inventory group ID" >&2
+        exit 1
+        ;;
+esac
+
+if [ "$DIRECTORY_GID" != "$INVENTORY_GID" ]; then
+    echo "[ERROR] Oxidized inventory directory and file group IDs differ" >&2
+    exit 1
+fi
+
+CONFIG_HOME="/home/oxidized/.config/oxidized"
+[ -d "$CONFIG_HOME" ] || mkdir -p "$CONFIG_HOME"
+[ ! -f "$CONFIG_HOME/pid" ] || rm -f "$CONFIG_HOME/pid"
+chown -R oxidized:oxidized "$CONFIG_HOME"
+
+# The upstream runit service invokes `gosu oxidized`, which rebuilds the
+# supplementary group list from /etc/group and discards Docker group_add.
+# Resolve the bind mount's container-visible GID and use it as the process
+# primary group. Host and container GIDs are not assumed to be identical.
+exec gosu "oxidized:${INVENTORY_GID}" oxidized
+'''
+
+
+RUNTIME_VALIDATION_SCRIPT = r'''set -eu
+
+fail() {
+    echo "[ERROR] $1" >&2
+    exit 1
+}
+
+SOURCE="/etc/atlas-oxidized/router.json"
+INVENTORY_DIRECTORY="/etc/atlas-oxidized"
+
+test -x /usr/bin/dumb-init || fail "dumb-init is unavailable"
+command -v runsvdir >/dev/null || fail "runsvdir is unavailable"
+command -v gosu >/dev/null || fail "gosu is unavailable"
+command -v stat >/dev/null || fail "stat is unavailable"
+test -x /etc/atlas-oxidized-runtime/entrypoint.sh || fail "Atlas entrypoint is not executable"
+test -r /etc/atlas-oxidized-runtime/waiting_server.rb || fail "Atlas waiting server is unreadable"
+test -x __OXIDIZED_RUNNER__ || fail "Atlas Oxidized runner is not executable"
+
+INVENTORY_GID="$(stat -c '%g' "$SOURCE")"
+DIRECTORY_GID="$(stat -c '%g' "$INVENTORY_DIRECTORY")"
+
+case "$INVENTORY_GID" in
+    *[!0-9]*|"") fail "Invalid container-visible inventory group ID" ;;
+esac
+
+if [ "$DIRECTORY_GID" != "$INVENTORY_GID" ]; then
+    fail "Oxidized inventory directory and file group IDs differ"
+fi
+
+gosu "oxidized:${INVENTORY_GID}" /bin/sh -ec '
+    test -r /etc/oxidized/config || {
+        echo "[ERROR] Oxidized user cannot read its configuration" >&2
+        exit 1
+    }
+    test -r /etc/atlas-oxidized/router.json || {
+        echo "[ERROR] Oxidized user cannot read router.json" >&2
+        exit 1
+    }
+    test -r /home/oxidized/.ssh/known_hosts || {
+        echo "[ERROR] Oxidized user cannot read known_hosts" >&2
+        exit 1
+    }
+'
+'''.replace("__OXIDIZED_RUNNER__", OXIDIZED_RUNNER)
+
+
 def load_config():
     return yaml.safe_load(
         (ROOT / "deployment/oxidized.yaml").read_text(encoding="utf-8")
@@ -211,50 +305,19 @@ def inventory_path(config, root=None):
 
 
 def validate_inventory(data):
-    if not isinstance(data, list):
-        raise RuntimeError("Oxidized JSON inventory must be an array")
-
-    required = {"name", "ip", "model", "username", "password"}
-    names = set()
-
-    for entry in data:
-        if not isinstance(entry, dict) or not required.issubset(entry):
-            raise RuntimeError("Oxidized JSON inventory entry is incomplete")
-
-        if any(not isinstance(entry[key], str) or not entry[key] for key in required):
-            raise RuntimeError("Oxidized JSON inventory fields must be non-empty strings")
-
-        if "enable" in entry and (
-            not isinstance(entry["enable"], str) or not entry["enable"]
-        ):
-            raise RuntimeError("Oxidized enable credential must be a non-empty string")
-
-        if entry["name"] in names:
-            raise RuntimeError(f"Duplicate Oxidized device name: {entry['name']}")
-
-        names.add(entry["name"])
-
-    return data
+    return validate_canonical_inventory(data)
 
 
 def render_inventory(data):
-    validate_inventory(data)
-    rendered = json.dumps(data, indent=2, ensure_ascii=False, sort_keys=True) + "\n"
-    validate_inventory(json.loads(rendered))
-    return rendered
+    return render_canonical_inventory(data)
 
 
 def write_inventory(path, data):
-    write_private(path, render_inventory(data), mode=0o644)
+    write_canonical_inventory(path, data)
 
 
 def read_inventory(path):
-    try:
-        data = json.loads(Path(path).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
-        raise RuntimeError(f"Invalid Oxidized JSON inventory: {path}") from exc
-
-    return validate_inventory(data)
+    return list(read_inventory_snapshot(path).entries)
 
 
 def has_inventory(source):
@@ -268,9 +331,10 @@ def prepare_inventory(config, root=None):
         raise RuntimeError(f"Oxidized inventory directory cannot be a symlink: {directory}")
 
     directory.mkdir(parents=True, exist_ok=True)
-    # /run/atlas is host-restricted. This mount root must still be traversable
-    # by the unprivileged Oxidized UID inside the container.
-    os.chmod(directory, 0o755)
+    # Keep credentials group-readable only. The container resolves the mounted
+    # file's group ID from inside its own namespace before dropping privileges.
+    os.chmod(directory, 0o750)
+    directory_gid = directory.stat().st_gid
 
     source = directory / INVENTORY_FILE_NAME
 
@@ -281,7 +345,15 @@ def prepare_inventory(config, root=None):
         if not source.is_file():
             raise RuntimeError(f"Oxidized inventory must be a regular file: {source}")
         read_inventory(source)
-        os.chmod(source, 0o644)
+        if source.stat().st_gid != directory_gid:
+            try:
+                os.chown(source, -1, directory_gid)
+            except PermissionError as exc:
+                raise RuntimeError(
+                    "Oxidized inventory group does not match its directory and "
+                    "could not be corrected"
+                ) from exc
+        os.chmod(source, 0o640)
     else:
         write_inventory(source, [])
 
@@ -398,6 +470,9 @@ def prepare_runtime(config, root=None):
     wait_server = runtime / "waiting_server.rb"
     write_text(wait_server, WAIT_SERVER, 0o644)
 
+    oxidized_runner = runtime / "oxidized-run.sh"
+    write_text(oxidized_runner, OXIDIZED_RUN_SCRIPT, 0o755)
+
     compose_file = runtime / "docker-compose.yml"
     write_yaml(
         compose_file,
@@ -417,6 +492,7 @@ def prepare_runtime(config, root=None):
                         f"{ssh_dir}:/home/oxidized/.ssh:ro",
                         f"{entrypoint}:{OXIDIZED_WAIT_ENTRYPOINT}:ro",
                         f"{wait_server}:{OXIDIZED_WAIT_SERVER}:ro",
+                        f"{oxidized_runner}:{OXIDIZED_RUNNER}:ro",
                     ],
                     "networks": {
                         "web": {
@@ -483,58 +559,39 @@ def build_inventory(devices, openbao_client, openbao_token):
         if resolved is None:
             continue
 
-        reference = resolved.reference
-        credentials = resolved.credentials
-        entry = {
-            "name": reference.name,
-            "ip": reference.address,
-            "model": reference.model,
-            "username": credentials["username"],
-            "password": credentials["password"],
-        }
+        inventory.append(resolved_inventory_entry(resolved))
 
-        if credentials.get("enable_password"):
-            entry["enable"] = credentials["enable_password"]
-
-        inventory.append(entry)
-
-    inventory.sort(key=lambda entry: entry["name"])
-    return validate_inventory(inventory)
+    return canonical_inventory(inventory)
 
 
-def load_desired_inventory():
-    client = OpenBaoClient(os.environ.get("OPENBAO_URL", "http://127.0.0.1:18200"))
-    status = client.seal_status()
-    if not status.get("initialized") or status.get("sealed"):
-        raise RuntimeError("OpenBao must be initialized and unsealed")
+def build_runtime_services(source):
+    client = OpenBaoClient(
+        os.environ.get("OPENBAO_URL", "http://127.0.0.1:18200"),
+        timeout=(3, 10),
+    )
+    openbao = OpenBaoService(client, BACKEND_IDENTITY)
+    netbox = NetBoxService(get_netbox_url(), openbao, 3, 10)
+    return openbao, netbox, FileInventoryStore(source)
 
-    deployer_token = None
-    oxidized_token = None
 
-    try:
-        deployer_token = client.login_from_identity(DEPLOYER_IDENTITY)
-        api_secret = client.kv_read(deployer_token, NETBOX_API_SECRET_PATH)
-        netbox_token = api_secret.get("token")
-        if not netbox_token:
-            raise RuntimeError("NetBox API token is missing from OpenBao")
+def print_sync_plan(plan):
+    for issue in plan.issues:
+        print(f"[WARN] {issue.device}: {issue.code}")
+    print(
+        "[OK] Oxidized desired inventory resolved: "
+        f"{len(plan.desired)} device(s); "
+        f"added={plan.summary.added} updated={plan.summary.updated} "
+        f"removed={plan.summary.removed} skipped={plan.summary.skipped} "
+        f"errors={plan.summary.errors}"
+    )
 
-        oxidized_token = client.login_from_identity(OXIDIZED_IDENTITY)
-        devices = NetBoxClient(get_netbox_url(), netbox_token).get_all(
-            "/api/dcim/devices/"
-        )
-        inventory = build_inventory(devices, client, oxidized_token)
-    except OpenBaoError as exc:
-        raise RuntimeError(f"Unable to reconcile Oxidized inventory: {exc}") from exc
-    finally:
-        for token in (oxidized_token, deployer_token):
-            if token:
-                try:
-                    client.revoke_self(token)
-                except OpenBaoError:
-                    pass
 
-    print(f"[OK] Oxidized desired inventory resolved: {len(inventory)} device(s)")
-    return inventory
+def load_desired_inventory(source):
+    openbao, netbox, store = build_runtime_services(source)
+    service = OxidizedSyncService(netbox, openbao, None, store)
+    plan = service.build_plan(store.read())
+    print_sync_plan(plan)
+    return list(plan.desired)
 
 
 def compose_exec(file, project, *args, capture=False, check=True):
@@ -574,69 +631,106 @@ def validate_runtime(file, project):
         "/bin/sh",
         "oxidized",
         "-ec",
-        (
-            "test -x /usr/bin/dumb-init; "
-            "command -v runsvdir >/dev/null; "
-            "test -r /etc/oxidized/config; "
-            "test -r /etc/atlas-oxidized/router.json; "
-            "test -r /home/oxidized/.ssh/known_hosts; "
-            f"test -x {OXIDIZED_WAIT_ENTRYPOINT}; "
-            f"test -r {OXIDIZED_WAIT_SERVER}"
-        ),
+        RUNTIME_VALIDATION_SCRIPT,
         capture=True,
         check=False,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            "Oxidized container cannot read one or more Atlas runtime mounts"
+        details = "\n".join(
+            output.strip()
+            for output in (result.stdout, result.stderr)
+            if output and output.strip()
         )
+        message = "Oxidized runtime preflight failed"
+        if details:
+            message = f"{message}: {details}"
+        raise RuntimeError(message)
 
     print("[OK] Oxidized runtime mounts validated")
 
 
-def reload_status(file, project):
-    result = compose_exec(
-        file,
-        project,
-        "exec",
-        "-T",
-        "oxidized",
-        "curl",
-        "--silent",
-        "--show-error",
-        "--max-time",
-        "3",
-        "--output",
-        "/dev/null",
-        "--write-out",
-        "%{http_code}",
-        f"{OXIDIZED_WEB_URL}/reload?format=json",
-        capture=True,
-        check=False,
-    )
+class ComposeResponse:
+    def __init__(self, status_code, body):
+        self.status_code = status_code
+        self.body = body
 
-    if result.returncode != 0:
-        return None
+    def json(self):
+        return json.loads(self.body)
 
-    try:
-        return int(result.stdout.strip())
-    except ValueError:
-        return None
+
+class ComposeRequester:
+    """Run the shared Oxidized HTTP client from its private Docker network."""
+
+    RUBY_REQUEST = r'''
+require "json"
+require "net/http"
+require "uri"
+uri = URI(ARGV.fetch(0))
+connect_timeout = Float(ARGV.fetch(1))
+read_timeout = Float(ARGV.fetch(2))
+request = Net::HTTP::Get.new(uri)
+request["Accept"] = "application/json"
+response = Net::HTTP.start(
+  uri.host,
+  uri.port,
+  open_timeout: connect_timeout,
+  read_timeout: read_timeout,
+) { |http| http.request(request) }
+STDOUT.write(JSON.generate({"status" => response.code.to_i, "body" => response.body}))
+'''
+
+    def __init__(self, file, project):
+        self.file = file
+        self.project = project
+
+    def get(self, url, *, headers, timeout):
+        del headers
+        connect_timeout, read_timeout = timeout
+        result = compose_exec(
+            self.file,
+            self.project,
+            "exec",
+            "-T",
+            "oxidized",
+            "ruby",
+            "-e",
+            self.RUBY_REQUEST,
+            url,
+            str(connect_timeout),
+            str(read_timeout),
+            capture=True,
+            check=False,
+        )
+        if result.returncode != 0:
+            raise requests.ConnectionError("Oxidized request failed")
+        try:
+            payload = json.loads(result.stdout)
+            return ComposeResponse(int(payload["status"]), payload["body"])
+        except (KeyError, TypeError, ValueError):
+            raise requests.ConnectionError("Invalid Docker response") from None
 
 
 def reload_inventory(file, project, inventory, timeout):
     deadline = time.monotonic() + int(timeout)
+    service = OxidizedService(
+        OXIDIZED_WEB_URL,
+        connect_timeout=3,
+        read_timeout=min(max(int(timeout), 1), 10),
+        requester=ComposeRequester(file, project),
+    )
 
     while time.monotonic() < deadline:
-        status = reload_status(file, project)
-
-        if status is not None and 200 <= status < 300:
-            print("[OK] Oxidized inventory reloaded")
-            return
-
-        if not inventory and status == 503:
-            print("[OK] Oxidized remains healthy with empty inventory")
+        try:
+            service.reload_inventory(inventory)
+        except DependencyError as exc:
+            if exc.reason in {"authentication_failed", "invalid_response"}:
+                break
+        else:
+            if inventory:
+                print("[OK] Oxidized inventory reloaded")
+            else:
+                print("[OK] Oxidized remains healthy with empty inventory")
             return
 
         time.sleep(2)
@@ -649,6 +743,21 @@ def reload_inventory(file, project, inventory, timeout):
 def apply_inventory(source, inventory, reload_callback):
     write_inventory(source, inventory)
     reload_callback()
+
+
+class ComposeOxidizedReloader:
+    def __init__(self, file, project, timeout):
+        self.file = file
+        self.project = project
+        self.timeout = timeout
+
+    def reload_inventory(self, inventory):
+        reload_inventory(
+            self.file,
+            self.project,
+            inventory,
+            self.timeout,
+        )
 
 
 def require_running_container(file, project):
@@ -677,15 +786,26 @@ def require_running_container(file, project):
         )
 
 
-def reconcile_running(config, file, source, inventory):
+def reconcile_running(config, file, source):
     project = config["runtime"]["compose_project"]
     timeout = int(config["runtime"]["startup_timeout"])
     require_running_container(file, project)
-    apply_inventory(
-        source,
-        inventory,
-        lambda: reload_inventory(file, project, inventory, timeout),
+    openbao, netbox, store = build_runtime_services(source)
+    service = OxidizedSyncService(
+        netbox,
+        openbao,
+        ComposeOxidizedReloader(file, project, timeout),
+        store,
     )
+    result = service.sync()
+    print(
+        "[OK] Oxidized reconcile: "
+        f"status={result.status} changed={result.inventory_changed} "
+        f"reloaded={result.oxidized_reloaded}"
+    )
+    if result.status == "error":
+        raise RuntimeError("Oxidized inventory was written but reload failed")
+    return result
 
 
 def deploy_runtime(config, file, source, inventory):
@@ -883,11 +1003,13 @@ def main():
             )
         inventory = read_inventory(source)
     else:
-        inventory = load_desired_inventory()
+        if args.reconcile_only:
+            reconcile_running(config, file, source)
+            return
+        inventory = load_desired_inventory(source)
 
     if args.reconcile_only:
-        reconcile_running(config, file, source, inventory)
-        return
+        raise RuntimeError("Prepared CI inventory cannot be reconciled")
 
     deploy_runtime(config, file, source, inventory)
 

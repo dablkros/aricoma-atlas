@@ -1,15 +1,21 @@
 """FastAPI application factory and ASGI entry point."""
 
+from pathlib import Path
 from typing import Optional
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
-from atlas.api.routes import health, oxidized, readiness
+from atlas.api.routes import health, oxidized, readiness, status
 from atlas.config import Settings, get_settings
 from atlas.logging import configure_logging
 from atlas.services.factory import DependencyServices, build_dependency_services
+
+
+STATIC_DIRECTORY = Path(__file__).resolve().parents[1] / "static"
 
 
 def create_app(
@@ -31,7 +37,35 @@ def create_app(
     register_error_handlers(application)
     application.include_router(health.router, prefix=settings.api_prefix)
     application.include_router(readiness.router, prefix=settings.api_prefix)
+    application.include_router(status.router, prefix=settings.api_prefix)
     application.include_router(oxidized.router, prefix=settings.api_prefix)
+    application.mount(
+        "/static",
+        StaticFiles(directory=STATIC_DIRECTORY),
+        name="static",
+    )
+
+    @application.get("/", include_in_schema=False)
+    def operations_ui() -> FileResponse:
+        return FileResponse(
+            STATIC_DIRECTORY / "index.html",
+            headers={
+                "Cache-Control": "no-store",
+                "Content-Security-Policy": (
+                    "default-src 'self'; "
+                    "script-src 'self'; "
+                    "style-src 'self'; "
+                    "img-src 'self' data:; "
+                    "connect-src 'self'; "
+                    "object-src 'none'; "
+                    "base-uri 'none'; "
+                    "frame-ancestors 'none'"
+                ),
+                "Referrer-Policy": "no-referrer",
+                "X-Content-Type-Options": "nosniff",
+                "X-Frame-Options": "DENY",
+            },
+        )
     return application
 
 
