@@ -33,6 +33,7 @@ sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
 sudo atlasctl backend logs -f
+sudo atlasctl proxy logs -f
 ```
 
 Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, DNS a TLS súbory podľa sekcie **Inštalácia a deployment na čistej VM**. Priame `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a diagnostiku.
@@ -777,6 +778,7 @@ sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
+sudo atlasctl proxy logs [docker compose logs options]
 ```
 
 Význam:
@@ -789,6 +791,7 @@ Význam:
 | `sudo atlasctl oxidized reconcile` | Overí runtime mounty a zosúladí/reloadne Oxidized inventory. |
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
+| `sudo atlasctl proxy logs -f` | Sleduje live logy Nginx HTTPS ingressu. |
 
 ## Prihlasovanie a hranice prístupu
 

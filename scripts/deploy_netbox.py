@@ -1103,7 +1103,7 @@ def write_compose_override(
         https_port = proxy["proxy"]["https_port"]
         origin = f"https://{hostname}" + (f":{https_port}" if https_port != 443 else "")
         for environment in (netbox_environment, worker_environment):
-            environment["ALLOWED_HOSTS"] = f"{hostname} localhost 127.0.0.1"
+            environment["ALLOWED_HOSTS"] = f"{hostname} atlas-netbox localhost 127.0.0.1"
             environment["CSRF_TRUSTED_ORIGINS"] = origin
         write_private(
             runtime_dir / "configuration/atlas_proxy.py",
