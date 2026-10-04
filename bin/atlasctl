@@ -10,6 +10,7 @@ ATLAS_ROOT="/opt/aricoma-atlas"
 PYTHON="${ATLAS_ROOT}/.venv/bin/python3"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
 BACKEND_COMPOSE="${RUNTIME_DIR}/backend/docker-compose.yml"
+PROXY_COMPOSE="${RUNTIME_DIR}/proxy/docker-compose.yml"
 PROXY_CONFIG="${ATLAS_PROXY_CONFIG:-${RUNTIME_DIR}/proxy.yaml}"
 OXIDIZED_INVENTORY_DIR="${ATLAS_OXIDIZED_RUN_DIR:-/run/atlas/oxidized}"
 
@@ -27,6 +28,7 @@ Usage:
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT]
   sudo atlasctl oxidized logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
+  sudo atlasctl proxy logs [docker compose logs options]
 
 Commands:
   deploy                Deploy or reconcile the full Atlas stack.
@@ -36,6 +38,7 @@ Commands:
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
   backend logs          Show Atlas backend container logs.
+  proxy logs            Show Nginx ingress container logs.
 EOF
 }
 
@@ -162,6 +165,11 @@ backend_logs() {
     exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend logs "$@" backend
 }
 
+proxy_logs() {
+    [[ -f "$PROXY_COMPOSE" ]] || die "Nginx proxy runtime is not prepared"
+    exec docker compose -f "$PROXY_COMPOSE" -p atlas-proxy logs "$@" proxy
+}
+
 main() {
     require_root
     require_install
@@ -237,6 +245,19 @@ main() {
                 logs)
                     shift
                     backend_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        proxy)
+            shift
+            case "${1:-}" in
+                logs)
+                    shift
+                    proxy_logs "$@"
                     ;;
                 *)
                     usage
