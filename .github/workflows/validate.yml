@@ -793,15 +793,31 @@ jobs:
           cache: "pip"
 
       # ---------------------------------------------------------------------
-      # Deploy BASE version
+      # Deploy the latest released version reachable from the PR base.
+      # Using an arbitrary base-branch commit can make a repair PR
+      # impossible to validate when that commit itself is undeployable.
       # ---------------------------------------------------------------------
 
-      - name: Checkout PR base
+      - name: Checkout released upgrade baseline
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git checkout --detach "${BASE_SHA}"
+          BASE_REF="$(
+            git describe \
+              --tags \
+              --abbrev=0 \
+              --match 'v*-beta' \
+              "${BASE_SHA}"
+          )"
 
+          if [ -z "${BASE_REF}" ]; then
+            echo "[ERROR] No released upgrade baseline is reachable from ${BASE_SHA}"
+            exit 1
+          fi
+
+          git checkout --detach "${BASE_REF}"
+
+          echo "BASE release: ${BASE_REF}"
           echo "BASE commit:"
           git rev-parse HEAD
 
