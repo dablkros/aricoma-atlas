@@ -1764,6 +1764,20 @@ sudo atlasctl oxidized host-key accept \
   10.200.200.1 SHA256:OVERENY_FINGERPRINT
 ```
 
+Ak staršie zariadenie ponúka iba `diffie-hellman-group1-sha1`, bežný
+`ssh-keyscan` kľúč nezíska. Pre takéto zariadenie použi explicitný legacy
+režim pri oboch krokoch:
+
+```bash
+sudo atlasctl oxidized host-key scan 10.200.200.1 --legacy-ssh
+sudo atlasctl oxidized host-key accept \
+  10.200.200.1 SHA256:OVERENY_FINGERPRINT --legacy-ssh
+```
+
+Legacy režim povoľuje `diffie-hellman-group1-sha1`, `ssh-rsa` a `aes128-cbc`
+iba v dočasnom procese na získanie host key. Automaticky ho nepridáva do
+trvalého trust store a nemení predvolenú bezpečnostnú politiku.
+
 4. spusti reconcile a over prvý backup:
 
 ```bash

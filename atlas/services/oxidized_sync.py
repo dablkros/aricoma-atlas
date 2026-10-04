@@ -346,7 +346,7 @@ class OxidizedSyncService:
                 if reload_required:
                     try:
                         self.oxidized.reload_inventory(current)
-                    except DependencyError:
+                    except DependencyError as exc:
                         reload_issue = SyncIssue(
                             None,
                             "oxidized_reload_failed",
@@ -354,7 +354,10 @@ class OxidizedSyncService:
                         )
                         logger.error(
                             "oxidized_reload_failed",
-                            extra={"event": "oxidized_reload_failed"},
+                            extra={
+                                "event": "oxidized_reload_failed",
+                                "reason_code": exc.reason,
+                            },
                         )
                         logger.info(
                             "oxidized_sync_completed",
@@ -431,11 +434,14 @@ class OxidizedSyncService:
             )
             try:
                 self.oxidized.reload_inventory(list(plan.desired))
-            except DependencyError:
+            except DependencyError as exc:
                 reload_issue = SyncIssue(None, "oxidized_reload_failed", "error")
                 logger.error(
                     "oxidized_reload_failed",
-                    extra={"event": "oxidized_reload_failed"},
+                    extra={
+                        "event": "oxidized_reload_failed",
+                        "reason_code": exc.reason,
+                    },
                 )
                 logger.info(
                     "oxidized_sync_completed",

@@ -437,6 +437,38 @@ class OxidizedRuntimeTests(unittest.TestCase):
 
             self.assertEqual(known_hosts.read_text(encoding="utf-8"), accepted)
 
+    def test_legacy_host_key_scan_uses_isolated_compatibility_process(self):
+        scanned_line = "192.0.2.1 ssh-rsa YWJj\n"
+        commands = []
+
+        def fake_run(command, **kwargs):
+            commands.append(command)
+            known_hosts_option = next(
+                item
+                for item in command
+                if item.startswith("-oUserKnownHostsFile=")
+            )
+            known_hosts = Path(known_hosts_option.split("=", 1)[1])
+            known_hosts.write_text(scanned_line, encoding="utf-8")
+            return subprocess.CompletedProcess(command, 255, "", "denied")
+
+        with patch.object(deploy_oxidized.subprocess, "run", fake_run), patch.object(
+            deploy_oxidized,
+            "key_record",
+            return_value={"line": scanned_line.strip()},
+        ):
+            records = deploy_oxidized.scan_host_keys(
+                "192.0.2.1",
+                legacy_ssh=True,
+            )
+
+        self.assertEqual(records, [{"line": scanned_line.strip()}])
+        self.assertEqual(len(commands), 1)
+        self.assertIn("-oBatchMode=yes", commands[0])
+        self.assertIn("-oKexAlgorithms=+diffie-hellman-group1-sha1", commands[0])
+        self.assertIn("-oHostKeyAlgorithms=+ssh-rsa", commands[0])
+        self.assertIn("-oCiphers=+aes128-cbc", commands[0])
+
     def test_runtime_secrets_and_trust_files_are_not_tracked(self):
         tracked = subprocess.run(
             ["git", "ls-files", "--", "*router.json", "*known_hosts"],

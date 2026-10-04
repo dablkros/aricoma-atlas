@@ -24,8 +24,8 @@ Usage:
   sudo atlasctl status
   sudo atlasctl openbao
   sudo atlasctl oxidized reconcile
-  sudo atlasctl oxidized host-key scan HOST [--port PORT]
-  sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT]
+  sudo atlasctl oxidized host-key scan HOST [--port PORT] [--legacy-ssh]
+  sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
   sudo atlasctl proxy logs [docker compose logs options]

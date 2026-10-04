@@ -324,12 +324,13 @@ class NetBoxServiceTests(unittest.TestCase):
 
 
 class OxidizedServiceTests(unittest.TestCase):
-    def service(self, requester):
+    def service(self, requester, sleeper=None):
         return OxidizedService(
             "http://atlas-oxidized:8888",
             2.0,
             8.0,
             requester=requester,
+            sleeper=sleeper,
         )
 
     def test_empty_inventory_is_ready(self):
@@ -367,6 +368,22 @@ class OxidizedServiceTests(unittest.TestCase):
 
         waiting = QueueRequester(FakeResponse(status_code=503))
         self.service(waiting).reload_inventory([])
+
+    def test_first_inventory_waits_for_native_oxidized_transition(self):
+        requester = QueueRequester(
+            FakeResponse(
+                status_code=503,
+                data={"status": "waiting_for_inventory"},
+            ),
+            requests.ConnectionError("native process is starting"),
+            FakeResponse(data=["reloaded list of nodes"]),
+        )
+
+        self.service(requester, sleeper=lambda _delay: None).reload_inventory(
+            [{"name": "R1"}]
+        )
+
+        self.assertEqual(len(requester.calls), 3)
 
     def test_reload_timeout_http_error_and_malformed_response(self):
         cases = (
