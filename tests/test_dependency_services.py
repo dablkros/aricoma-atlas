@@ -386,6 +386,29 @@ class OxidizedServiceTests(unittest.TestCase):
                     )
                 self.assertEqual(raised.exception.reason, reason)
 
+    def test_queue_backup_url_encodes_device_name(self):
+        requester = QueueRequester(FakeResponse(status_code=202))
+
+        self.service(requester).queue_backup("SW:01")
+
+        self.assertEqual(
+            requester.calls[0][0],
+            "http://atlas-oxidized:8888/node/next/SW%3A01",
+        )
+        self.assertEqual(requester.calls[0][1]["timeout"], (2.0, 8.0))
+
+    def test_queue_backup_maps_transport_auth_and_http_failures(self):
+        cases = (
+            (requests.Timeout("timeout"), "connection_failed"),
+            (FakeResponse(status_code=401), "authentication_failed"),
+            (FakeResponse(status_code=500), "unavailable"),
+        )
+        for response, reason in cases:
+            with self.subTest(reason=reason):
+                with self.assertRaises(DependencyError) as raised:
+                    self.service(QueueRequester(response)).queue_backup("SW01")
+                self.assertEqual(raised.exception.reason, reason)
+
 
 if __name__ == "__main__":
     unittest.main()

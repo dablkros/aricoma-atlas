@@ -113,7 +113,7 @@ V aktuálnom beta prostredí:
 - OpenBao API je bindnuté na loopback adresu,
 - NetBox a Oxidized sú publikované cez spoločný Nginx a HTTPS,
 - Atlas backend je publikovaný iba na loopback adrese `127.0.0.1:8081`,
-- Atlas backend zatiaľ nie je pripojený do Nginx, pretože Milestone 1 nemá API autentifikáciu,
+- Atlas Operations UI nie je pripojené do Nginx, pretože používateľská autentifikácia je rozsah nasledujúceho milestone,
 - Oxidized web/API nemá publikovaný host port,
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
@@ -492,9 +492,9 @@ curl -i http://127.0.0.1:8081/api/ready
 
 Chybová odpoveď readiness obsahuje iba stav dependency a bezpečný dôvod, napríklad `connection_failed`, `authentication_failed`, `sealed` alebo `unavailable`. Neobsahuje raw exception, token ani heslo.
 
-### Prevádzkové obmedzenie tohto milestone
+### Kontajnerové zapojenie
 
-Existujúci Milestone 1 backend kontajner ostáva zámerne bez nového secret mountu a bez pripojenia do interných sietí OpenBao, NetBoxu a Oxidized. Zapojenie identity súboru a Docker sietí je blocker pre neskoršie kontajnerové použitie `/api/ready`, ale Docker deployment Atlas API je podľa rozsahu Milestone 2 non-goal. Kontajnerový healthcheck preto správne naďalej používa `/api/health`, nie dependency readiness.
+Od Milestone 4 má backend kontajner read-only mount AppRole identity, read-write mount výhradne na ephemeral Oxidized inventory adresár a pripojenie do troch interných aplikačných sietí. Neobsahuje Docker socket a beží pod numerickým UID/GID neprivilegovaného Atlas service accountu. Kontajnerový healthcheck naďalej používa lacný `/api/health`; dependency readiness je samostatný endpoint.
 
 ## Atlas backend API — Milestone 3
 
@@ -548,9 +548,68 @@ Druhé volanie pri nezmenenom NetBoxe a OpenBao má vrátiť `inventory_changed=
 
 Atlas touto operáciou synchronizuje iba desired runtime inventory. Configuration backup, polling, porovnanie konfigurácií a Git commit vykonáva Oxidized; sync nemaže zariadeniové secrets, NetBox objekty, uložené konfigurácie ani Oxidized Git históriu.
 
-### Prevádzkové obmedzenie Milestone 3
+### Kontajnerová dostupnosť
 
-Tento milestone zámerne nemení Docker deployment ani Nginx ingress Atlas API. Existujúci backend kontajner preto ešte nemá host runtime inventory mount, `atlas-backend` identity mount ani pripojenie do dependency sietí potrebné pre kontajnerové vykonanie syncu. Ich bezpečné zapojenie patrí do nasledujúceho deployment milestone; dovtedy je podporovaná prevádzková reconciliation cesta `sudo atlasctl oxidized reconcile` a lokálny vývojový beh s explicitne dostupnými dependencies.
+Milestone 4 dopĺňa backend kontajneru AppRole identity, Oxidized runtime inventory a interné siete OpenBao, NetBoxu a Oxidized. `POST /api/oxidized/sync` preto používa v kontajnerovom deploymente tú istú `OxidizedSyncService` ako `sudo atlasctl oxidized reconcile`. Atlas API a UI zostávajú dostupné iba cez host loopback; Nginx ingress sa nemení.
+
+## Atlas Operations UI — Milestone 4
+
+FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je čisté HTML, CSS a vanilla JavaScript bez CDN, npm alebo Node build procesu. Poskytuje:
+
+- aplikačný stav Atlasu, OpenBao, NetBoxu a Oxidized,
+- porovnanie NetBox-enabled zariadení s aktuálnym runtime inventárom,
+- bezpečný zoznam zariadení obsahujúci iba `name`, `ip` a `model`,
+- explicitnú operáciu **Sync inventory**,
+- výsledok posledného syncu v aktuálnej browser session,
+- explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára.
+
+Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
+
+### API kontrakty pre Operations UI
+
+| Endpoint | Význam |
+| --- | --- |
+| `GET /api/health` | Lacná liveness kontrola procesu Atlas API. |
+| `GET /api/ready` | Použiteľnosť kritických dependencies; pri chybe vracia `503`. |
+| `GET /api/status` | Používateľský aggregate stav `healthy`, `degraded` alebo `unhealthy`. |
+| `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
+| `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
+| `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
+| `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
+
+`GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
+
+### CLI a API hranice
+
+| CLI operácia | UI/API ekvivalent | Rozdiel |
+| --- | --- | --- |
+| `atlasctl status` | `GET /api/status` | CLI môže navyše kontrolovať Docker, filesystem a host runtime; API zostáva bez host privileges. |
+| `atlasctl oxidized reconcile` | `POST /api/oxidized/sync` | Obe cesty používajú shared reconciliation service. |
+| prioritný Oxidized node | `POST /api/oxidized/devices/{name}/backup` | Požiadavka node iba zaradí; výsledok backupu spravuje Oxidized. |
+
+`atlasctl deploy` a `atlasctl openbao` nemajú UI ani API ekvivalent.
+
+### Bezpečný manuálny prístup
+
+Backend zostáva publikovaný iba na `127.0.0.1:8081`; Atlas hostname ani route sa do Nginx nepridáva. Na VM možno overiť liveness:
+
+```bash
+curl http://127.0.0.1:8081/api/health
+```
+
+Z administračnej workstation vytvor SSH tunnel:
+
+```bash
+ssh -L 8081:127.0.0.1:8081 user@atlas-vm
+```
+
+Potom otvor:
+
+```text
+http://127.0.0.1:8081/
+```
+
+Tunnel sprístupní loopback port iba lokálnemu prehliadaču na workstation. Používateľská autentifikácia, RBAC a Nginx HTTPS ingress pre Atlas UI patria do Milestone 5.
 
 ---
 
@@ -757,6 +816,8 @@ OpenBao readiness gate
 NetBox runtime + secrets + healthcheck + bootstrap
         ↓
 Oxidized runtime + waiting/collection mode
+        ↓
+Atlas backend + Operations UI + healthcheck
         ↓
 Nginx HTTPS + Oxidized Basic Auth
         ↓

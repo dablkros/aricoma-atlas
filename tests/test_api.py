@@ -14,7 +14,9 @@ from atlas.api.main import create_app
 from atlas.config import Settings
 from atlas.logging import JsonFormatter
 from atlas.services.errors import DependencyError
+from atlas.services.oxidized_operations import OxidizedOperationFailure
 from atlas.services.oxidized_sync import OxidizedSyncFailure
+from atlas.services.platform_status import PlatformStatusService
 
 
 def test_settings(**overrides):
@@ -151,6 +153,18 @@ class ApiTests(unittest.TestCase):
         )
         self.assertRegex(response.headers["X-Request-ID"], r"^[a-f0-9]{32}$")
 
+    def test_operations_ui_and_static_assets_are_served(self):
+        page = self.client.get("/")
+        script = self.client.get("/static/app.js")
+        styles = self.client.get("/static/styles.css")
+
+        self.assertEqual(page.status_code, 200)
+        self.assertIn("ARICOMA ATLAS", page.text)
+        self.assertEqual(script.status_code, 200)
+        self.assertEqual(styles.status_code, 200)
+        self.assertNotIn("docker.sock", page.text + script.text)
+        self.assertNotIn("subprocess", script.text)
+
     def test_not_found_uses_stable_error_contract_and_request_id(self):
         response = self.client.get(
             "/api/missing",
@@ -210,11 +224,15 @@ class FakeDependency:
 
 class ReadinessApiTests(unittest.TestCase):
     def client(self, **errors):
-        dependencies = SimpleNamespace(
-            **{
-                name: FakeDependency(errors.get(name))
-                for name in ("openbao", "netbox", "oxidized")
-            }
+        services = {
+            name: FakeDependency(errors.get(name))
+            for name in ("openbao", "netbox", "oxidized")
+        }
+        dependencies = SimpleNamespace(**services)
+        dependencies.platform_status = PlatformStatusService(
+            dependencies.openbao,
+            dependencies.netbox,
+            dependencies.oxidized,
         )
         app = create_app(test_settings(), dependencies=dependencies)
         return TestClient(app, raise_server_exceptions=False), dependencies
@@ -409,6 +427,124 @@ class OxidizedSyncApiTests(unittest.TestCase):
         serialized = response.text.lower()
         for forbidden in ("password", "secret_id", "nbt_sensitive", "openbao-token"):
             self.assertNotIn(forbidden, serialized)
+
+
+class FakeOperations:
+    def __init__(self, error=None):
+        self.error = error
+        self.queued = []
+
+    def status(self):
+        if self.error:
+            raise self.error
+        return SimpleNamespace(
+            status="healthy",
+            netbox_enabled_devices=2,
+            runtime_inventory_devices=2,
+            inventory_issues=0,
+        )
+
+    def list_devices(self):
+        if self.error:
+            raise self.error
+        return [
+            SimpleNamespace(name="SW01", ip="192.0.2.1", model="ios"),
+            SimpleNamespace(name="FW01", ip="192.0.2.2", model="fortigate"),
+        ]
+
+    def queue_backup(self, device):
+        if self.error:
+            raise self.error
+        if device != "SW01":
+            raise OxidizedOperationFailure("device_not_found", 404)
+        self.queued.append(device)
+        return SimpleNamespace(name=device, ip="192.0.2.1", model="ios")
+
+
+class OperationsApiTests(unittest.TestCase):
+    def client(self, operations=None, dependency_error=None):
+        openbao = FakeDependency()
+        netbox = FakeDependency(dependency_error)
+        oxidized = FakeDependency()
+        dependencies = SimpleNamespace(
+            openbao=openbao,
+            netbox=netbox,
+            oxidized=oxidized,
+            platform_status=PlatformStatusService(openbao, netbox, oxidized),
+            oxidized_operations=operations or FakeOperations(),
+        )
+        return TestClient(
+            create_app(test_settings(), dependencies=dependencies),
+            raise_server_exceptions=False,
+        )
+
+    def test_platform_and_oxidized_status_are_ui_ready(self):
+        client = self.client()
+
+        platform = client.get("/api/status")
+        oxidized = client.get("/api/oxidized/status")
+
+        self.assertEqual(platform.status_code, 200)
+        self.assertEqual(platform.json()["status"], "healthy")
+        self.assertEqual(oxidized.status_code, 200)
+        self.assertEqual(oxidized.json()["runtime_inventory_devices"], 2)
+
+    def test_platform_status_is_degraded_without_raw_dependency_detail(self):
+        secret = "password=sensitive-token"
+        response = self.client(
+            dependency_error=RuntimeError(secret)
+        ).get("/api/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json()["status"], "degraded")
+        self.assertNotIn(secret, response.text)
+        self.assertNotIn("reason", response.text)
+
+    def test_device_list_is_explicitly_secret_free(self):
+        response = self.client().get("/api/oxidized/devices")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()[0],
+            {"name": "SW01", "ip": "192.0.2.1", "model": "ios"},
+        )
+        for forbidden in (
+            "username",
+            "password",
+            "enable",
+            "token",
+            "secret_id",
+        ):
+            self.assertNotIn(forbidden, response.text.lower())
+
+    def test_backup_valid_unknown_invalid_and_unavailable(self):
+        operations = FakeOperations()
+        accepted = self.client(operations).post(
+            "/api/oxidized/devices/SW01/backup"
+        )
+        unknown = self.client(operations).post(
+            "/api/oxidized/devices/UNKNOWN/backup"
+        )
+        invalid = self.client(
+            FakeOperations(
+                OxidizedOperationFailure("invalid_device_name", 422)
+            )
+        ).post("/api/oxidized/devices/bad%25name/backup")
+        unavailable = self.client(
+            FakeOperations(
+                OxidizedOperationFailure("oxidized_unavailable", 503)
+            )
+        ).post("/api/oxidized/devices/SW01/backup")
+
+        self.assertEqual(accepted.status_code, 202)
+        self.assertEqual(
+            accepted.json(),
+            {"status": "accepted", "device": "SW01"},
+        )
+        self.assertEqual(operations.queued, ["SW01"])
+        self.assertEqual(unknown.status_code, 404)
+        self.assertEqual(invalid.status_code, 422)
+        self.assertEqual(unavailable.status_code, 503)
 
 
 if __name__ == "__main__":

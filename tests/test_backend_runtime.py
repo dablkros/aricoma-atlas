@@ -76,9 +76,24 @@ class BackendRuntimeTests(unittest.TestCase):
         dockerfile = self.root / "deployment/backend/Dockerfile"
         dockerfile.parent.mkdir(parents=True)
         dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+        identity = self.root / ".runtime/openbao-backend.json"
+        identity.parent.mkdir(parents=True)
+        identity.write_text("{}\n", encoding="utf-8")
+        self.inventory_directory = self.root / "run/atlas/oxidized"
+        self.inventory_directory.mkdir(parents=True)
+        (self.inventory_directory / "router.json").write_text(
+            "[]\n",
+            encoding="utf-8",
+        )
+        self.environment = patch.dict(
+            os.environ,
+            {"ATLAS_OXIDIZED_RUN_DIR": str(self.inventory_directory)},
+        )
+        self.environment.start()
         self.config = deploy_backend.validate_config(backend_config())
 
     def tearDown(self):
+        self.environment.stop()
         self.temporary.cleanup()
 
     def test_prepare_runtime_writes_hardened_loopback_only_compose(self):
@@ -97,12 +112,67 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(service["cap_drop"], ["ALL"])
         self.assertEqual(service["security_opt"], ["no-new-privileges:true"])
         self.assertEqual(service["environment"]["ATLAS_ENVIRONMENT"], "production")
+        self.assertEqual(
+            service["environment"]["ATLAS_OPENBAO_URL"],
+            "http://atlas-openbao:8200",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_NETBOX_URL"],
+            "http://atlas-netbox:8080",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_OXIDIZED_URL"],
+            "http://atlas-oxidized:8888",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_OXIDIZED_INVENTORY_FILE"],
+            "/run/atlas/oxidized/router.json",
+        )
+        self.assertEqual(service["user"], f"{os.geteuid()}:{os.getegid()}")
+        self.assertNotEqual(service["user"].split(":", 1)[0], "0")
+        self.assertIn(
+            f"{self.root / '.runtime/openbao-backend.json'}:"
+            "/run/secrets/atlas-backend.json:ro",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{self.inventory_directory}:/run/atlas/oxidized:rw",
+            service["volumes"],
+        )
+        self.assertTrue(
+            all(
+                "/var/run/docker.sock" not in volume
+                for volume in service["volumes"]
+            )
+        )
+        self.assertEqual(
+            set(service["networks"]),
+            {"openbao", "netbox", "oxidized"},
+        )
+        self.assertEqual(
+            data["networks"],
+            {
+                "openbao": {
+                    "external": True,
+                    "name": "atlas-openbao-api",
+                },
+                "netbox": {
+                    "external": True,
+                    "name": "atlas-netbox-web",
+                },
+                "oxidized": {
+                    "external": True,
+                    "name": "atlas-oxidized-web",
+                },
+            },
+        )
         self.assertIn("healthcheck", service)
-        self.assertNotIn("volumes", service)
         self.assertEqual(os.stat(compose_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(compose_file.parent).st_mode & 0o777, 0o700)
 
     def test_runtime_symlink_is_rejected(self):
+        (self.root / ".runtime/openbao-backend.json").unlink()
+        (self.root / ".runtime").rmdir()
         target = self.root / "outside-runtime"
         target.mkdir()
         (self.root / ".runtime").symlink_to(target, target_is_directory=True)
@@ -112,7 +182,6 @@ class BackendRuntimeTests(unittest.TestCase):
 
     def test_intermediate_runtime_symlink_cannot_escape_repository(self):
         runtime_base = self.root / ".runtime"
-        runtime_base.mkdir()
         target = self.root / "outside-runtime"
         target.mkdir()
         (runtime_base / "nested").symlink_to(target, target_is_directory=True)

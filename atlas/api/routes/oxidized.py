@@ -3,7 +3,13 @@
 from fastapi import APIRouter, Request, Response, status
 
 from atlas.api.errors import AtlasError
-from atlas.api.schemas.oxidized import OxidizedSyncResponse
+from atlas.api.schemas.oxidized import (
+    OxidizedBackupResponse,
+    OxidizedDeviceResponse,
+    OxidizedStatusResponse,
+    OxidizedSyncResponse,
+)
+from atlas.services.oxidized_operations import OxidizedOperationFailure
 from atlas.services.oxidized_sync import OxidizedSyncFailure
 
 router = APIRouter(prefix="/oxidized", tags=["oxidized"])
@@ -17,7 +23,71 @@ _FAILURE_MESSAGES = {
     "openbao_authentication_failed": "OpenBao authentication failed",
     "inventory_invalid": "Current Oxidized inventory is invalid",
     "inventory_write_failed": "Oxidized inventory could not be written",
+    "invalid_device_name": "The Oxidized device name is invalid",
+    "device_not_found": "The device is not present in the runtime inventory",
+    "oxidized_unavailable": "Oxidized is currently unavailable",
+    "oxidized_authentication_failed": "Oxidized authentication failed",
 }
+
+
+def _operation_error(exc: OxidizedOperationFailure) -> AtlasError:
+    return AtlasError(
+        exc.status_code,
+        exc.code,
+        _FAILURE_MESSAGES.get(exc.code, "Oxidized operation failed"),
+    )
+
+
+@router.get(
+    "/status",
+    response_model=OxidizedStatusResponse,
+    status_code=status.HTTP_200_OK,
+    summary="Get the Oxidized inventory overview",
+)
+def oxidized_status(request: Request) -> OxidizedStatusResponse:
+    try:
+        result = request.app.state.dependencies.oxidized_operations.status()
+    except OxidizedOperationFailure as exc:
+        raise _operation_error(exc) from None
+    return OxidizedStatusResponse(
+        status=result.status,
+        netbox_enabled_devices=result.netbox_enabled_devices,
+        runtime_inventory_devices=result.runtime_inventory_devices,
+        inventory_issues=result.inventory_issues,
+    )
+
+
+@router.get(
+    "/devices",
+    response_model=list[OxidizedDeviceResponse],
+    status_code=status.HTTP_200_OK,
+    summary="List safe runtime Oxidized devices",
+)
+def oxidized_devices(request: Request) -> list[OxidizedDeviceResponse]:
+    try:
+        devices = request.app.state.dependencies.oxidized_operations.list_devices()
+    except OxidizedOperationFailure as exc:
+        raise _operation_error(exc) from None
+    return [
+        OxidizedDeviceResponse(name=item.name, ip=item.ip, model=item.model)
+        for item in devices
+    ]
+
+
+@router.post(
+    "/devices/{device}/backup",
+    response_model=OxidizedBackupResponse,
+    status_code=status.HTTP_202_ACCEPTED,
+    summary="Queue an Oxidized backup for one runtime device",
+)
+def queue_device_backup(device: str, request: Request) -> OxidizedBackupResponse:
+    try:
+        selected = request.app.state.dependencies.oxidized_operations.queue_backup(
+            device
+        )
+    except OxidizedOperationFailure as exc:
+        raise _operation_error(exc) from None
+    return OxidizedBackupResponse(status="accepted", device=selected.name)
 
 
 @router.post(

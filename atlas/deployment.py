@@ -14,6 +14,7 @@ from atlas.openbao_client import OpenBaoClient, OpenBaoNotFound
 ROOT = Path(__file__).resolve().parent.parent
 NETBOX_NETWORK = "atlas-netbox-web"
 OXIDIZED_NETWORK = "atlas-oxidized-web"
+OPENBAO_NETWORK = "atlas-openbao-api"
 
 
 def run(command, **kwargs):

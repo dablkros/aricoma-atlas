@@ -28,6 +28,15 @@ services:
       timeout: 3s
       retries: 10
 
+    networks:
+      default:
+        aliases:
+          - atlas-openbao
+
+networks:
+  default:
+    name: atlas-openbao-api
+
 volumes:
   atlas_openbao_data:
     name: atlas-openbao-data

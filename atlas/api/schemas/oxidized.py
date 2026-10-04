@@ -36,3 +36,27 @@ class OxidizedSyncResponse(BaseModel):
     updated: List[str]
     removed: List[str]
     issues: List[OxidizedSyncIssue]
+
+
+class OxidizedStatusResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["healthy", "degraded", "unhealthy"]
+    netbox_enabled_devices: int
+    runtime_inventory_devices: int
+    inventory_issues: int
+
+
+class OxidizedDeviceResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str
+    ip: str
+    model: str
+
+
+class OxidizedBackupResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: Literal["accepted"]
+    device: str
