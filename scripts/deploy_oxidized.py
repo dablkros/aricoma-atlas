@@ -55,7 +55,7 @@ OXIDIZED_CONFIG_PATH = "/etc/oxidized/config"
 OXIDIZED_SOURCE_PATH = "/etc/atlas-oxidized/router.json"
 OXIDIZED_WAIT_ENTRYPOINT = "/etc/atlas-oxidized-runtime/entrypoint.sh"
 OXIDIZED_WAIT_SERVER = "/etc/atlas-oxidized-runtime/waiting_server.rb"
-OXIDIZED_RUNNER = "/etc/atlas-oxidized-runtime/oxidized-run.sh"
+OXIDIZED_RUNNER = "/etc/service/oxidized/run"
 OXIDIZED_WEB_URL = "http://127.0.0.1:8888"
 DEFAULT_INVENTORY_DIRECTORY = "/run/atlas/oxidized"
 INVENTORY_FILE_NAME = "router.json"
@@ -238,7 +238,7 @@ command -v gosu >/dev/null || fail "gosu is unavailable"
 command -v stat >/dev/null || fail "stat is unavailable"
 test -x /etc/atlas-oxidized-runtime/entrypoint.sh || fail "Atlas entrypoint is not executable"
 test -r /etc/atlas-oxidized-runtime/waiting_server.rb || fail "Atlas waiting server is unreadable"
-test -x /etc/atlas-oxidized-runtime/oxidized-run.sh || fail "Atlas Oxidized runner is not executable"
+test -x __OXIDIZED_RUNNER__ || fail "Atlas Oxidized runner is not executable"
 
 INVENTORY_GID="$(stat -c '%g' "$SOURCE")"
 DIRECTORY_GID="$(stat -c '%g' "$INVENTORY_DIRECTORY")"
@@ -265,7 +265,7 @@ gosu "oxidized:${INVENTORY_GID}" /bin/sh -ec '
         exit 1
     }
 '
-'''
+'''.replace("__OXIDIZED_RUNNER__", OXIDIZED_RUNNER)
 
 
 def load_config():
@@ -492,7 +492,7 @@ def prepare_runtime(config, root=None):
                         f"{ssh_dir}:/home/oxidized/.ssh:ro",
                         f"{entrypoint}:{OXIDIZED_WAIT_ENTRYPOINT}:ro",
                         f"{wait_server}:{OXIDIZED_WAIT_SERVER}:ro",
-                        f"{oxidized_runner}:/etc/service/oxidized/run:ro",
+                        f"{oxidized_runner}:{OXIDIZED_RUNNER}:ro",
                     ],
                     "networks": {
                         "web": {

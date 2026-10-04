@@ -125,7 +125,7 @@ class OxidizedRuntimeTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(
-                    ":/etc/service/oxidized/run:ro" in volume
+                    f":{deploy_oxidized.OXIDIZED_RUNNER}:ro" in volume
                     for volume in volumes
                 )
             )
@@ -324,6 +324,10 @@ class OxidizedRuntimeTests(unittest.TestCase):
         )
         self.assertIn(
             "test -r /etc/atlas-oxidized/router.json",
+            validation_command,
+        )
+        self.assertIn(
+            f"test -x {deploy_oxidized.OXIDIZED_RUNNER}",
             validation_command,
         )
 
