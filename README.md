@@ -7,7 +7,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **OpenBao 2.7.0** ako centrálny secrets backend,
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
-- **Atlas FastAPI backend 0.1.2-beta** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.2.0-beta** zostavený a spustený v samostatnom kontajneri,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,
@@ -42,7 +42,7 @@ Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, D
 
 # Aktuálny stav
 
-**Posledný vydaný release:** `v0.1.2-beta`
+**Posledný vydaný release:** `v0.2.0-beta`
 
 Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
@@ -69,7 +69,7 @@ Deklarovaná kombinácia pre tento deployment:
 - NetBox Docker `5.1.1`
 - NetBox image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
-- Atlas backend image `aricoma-atlas-backend:0.1.2-beta`
+- Atlas backend image `aricoma-atlas-backend:0.2.0-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -452,7 +452,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.1.2-beta","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.2.0-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -2216,7 +2216,7 @@ v0.1.0-beta
 Aktuálny tag:
 
 ```text
-v0.1.2-beta
+v0.2.0-beta
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -2246,8 +2246,8 @@ Odporúčaný release postup:
 ```bash
 git status
 python3 -m unittest discover -s tests -v
-git tag -a v0.1.2-beta -m "Aricoma Atlas v0.1.2-beta"
-git push origin v0.1.2-beta
+git tag -a v0.2.0-beta -m "Aricoma Atlas v0.2.0-beta"
+git push origin v0.2.0-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.
