@@ -988,8 +988,12 @@ jobs:
           import os
           import time
           from pathlib import Path
+          from unittest.mock import patch
 
           import requests
+
+          from atlas.openbao_client import OpenBaoClient
+          from scripts import openbao_access
 
           key_file = Path(os.environ["ATLAS_UPGRADE_UNSEAL_KEYS_FILE"])
 
@@ -1042,6 +1046,21 @@ jobs:
               raise SystemExit("[ERROR] OpenBao remained sealed during upgrade")
 
           print("[OK] Existing OpenBao data unsealed after runtime upgrade")
+
+          client = OpenBaoClient("http://127.0.0.1:18200")
+          with patch.object(
+              openbao_access.getpass,
+              "getpass",
+              side_effect=keys,
+          ):
+              reconciled = openbao_access.reconcile_backend_policy(client)
+
+          if not reconciled:
+              raise SystemExit(
+                  "[ERROR] atlas-backend OpenBao role was not reconciled"
+              )
+
+          print("[OK] atlas-backend OpenBao role reconciled for upgrade")
           PY
 
       # ---------------------------------------------------------------------
