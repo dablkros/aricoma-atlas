@@ -11,6 +11,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -872,7 +873,61 @@ def key_record(line):
     }
 
 
-def scan_host_keys(host, port=22):
+def scan_host_keys_with_legacy_ssh(host, port=22):
+    host = validate_host(host)
+    port = validate_port(port)
+
+    with tempfile.TemporaryDirectory(prefix="atlas-host-key-") as temporary:
+        known_hosts = Path(temporary) / "known_hosts"
+        subprocess.run(
+            [
+                "ssh",
+                "-F",
+                "/dev/null",
+                "-oBatchMode=yes",
+                "-oPreferredAuthentications=none",
+                "-oStrictHostKeyChecking=accept-new",
+                f"-oUserKnownHostsFile={known_hosts}",
+                "-oGlobalKnownHostsFile=/dev/null",
+                "-oHashKnownHosts=no",
+                "-oKexAlgorithms=+diffie-hellman-group1-sha1",
+                "-oHostKeyAlgorithms=+ssh-rsa",
+                "-oCiphers=+aes128-cbc",
+                "-oConnectTimeout=5",
+                "-oNumberOfPasswordPrompts=0",
+                "-p",
+                str(port),
+                "-l",
+                "atlas-host-key-scan",
+                host,
+                "exit",
+            ],
+            text=True,
+            capture_output=True,
+        )
+        if not known_hosts.exists():
+            raise RuntimeError(
+                f"No SSH host key received from {host}:{port} "
+                "with legacy SSH compatibility enabled"
+            )
+        lines = [
+            line.strip()
+            for line in known_hosts.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+
+    if not lines:
+        raise RuntimeError(
+            f"No SSH host key received from {host}:{port} "
+            "with legacy SSH compatibility enabled"
+        )
+    return [key_record(line) for line in lines]
+
+
+def scan_host_keys(host, port=22, legacy_ssh=False):
+    if legacy_ssh:
+        return scan_host_keys_with_legacy_ssh(host, port)
+
     host = validate_host(host)
     port = validate_port(port)
     result = subprocess.run(
@@ -907,8 +962,8 @@ def trusted_host_keys(path, host, port=22):
     return [key_record(line) for line in lines]
 
 
-def accept_host_key(path, host, fingerprint, port=22):
-    scanned = scan_host_keys(host, port)
+def accept_host_key(path, host, fingerprint, port=22, legacy_ssh=False):
+    scanned = scan_host_keys(host, port, legacy_ssh=legacy_ssh)
     selected = next(
         (record for record in scanned if record["fingerprint"] == fingerprint),
         None,
@@ -937,8 +992,8 @@ def accept_host_key(path, host, fingerprint, port=22):
     return "accepted"
 
 
-def print_scanned_host_keys(host, port):
-    records = scan_host_keys(host, port)
+def print_scanned_host_keys(host, port, legacy_ssh=False):
+    records = scan_host_keys(host, port, legacy_ssh=legacy_ssh)
     print(f"SSH host keys presented by {host}:{port}:")
     for record in records:
         print(f"  {record['key_type']} {record['fingerprint']}")
@@ -962,6 +1017,14 @@ def parse_args():
         help=argparse.SUPPRESS,
     )
     parser.add_argument("--port", type=int, default=22)
+    parser.add_argument(
+        "--legacy-ssh",
+        action="store_true",
+        help=(
+            "enable legacy group1/ssh-rsa/aes128-cbc compatibility only "
+            "while retrieving a host key"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -971,7 +1034,11 @@ def main():
 
     if args.host_key_scan:
         prepare_known_hosts(config)
-        print_scanned_host_keys(args.host_key_scan, args.port)
+        print_scanned_host_keys(
+            args.host_key_scan,
+            args.port,
+            legacy_ssh=args.legacy_ssh,
+        )
         return
 
     if args.host_key_accept:
@@ -981,6 +1048,7 @@ def main():
             args.host_key_accept[0],
             args.host_key_accept[1],
             args.port,
+            legacy_ssh=args.legacy_ssh,
         )
         print(f"[OK] SSH host key {result.replace('_', ' ')}")
         return
