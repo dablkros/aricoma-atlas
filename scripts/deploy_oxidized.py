@@ -192,7 +192,10 @@ end
 OXIDIZED_RUN_SCRIPT = r'''#!/bin/sh
 set -eu
 
-INVENTORY_GID="${ATLAS_OXIDIZED_INVENTORY_GID:?missing inventory group ID}"
+SOURCE="/etc/atlas-oxidized/router.json"
+INVENTORY_DIRECTORY="/etc/atlas-oxidized"
+INVENTORY_GID="$(stat -c '%g' "$SOURCE")"
+DIRECTORY_GID="$(stat -c '%g' "$INVENTORY_DIRECTORY")"
 
 case "$INVENTORY_GID" in
     *[!0-9]*|"")
@@ -201,6 +204,11 @@ case "$INVENTORY_GID" in
         ;;
 esac
 
+if [ "$DIRECTORY_GID" != "$INVENTORY_GID" ]; then
+    echo "[ERROR] Oxidized inventory directory and file group IDs differ" >&2
+    exit 1
+fi
+
 CONFIG_HOME="/home/oxidized/.config/oxidized"
 [ -d "$CONFIG_HOME" ] || mkdir -p "$CONFIG_HOME"
 [ ! -f "$CONFIG_HOME/pid" ] || rm -f "$CONFIG_HOME/pid"
@@ -208,8 +216,55 @@ chown -R oxidized:oxidized "$CONFIG_HOME"
 
 # The upstream runit service invokes `gosu oxidized`, which rebuilds the
 # supplementary group list from /etc/group and discards Docker group_add.
-# Use the host inventory directory GID as the process primary group instead.
+# Resolve the bind mount's container-visible GID and use it as the process
+# primary group. Host and container GIDs are not assumed to be identical.
 exec gosu "oxidized:${INVENTORY_GID}" oxidized
+'''
+
+
+RUNTIME_VALIDATION_SCRIPT = r'''set -eu
+
+fail() {
+    echo "[ERROR] $1" >&2
+    exit 1
+}
+
+SOURCE="/etc/atlas-oxidized/router.json"
+INVENTORY_DIRECTORY="/etc/atlas-oxidized"
+
+test -x /usr/bin/dumb-init || fail "dumb-init is unavailable"
+command -v runsvdir >/dev/null || fail "runsvdir is unavailable"
+command -v gosu >/dev/null || fail "gosu is unavailable"
+command -v stat >/dev/null || fail "stat is unavailable"
+test -x /etc/atlas-oxidized-runtime/entrypoint.sh || fail "Atlas entrypoint is not executable"
+test -r /etc/atlas-oxidized-runtime/waiting_server.rb || fail "Atlas waiting server is unreadable"
+test -x /etc/atlas-oxidized-runtime/oxidized-run.sh || fail "Atlas Oxidized runner is not executable"
+
+INVENTORY_GID="$(stat -c '%g' "$SOURCE")"
+DIRECTORY_GID="$(stat -c '%g' "$INVENTORY_DIRECTORY")"
+
+case "$INVENTORY_GID" in
+    *[!0-9]*|"") fail "Invalid container-visible inventory group ID" ;;
+esac
+
+if [ "$DIRECTORY_GID" != "$INVENTORY_GID" ]; then
+    fail "Oxidized inventory directory and file group IDs differ"
+fi
+
+gosu "oxidized:${INVENTORY_GID}" /bin/sh -ec '
+    test -r /etc/oxidized/config || {
+        echo "[ERROR] Oxidized user cannot read its configuration" >&2
+        exit 1
+    }
+    test -r /etc/atlas-oxidized/router.json || {
+        echo "[ERROR] Oxidized user cannot read router.json" >&2
+        exit 1
+    }
+    test -r /home/oxidized/.ssh/known_hosts || {
+        echo "[ERROR] Oxidized user cannot read known_hosts" >&2
+        exit 1
+    }
+'
 '''
 
 
@@ -276,9 +331,10 @@ def prepare_inventory(config, root=None):
         raise RuntimeError(f"Oxidized inventory directory cannot be a symlink: {directory}")
 
     directory.mkdir(parents=True, exist_ok=True)
-    # Keep credentials group-readable only. The generated Compose service adds
-    # this host directory's group ID as a supplementary container group.
+    # Keep credentials group-readable only. The container resolves the mounted
+    # file's group ID from inside its own namespace before dropping privileges.
     os.chmod(directory, 0o750)
+    directory_gid = directory.stat().st_gid
 
     source = directory / INVENTORY_FILE_NAME
 
@@ -289,6 +345,14 @@ def prepare_inventory(config, root=None):
         if not source.is_file():
             raise RuntimeError(f"Oxidized inventory must be a regular file: {source}")
         read_inventory(source)
+        if source.stat().st_gid != directory_gid:
+            try:
+                os.chown(source, -1, directory_gid)
+            except PermissionError as exc:
+                raise RuntimeError(
+                    "Oxidized inventory group does not match its directory and "
+                    "could not be corrected"
+                ) from exc
         os.chmod(source, 0o640)
     else:
         write_inventory(source, [])
@@ -409,8 +473,6 @@ def prepare_runtime(config, root=None):
     oxidized_runner = runtime / "oxidized-run.sh"
     write_text(oxidized_runner, OXIDIZED_RUN_SCRIPT, 0o755)
 
-    inventory_gid = source.parent.stat().st_gid
-
     compose_file = runtime / "docker-compose.yml"
     write_yaml(
         compose_file,
@@ -423,9 +485,6 @@ def prepare_runtime(config, root=None):
                         "/bin/sh",
                         OXIDIZED_WAIT_ENTRYPOINT,
                     ],
-                    "environment": {
-                        "ATLAS_OXIDIZED_INVENTORY_GID": str(inventory_gid),
-                    },
                     "volumes": [
                         "atlas_oxidized_data:/home/oxidized/.config/oxidized",
                         f"{source.parent}:/etc/atlas-oxidized:ro",
@@ -572,26 +631,21 @@ def validate_runtime(file, project):
         "/bin/sh",
         "oxidized",
         "-ec",
-        (
-            "test -x /usr/bin/dumb-init; "
-            "command -v runsvdir >/dev/null; "
-            "test -r /etc/oxidized/config; "
-            "test -n \"$ATLAS_OXIDIZED_INVENTORY_GID\"; "
-            "gosu \"oxidized:$ATLAS_OXIDIZED_INVENTORY_GID\" "
-            "test -r /etc/atlas-oxidized/router.json; "
-            "test -r /home/oxidized/.ssh/known_hosts; "
-            f"test -x {OXIDIZED_WAIT_ENTRYPOINT}; "
-            f"test -r {OXIDIZED_WAIT_SERVER}; "
-            f"test -x {OXIDIZED_RUNNER}"
-        ),
+        RUNTIME_VALIDATION_SCRIPT,
         capture=True,
         check=False,
     )
 
     if result.returncode != 0:
-        raise RuntimeError(
-            "Effective Oxidized process cannot read one or more Atlas runtime mounts"
+        details = "\n".join(
+            output.strip()
+            for output in (result.stdout, result.stderr)
+            if output and output.strip()
         )
+        message = "Oxidized runtime preflight failed"
+        if details:
+            message = f"{message}: {details}"
+        raise RuntimeError(message)
 
     print("[OK] Oxidized runtime mounts validated")
 

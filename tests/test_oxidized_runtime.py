@@ -112,11 +112,9 @@ class OxidizedRuntimeTests(unittest.TestCase):
 
             compose_data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
             service = compose_data["services"]["oxidized"]
-            self.assertEqual(
-                service["environment"]["ATLAS_OXIDIZED_INVENTORY_GID"],
-                str(source.parent.stat().st_gid),
-            )
+            self.assertNotIn("environment", service)
             self.assertNotIn("group_add", service)
+            self.assertEqual(source.stat().st_gid, source.parent.stat().st_gid)
             volumes = compose_data["services"]["oxidized"]["volumes"]
             self.assertIn(
                 f"{source.parent}:/etc/atlas-oxidized:ro",
@@ -133,6 +131,10 @@ class OxidizedRuntimeTests(unittest.TestCase):
             )
             runner = root / ".runtime/oxidized/oxidized-run.sh"
             self.assertEqual(runner.stat().st_mode & 0o777, 0o755)
+            self.assertIn(
+                'INVENTORY_GID="$(stat -c \'%g\' "$SOURCE")"',
+                runner.read_text(encoding="utf-8"),
+            )
             self.assertIn(
                 'gosu "oxidized:${INVENTORY_GID}" oxidized',
                 runner.read_text(encoding="utf-8"),
@@ -313,13 +315,38 @@ class OxidizedRuntimeTests(unittest.TestCase):
 
         validation_command = compose_exec.call_args.args[-1]
         self.assertIn(
-            'gosu "oxidized:$ATLAS_OXIDIZED_INVENTORY_GID"',
+            'INVENTORY_GID="$(stat -c \'%g\' "$SOURCE")"',
+            validation_command,
+        )
+        self.assertIn(
+            'gosu "oxidized:${INVENTORY_GID}" /bin/sh',
             validation_command,
         )
         self.assertIn(
             "test -r /etc/atlas-oxidized/router.json",
             validation_command,
         )
+
+    def test_runtime_validation_reports_safe_failing_check(self):
+        result = SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="[ERROR] Oxidized user cannot read router.json\n",
+        )
+
+        with patch.object(deploy_oxidized, "compose"), patch.object(
+            deploy_oxidized,
+            "compose_exec",
+            return_value=result,
+        ):
+            with self.assertRaisesRegex(
+                RuntimeError,
+                "Oxidized user cannot read router.json",
+            ):
+                deploy_oxidized.validate_runtime(
+                    Path("/test/docker-compose.yml"),
+                    "atlas-oxidized",
+                )
 
     def test_secret_values_are_not_printed_during_inventory_generation(self):
         output = io.StringIO()
