@@ -1,6 +1,6 @@
 backend:
-  version: "0.1.2-beta"
-  docker_image: "aricoma-atlas-backend:0.1.2-beta"
+  version: "0.2.0-beta"
+  docker_image: "aricoma-atlas-backend:0.2.0-beta"
   python_base_image: "docker.io/library/python:3.13.16-slim-bookworm"
   dockerfile: "deployment/backend/Dockerfile"
   environment: "production"

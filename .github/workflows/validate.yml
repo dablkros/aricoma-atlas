@@ -793,15 +793,31 @@ jobs:
           cache: "pip"
 
       # ---------------------------------------------------------------------
-      # Deploy BASE version
+      # Deploy the latest released version reachable from the PR base.
+      # Using an arbitrary base-branch commit can make a repair PR
+      # impossible to validate when that commit itself is undeployable.
       # ---------------------------------------------------------------------
 
-      - name: Checkout PR base
+      - name: Checkout released upgrade baseline
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
-          git checkout --detach "${BASE_SHA}"
+          BASE_REF="$(
+            git describe \
+              --tags \
+              --abbrev=0 \
+              --match 'v*-beta' \
+              "${BASE_SHA}"
+          )"
 
+          if [ -z "${BASE_REF}" ]; then
+            echo "[ERROR] No released upgrade baseline is reachable from ${BASE_SHA}"
+            exit 1
+          fi
+
+          git checkout --detach "${BASE_REF}"
+
+          echo "BASE release: ${BASE_REF}"
           echo "BASE commit:"
           git rev-parse HEAD
 
@@ -820,9 +836,40 @@ jobs:
         run: |
           set -o pipefail
 
+          cat > "${RUNNER_TEMP}/capture-atlas-unseal.py" <<'PY'
+          import json
+          import re
+          import sys
+          from pathlib import Path
+
+          target = Path(sys.argv[1])
+          pattern = re.compile(r"^(Unseal Key [0-9]+: )(.*)$")
+          keys = []
+
+          for line in sys.stdin:
+              match = pattern.match(line.rstrip("\n"))
+              if match:
+                  key = match.group(2).strip()
+                  if key and key != "[REDACTED]" and key not in keys:
+                      keys.append(key)
+                  sys.stdout.write(f"{match.group(1)}[REDACTED]\n")
+              else:
+                  sys.stdout.write(line)
+              sys.stdout.flush()
+
+          if len(keys) < 3:
+              raise SystemExit(
+                  "[ERROR] BASE deployment did not provide enough unseal keys"
+              )
+
+          target.write_text(json.dumps({"keys": keys}), encoding="utf-8")
+          target.chmod(0o600)
+          PY
+
           python3 scripts/deploy_atlas.py 2>&1 \
-            | sed -E \
-              's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
+            | python3 \
+              "${RUNNER_TEMP}/capture-atlas-unseal.py" \
+              "${RUNNER_TEMP}/atlas-upgrade-unseal-keys.json"
 
       # ---------------------------------------------------------------------
       # Seed persistent NetBox data
@@ -927,6 +974,94 @@ jobs:
         run: |
           python3 scripts/ci_ingress.py fixtures
           printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+
+      - name: Apply HEAD OpenBao runtime and unseal for upgrade
+        env:
+          ATLAS_UPGRADE_UNSEAL_KEYS_FILE: ${{ runner.temp }}/atlas-upgrade-unseal-keys.json
+        run: |
+          docker compose \
+            -f deployment/openbao/docker-compose.yml \
+            up -d
+
+          python3 - <<'PY'
+          import json
+          import os
+          import time
+          from pathlib import Path
+          from unittest.mock import patch
+
+          import requests
+
+          from atlas.openbao_client import OpenBaoClient
+          from scripts import openbao_access
+
+          key_file = Path(os.environ["ATLAS_UPGRADE_UNSEAL_KEYS_FILE"])
+
+          if key_file.is_symlink() or not key_file.is_file():
+              raise SystemExit("[ERROR] Upgrade unseal key file is invalid")
+
+          if key_file.stat().st_mode & 0o077:
+              raise SystemExit("[ERROR] Upgrade unseal key file permissions are unsafe")
+
+          payload = json.loads(key_file.read_text(encoding="utf-8"))
+          keys = payload.get("keys")
+
+          if (
+              not isinstance(keys, list)
+              or len(keys) < 3
+              or any(not isinstance(key, str) or not key for key in keys)
+          ):
+              raise SystemExit("[ERROR] Upgrade unseal key data is invalid")
+
+          status = None
+          deadline = time.monotonic() + 60
+
+          while time.monotonic() < deadline:
+              try:
+                  response = requests.get(
+                      "http://127.0.0.1:18200/v1/sys/seal-status",
+                      timeout=3,
+                  )
+                  response.raise_for_status()
+                  status = response.json()
+                  break
+              except (requests.RequestException, ValueError):
+                  time.sleep(0.5)
+
+          if not isinstance(status, dict):
+              raise SystemExit("[ERROR] OpenBao API did not become reachable")
+
+          for key in keys:
+              if not status.get("sealed"):
+                  break
+              response = requests.post(
+                  "http://127.0.0.1:18200/v1/sys/unseal",
+                  json={"key": key},
+                  timeout=10,
+              )
+              response.raise_for_status()
+              status = response.json()
+
+          if status.get("sealed"):
+              raise SystemExit("[ERROR] OpenBao remained sealed during upgrade")
+
+          print("[OK] Existing OpenBao data unsealed after runtime upgrade")
+
+          client = OpenBaoClient("http://127.0.0.1:18200")
+          with patch.object(
+              openbao_access.getpass,
+              "getpass",
+              side_effect=keys,
+          ):
+              reconciled = openbao_access.reconcile_backend_policy(client)
+
+          if not reconciled:
+              raise SystemExit(
+                  "[ERROR] atlas-backend OpenBao role was not reconciled"
+              )
+
+          print("[OK] atlas-backend OpenBao role reconciled for upgrade")
+          PY
 
       # ---------------------------------------------------------------------
       # Upgrade existing Atlas deployment
@@ -1044,6 +1179,10 @@ jobs:
         if: always()
         shell: bash
         run: |
+          rm -f \
+            "${RUNNER_TEMP}/capture-atlas-unseal.py" \
+            "${RUNNER_TEMP}/atlas-upgrade-unseal-keys.json"
+
           for component in proxy oxidized; do
             if [ -f ".runtime/${component}/docker-compose.yml" ]; then
               docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
