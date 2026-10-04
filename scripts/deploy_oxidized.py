@@ -55,6 +55,7 @@ OXIDIZED_CONFIG_PATH = "/etc/oxidized/config"
 OXIDIZED_SOURCE_PATH = "/etc/atlas-oxidized/router.json"
 OXIDIZED_WAIT_ENTRYPOINT = "/etc/atlas-oxidized-runtime/entrypoint.sh"
 OXIDIZED_WAIT_SERVER = "/etc/atlas-oxidized-runtime/waiting_server.rb"
+OXIDIZED_RUNNER = "/etc/atlas-oxidized-runtime/oxidized-run.sh"
 OXIDIZED_WEB_URL = "http://127.0.0.1:8888"
 DEFAULT_INVENTORY_DIRECTORY = "/run/atlas/oxidized"
 INVENTORY_FILE_NAME = "router.json"
@@ -185,6 +186,30 @@ loop do
     client.close rescue nil
   end
 end
+'''
+
+
+OXIDIZED_RUN_SCRIPT = r'''#!/bin/sh
+set -eu
+
+INVENTORY_GID="${ATLAS_OXIDIZED_INVENTORY_GID:?missing inventory group ID}"
+
+case "$INVENTORY_GID" in
+    *[!0-9]*|"")
+        echo "[ERROR] Invalid Oxidized inventory group ID" >&2
+        exit 1
+        ;;
+esac
+
+CONFIG_HOME="/home/oxidized/.config/oxidized"
+[ -d "$CONFIG_HOME" ] || mkdir -p "$CONFIG_HOME"
+[ ! -f "$CONFIG_HOME/pid" ] || rm -f "$CONFIG_HOME/pid"
+chown -R oxidized:oxidized "$CONFIG_HOME"
+
+# The upstream runit service invokes `gosu oxidized`, which rebuilds the
+# supplementary group list from /etc/group and discards Docker group_add.
+# Use the host inventory directory GID as the process primary group instead.
+exec gosu "oxidized:${INVENTORY_GID}" oxidized
 '''
 
 
@@ -381,6 +406,11 @@ def prepare_runtime(config, root=None):
     wait_server = runtime / "waiting_server.rb"
     write_text(wait_server, WAIT_SERVER, 0o644)
 
+    oxidized_runner = runtime / "oxidized-run.sh"
+    write_text(oxidized_runner, OXIDIZED_RUN_SCRIPT, 0o755)
+
+    inventory_gid = source.parent.stat().st_gid
+
     compose_file = runtime / "docker-compose.yml"
     write_yaml(
         compose_file,
@@ -393,7 +423,9 @@ def prepare_runtime(config, root=None):
                         "/bin/sh",
                         OXIDIZED_WAIT_ENTRYPOINT,
                     ],
-                    "group_add": [str(source.parent.stat().st_gid)],
+                    "environment": {
+                        "ATLAS_OXIDIZED_INVENTORY_GID": str(inventory_gid),
+                    },
                     "volumes": [
                         "atlas_oxidized_data:/home/oxidized/.config/oxidized",
                         f"{source.parent}:/etc/atlas-oxidized:ro",
@@ -401,6 +433,7 @@ def prepare_runtime(config, root=None):
                         f"{ssh_dir}:/home/oxidized/.ssh:ro",
                         f"{entrypoint}:{OXIDIZED_WAIT_ENTRYPOINT}:ro",
                         f"{wait_server}:{OXIDIZED_WAIT_SERVER}:ro",
+                        f"{oxidized_runner}:/etc/service/oxidized/run:ro",
                     ],
                     "networks": {
                         "web": {
@@ -543,10 +576,13 @@ def validate_runtime(file, project):
             "test -x /usr/bin/dumb-init; "
             "command -v runsvdir >/dev/null; "
             "test -r /etc/oxidized/config; "
+            "test -n \"$ATLAS_OXIDIZED_INVENTORY_GID\"; "
+            "gosu \"oxidized:$ATLAS_OXIDIZED_INVENTORY_GID\" "
             "test -r /etc/atlas-oxidized/router.json; "
             "test -r /home/oxidized/.ssh/known_hosts; "
             f"test -x {OXIDIZED_WAIT_ENTRYPOINT}; "
-            f"test -r {OXIDIZED_WAIT_SERVER}"
+            f"test -r {OXIDIZED_WAIT_SERVER}; "
+            f"test -x {OXIDIZED_RUNNER}"
         ),
         capture=True,
         check=False,
@@ -554,7 +590,7 @@ def validate_runtime(file, project):
 
     if result.returncode != 0:
         raise RuntimeError(
-            "Oxidized container cannot read one or more Atlas runtime mounts"
+            "Effective Oxidized process cannot read one or more Atlas runtime mounts"
         )
 
     print("[OK] Oxidized runtime mounts validated")

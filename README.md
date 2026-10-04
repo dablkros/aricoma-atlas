@@ -1733,7 +1733,7 @@ Inventár je JSON pole. Každý prvok obsahuje minimálne `name`, `ip`, `model`,
 
 NetBox je zdroj identity zariadenia, management IP, platformy a príznaku `oxidized_enabled`. OpenBao je zdroj credentials. Neúplné enabled zariadenie alebo chýbajúci per-device secret sa uvedie v structured issues; ak už bolo zariadenie v current inventory, jeho posledná platná položka sa zachová. Globálne zlyhanie NetBoxu alebo OpenBao ukončí operáciu pred zápisom.
 
-Súbor má mode `0640` a inventárový adresár `0750`; Oxidized kontajner dostáva iba doplnkovú skupinu hostiteľského inventárového adresára a mount zostáva read-only. Hostiteľský parent `/run/atlas` má mode `0710` a vlastní ho `root:atlas`. Adresárový mount zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná bez world-readable credentials.
+Súbor má mode `0640` a inventárový adresár `0750`; Oxidized proces používa GID hostiteľského inventárového adresára ako svoju primárnu runtime skupinu a mount zostáva read-only. Je to potrebné preto, že upstream image spúšťa aplikáciu cez `gosu oxidized`, ktoré zostaví skupiny procesu nanovo. Hostiteľský parent `/run/atlas` má mode `0710` a vlastní ho `root:atlas`. Adresárový mount zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná bez world-readable credentials.
 
 ## SSH host-key trust
 

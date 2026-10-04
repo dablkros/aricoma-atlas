@@ -111,10 +111,12 @@ class OxidizedRuntimeTests(unittest.TestCase):
             self.assertEqual(known_hosts.stat().st_mode & 0o777, 0o644)
 
             compose_data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+            service = compose_data["services"]["oxidized"]
             self.assertEqual(
-                compose_data["services"]["oxidized"]["group_add"],
-                [str(source.parent.stat().st_gid)],
+                service["environment"]["ATLAS_OXIDIZED_INVENTORY_GID"],
+                str(source.parent.stat().st_gid),
             )
+            self.assertNotIn("group_add", service)
             volumes = compose_data["services"]["oxidized"]["volumes"]
             self.assertIn(
                 f"{source.parent}:/etc/atlas-oxidized:ro",
@@ -122,6 +124,18 @@ class OxidizedRuntimeTests(unittest.TestCase):
             )
             self.assertTrue(
                 any(":/home/oxidized/.ssh:ro" in volume for volume in volumes)
+            )
+            self.assertTrue(
+                any(
+                    ":/etc/service/oxidized/run:ro" in volume
+                    for volume in volumes
+                )
+            )
+            runner = root / ".runtime/oxidized/oxidized-run.sh"
+            self.assertEqual(runner.stat().st_mode & 0o777, 0o755)
+            self.assertIn(
+                'gosu "oxidized:${INVENTORY_GID}" oxidized',
+                runner.read_text(encoding="utf-8"),
             )
 
             deploy_oxidized.prepare_runtime(config(), root=root)
@@ -283,6 +297,29 @@ class OxidizedRuntimeTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), ["reloaded list of nodes"])
+
+    def test_runtime_validation_checks_inventory_as_effective_oxidized_user(self):
+        result = SimpleNamespace(returncode=0, stdout="", stderr="")
+
+        with patch.object(deploy_oxidized, "compose"), patch.object(
+            deploy_oxidized,
+            "compose_exec",
+            return_value=result,
+        ) as compose_exec:
+            deploy_oxidized.validate_runtime(
+                Path("/test/docker-compose.yml"),
+                "atlas-oxidized",
+            )
+
+        validation_command = compose_exec.call_args.args[-1]
+        self.assertIn(
+            'gosu "oxidized:$ATLAS_OXIDIZED_INVENTORY_GID"',
+            validation_command,
+        )
+        self.assertIn(
+            "test -r /etc/atlas-oxidized/router.json",
+            validation_command,
+        )
 
     def test_secret_values_are_not_printed_during_inventory_generation(self):
         output = io.StringIO()
