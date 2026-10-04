@@ -14,6 +14,7 @@ from atlas.api.main import create_app
 from atlas.config import Settings
 from atlas.logging import JsonFormatter
 from atlas.services.errors import DependencyError
+from atlas.services.oxidized_sync import OxidizedSyncFailure
 
 
 def test_settings(**overrides):
@@ -51,6 +52,7 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
                 "ATLAS_NETBOX_URL": "https://netbox.example.test",
                 "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+                "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                 "ATLAS_HTTP_CONNECT_TIMEOUT": "2.5",
                 "ATLAS_HTTP_READ_TIMEOUT": "12",
             },
@@ -65,6 +67,10 @@ class SettingsTests(unittest.TestCase):
         )
         self.assertEqual(str(settings.netbox_url), "https://netbox.example.test/")
         self.assertEqual(str(settings.oxidized_url), "http://atlas-oxidized:8888/")
+        self.assertEqual(
+            settings.oxidized_inventory_file,
+            Path("/run/atlas/oxidized/router.json"),
+        )
         self.assertEqual(settings.http_connect_timeout, 2.5)
         self.assertEqual(settings.http_read_timeout, 12.0)
 
@@ -78,6 +84,7 @@ class SettingsTests(unittest.TestCase):
             {"netbox_url": "https://user:password@netbox.example.test"},
             {"openbao_identity_file": ""},
             {"openbao_identity_file": "../backend-identity.json"},
+            {"oxidized_inventory_file": "../router.json"},
             {"http_connect_timeout": 0},
             {"http_read_timeout": 121},
         )
@@ -270,6 +277,138 @@ class ReadinessApiTests(unittest.TestCase):
         self.assertEqual(response.json()["reasons"], {"openbao": "unavailable"})
         self.assertNotIn(secret, response.text)
         self.assertNotIn("password", response.text)
+
+
+class FakeSync:
+    def __init__(self, result=None, error=None):
+        self.result = result
+        self.error = error
+        self.calls = 0
+
+    def sync(self):
+        self.calls += 1
+        if self.error:
+            raise self.error
+        return self.result
+
+
+def sync_result(
+    status="success",
+    changed=True,
+    updated=True,
+    reloaded=True,
+    skipped=0,
+    errors=0,
+    issues=(),
+):
+    return SimpleNamespace(
+        status=status,
+        inventory_changed=changed,
+        inventory_updated=updated,
+        oxidized_reloaded=reloaded,
+        summary=SimpleNamespace(
+            total=1,
+            added=1 if changed else 0,
+            updated=0,
+            removed=0,
+            unchanged=0 if changed else 1,
+            skipped=skipped,
+            errors=errors,
+        ),
+        added=("SW01",) if changed else (),
+        updated=(),
+        removed=(),
+        issues=tuple(issues),
+    )
+
+
+class OxidizedSyncApiTests(unittest.TestCase):
+    def client(self, sync):
+        dependencies = SimpleNamespace(
+            openbao=FakeDependency(),
+            netbox=FakeDependency(),
+            oxidized=FakeDependency(),
+            oxidized_sync=sync,
+        )
+        return TestClient(
+            create_app(test_settings(), dependencies=dependencies),
+            raise_server_exceptions=False,
+        )
+
+    def test_sync_success_partial_and_no_changes(self):
+        issue = SimpleNamespace(
+            device="SW02",
+            code="missing_credential_profile",
+        )
+        cases = (
+            (sync_result(), 200, "success"),
+            (
+                sync_result(
+                    status="partial_success",
+                    skipped=1,
+                    issues=(issue,),
+                ),
+                200,
+                "partial_success",
+            ),
+            (
+                sync_result(
+                    changed=False,
+                    updated=False,
+                    reloaded=False,
+                ),
+                200,
+                "success",
+            ),
+        )
+        for result, status_code, expected_status in cases:
+            with self.subTest(expected_status=expected_status, changed=result.inventory_changed):
+                response = self.client(FakeSync(result=result)).post(
+                    "/api/oxidized/sync"
+                )
+                self.assertEqual(response.status_code, status_code)
+                self.assertEqual(response.json()["status"], expected_status)
+
+    def test_sync_conflict_and_global_failures_use_safe_error_contract(self):
+        cases = (
+            ("sync_already_running", 409),
+            ("netbox_unavailable", 503),
+            ("openbao_authentication_failed", 503),
+            ("inventory_invalid", 500),
+        )
+        for code, status_code in cases:
+            with self.subTest(code=code):
+                response = self.client(
+                    FakeSync(error=OxidizedSyncFailure(code, status_code))
+                ).post("/api/oxidized/sync")
+                self.assertEqual(response.status_code, status_code)
+                self.assertEqual(response.json()["error"]["code"], code)
+
+    def test_reload_failure_reports_inventory_was_written(self):
+        issue = SimpleNamespace(device=None, code="oxidized_reload_failed")
+        response = self.client(
+            FakeSync(
+                result=sync_result(
+                    status="error",
+                    changed=True,
+                    updated=True,
+                    reloaded=False,
+                    issues=(issue,),
+                )
+            )
+        ).post("/api/oxidized/sync")
+
+        self.assertEqual(response.status_code, 503)
+        self.assertTrue(response.json()["inventory_updated"])
+        self.assertFalse(response.json()["oxidized_reloaded"])
+
+    def test_sync_response_never_contains_secrets(self):
+        response = self.client(FakeSync(result=sync_result())).post(
+            "/api/oxidized/sync"
+        )
+        serialized = response.text.lower()
+        for forbidden in ("password", "secret_id", "nbt_sensitive", "openbao-token"):
+            self.assertNotIn(forbidden, serialized)
 
 
 if __name__ == "__main__":

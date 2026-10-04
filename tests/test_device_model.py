@@ -196,8 +196,9 @@ class CredentialTests(unittest.TestCase):
             ("platform", {"slug": "unknown"}, "No Oxidized mapping"),
             ("platform", {"slug": "cisco-cbs"}, "No Oxidized mapping"),
             ("custom_fields", {"oxidized_enabled": True}, "Missing credential_profile"),
-            ("device_type", {}, "Invalid manufacturer slug"),
+            ("device_type", {}, "Missing manufacturer"),
             ("primary_ip4", None, "Missing or invalid primary IP"),
+            ("name", None, "Missing device name"),
         ]:
             with self.subTest(field=field, value=value):
                 d = device(); d[field] = value
@@ -205,6 +206,46 @@ class CredentialTests(unittest.TestCase):
                 with self.assertRaisesRegex(DeviceValidationError, message):
                     resolve_oxidized_device(d, client, "fixture")
                 client.kv_read.assert_not_called()
+
+    def test_malformed_nested_fields_are_explicit_device_errors(self):
+        cases = (
+            ("platform", "cisco-ios-xe", "missing_platform"),
+            ("device_type", "cisco", "missing_manufacturer"),
+            ("primary_ip4", "10.10.10.1/32", "missing_primary_ip"),
+        )
+        for field, value, code in cases:
+            with self.subTest(field=field):
+                d = device()
+                d[field] = value
+                client = Mock()
+                with self.assertRaises(DeviceValidationError) as raised:
+                    resolve_oxidized_device(d, client, "fixture")
+                self.assertEqual(raised.exception.code, code)
+                client.kv_read.assert_not_called()
+
+    def test_supported_platforms_and_ipv6_are_resolved_without_guessing(self):
+        cases = (
+            ("cisco-ios-xe", "cisco", "ios"),
+            ("fortios", "fortinet", "fortigate"),
+            ("junos", "juniper", "junos"),
+        )
+        for platform, vendor, model in cases:
+            with self.subTest(platform=platform):
+                d = device()
+                d["platform"] = {"slug": platform}
+                d["device_type"]["manufacturer"]["slug"] = vendor
+                d["primary_ip4"] = None
+                d["primary_ip6"] = {"address": "2001:db8::10/64"}
+                client = Mock()
+                client.kv_read.return_value = {
+                    "username": "fixture-user",
+                    "password": "fixture-password",
+                }
+
+                resolved = resolve_oxidized_device(d, client, "fixture-token")
+
+                self.assertEqual(resolved.reference.model, model)
+                self.assertEqual(resolved.reference.address, "2001:db8::10")
 
     def test_disabled_devices_do_not_read_secrets(self):
         for enabled in (False, None, "true", 1):

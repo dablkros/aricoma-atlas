@@ -120,9 +120,23 @@ class OpenBaoService:
     def get_device_credentials(self, manufacturer: str, profile: str) -> dict:
         try:
             path = credential_path(manufacturer, profile, purpose="admin")
-            return validate_admin_secret(self.read_secret(path))
+            secret = self.read_secret(path)
+        except DependencyError as exc:
+            if exc.reason == "secret_not_found":
+                raise DeviceValidationError(
+                    "Credential profile not found",
+                    code="credential_not_found",
+                    category="error",
+                ) from None
+            raise
+        try:
+            return validate_admin_secret(secret)
         except DeviceValidationError as exc:
-            raise DependencyError("invalid_response") from exc
+            raise DeviceValidationError(
+                "Invalid admin credential schema",
+                code="invalid_credentials",
+                category="error",
+            ) from exc
 
 
 __all__ = [

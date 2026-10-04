@@ -12,6 +12,7 @@ from atlas.openbao_client import (
     OpenBaoError,
     OpenBaoNotFound,
 )
+from atlas.device_credentials import DeviceValidationError
 from atlas.services.errors import DependencyError
 from atlas.services.netbox import NetBoxService
 from atlas.services.openbao import OpenBaoService
@@ -167,6 +168,33 @@ class OpenBaoServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "secret_not_found")
 
+    def test_device_secret_missing_and_malformed_are_isolated_and_redacted(self):
+        cases = (
+            (
+                OpenBaoNotFound("password=sensitive"),
+                "credential_not_found",
+            ),
+            (
+                {"username": "fixture-user", "password": ""},
+                "invalid_credentials",
+            ),
+        )
+        for value, code in cases:
+            with self.subTest(code=code):
+                client = Mock()
+                client.login_from_identity.return_value = "runtime-token"
+                if isinstance(value, Exception):
+                    client.kv_read.side_effect = value
+                else:
+                    client.kv_read.return_value = value
+
+                with self.assertRaises(DeviceValidationError) as raised:
+                    self.service(client).get_device_credentials("cisco", "default")
+
+                self.assertEqual(raised.exception.code, code)
+                self.assertEqual(raised.exception.category, "error")
+                self.assertNotIn("sensitive", str(raised.exception))
+
 
 class NetBoxServiceTests(unittest.TestCase):
     def service(self, requester, token="nbt_key.plaintext"):
@@ -274,6 +302,26 @@ class NetBoxServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "invalid_response")
 
+    def test_oxidized_selection_uses_filter_and_pagination(self):
+        requester = QueueRequester(
+            FakeResponse(
+                data={
+                    "next": "https://netbox.example.test/api/dcim/devices/?offset=1",
+                    "results": [{"id": 1}],
+                }
+            ),
+            FakeResponse(data={"next": None, "results": [{"id": 2}]}),
+        )
+        service, _openbao = self.service(requester)
+
+        result = service.get_oxidized_devices()
+
+        self.assertEqual(result, [{"id": 1}, {"id": 2}])
+        self.assertEqual(
+            requester.calls[0][1]["params"],
+            {"cf_oxidized_enabled": "true"},
+        )
+
 
 class OxidizedServiceTests(unittest.TestCase):
     def service(self, requester):
@@ -308,6 +356,35 @@ class OxidizedServiceTests(unittest.TestCase):
             self.service(requester).check_ready()
 
         self.assertEqual(raised.exception.reason, "connection_failed")
+
+    def test_reload_success_and_empty_waiting_state(self):
+        success = QueueRequester(FakeResponse(data=["reloaded list of nodes"]))
+        self.service(success).reload_inventory([{"name": "SW01"}])
+        self.assertEqual(
+            success.calls[0][0],
+            "http://atlas-oxidized:8888/reload?format=json",
+        )
+
+        waiting = QueueRequester(FakeResponse(status_code=503))
+        self.service(waiting).reload_inventory([])
+
+    def test_reload_timeout_http_error_and_malformed_response(self):
+        cases = (
+            (requests.Timeout("timeout"), "connection_failed"),
+            (FakeResponse(status_code=500), "unavailable"),
+            (FakeResponse(data={"unexpected": True}), "invalid_response"),
+            (
+                FakeResponse(data=None, json_error=ValueError("bad")),
+                "invalid_response",
+            ),
+        )
+        for response, reason in cases:
+            with self.subTest(reason=reason):
+                with self.assertRaises(DependencyError) as raised:
+                    self.service(QueueRequester(response)).reload_inventory(
+                        [{"name": "SW01"}]
+                    )
+                self.assertEqual(raised.exception.reason, reason)
 
 
 if __name__ == "__main__":

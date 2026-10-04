@@ -379,9 +379,9 @@ verify_installation() {
     [[ "$(stat -c '%U:%G' "$RUNTIME_DIR")" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "${RUNTIME_DIR} must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
     [[ "$(stat -c '%a' /run/atlas)" == "710" ]] || die "/run/atlas must have mode 0710"
     [[ "$(stat -c '%U:%G' /run/atlas)" == "root:${ATLAS_GROUP}" ]] || die "/run/atlas must be owned by root:${ATLAS_GROUP}"
-    [[ "$(stat -c '%a' /run/atlas/oxidized)" == "755" ]] || die "/run/atlas/oxidized must have mode 0755"
+    [[ "$(stat -c '%a' /run/atlas/oxidized)" == "750" ]] || die "/run/atlas/oxidized must have mode 0750"
     [[ "$(stat -c '%U:%G' /run/atlas/oxidized)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
-    [[ "$(stat -c '%a' /run/atlas/oxidized/router.json)" == "644" ]] || die "/run/atlas/oxidized/router.json must have mode 0644"
+    [[ "$(stat -c '%a' /run/atlas/oxidized/router.json)" == "640" ]] || die "/run/atlas/oxidized/router.json must have mode 0640"
     [[ "$(stat -c '%U:%G' /run/atlas/oxidized/router.json)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized/router.json must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
     "${VENV_DIR}/bin/python3" -c \
         'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, list)' \

@@ -7,6 +7,7 @@ from atlas.openbao_client import OpenBaoClient
 from atlas.services.netbox import NetBoxService
 from atlas.services.openbao import OpenBaoService
 from atlas.services.oxidized import OxidizedService
+from atlas.services.oxidized_sync import FileInventoryStore, OxidizedSyncService
 
 
 @dataclass(frozen=True)
@@ -14,6 +15,7 @@ class DependencyServices:
     openbao: OpenBaoService
     netbox: NetBoxService
     oxidized: OxidizedService
+    oxidized_sync: OxidizedSyncService
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -22,18 +24,26 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         OpenBaoClient(str(settings.openbao_url), timeout=timeout),
         settings.openbao_identity_file,
     )
+    netbox = NetBoxService(
+        str(settings.netbox_url),
+        openbao,
+        settings.http_connect_timeout,
+        settings.http_read_timeout,
+    )
+    oxidized = OxidizedService(
+        str(settings.oxidized_url),
+        settings.http_connect_timeout,
+        settings.http_read_timeout,
+    )
     return DependencyServices(
         openbao=openbao,
-        netbox=NetBoxService(
-            str(settings.netbox_url),
+        netbox=netbox,
+        oxidized=oxidized,
+        oxidized_sync=OxidizedSyncService(
+            netbox,
             openbao,
-            settings.http_connect_timeout,
-            settings.http_read_timeout,
-        ),
-        oxidized=OxidizedService(
-            str(settings.oxidized_url),
-            settings.http_connect_timeout,
-            settings.http_read_timeout,
+            oxidized,
+            FileInventoryStore(settings.oxidized_inventory_file),
         ),
     )
 

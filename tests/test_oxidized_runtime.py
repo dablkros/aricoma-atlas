@@ -6,6 +6,7 @@ import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import yaml
@@ -103,13 +104,17 @@ class OxidizedRuntimeTests(unittest.TestCase):
             known_hosts = root / ".runtime/oxidized/ssh/known_hosts"
 
             self.assertEqual(json.loads(source.read_text(encoding="utf-8")), [])
-            self.assertEqual(source.stat().st_mode & 0o777, 0o644)
-            self.assertEqual(source.parent.stat().st_mode & 0o777, 0o755)
+            self.assertEqual(source.stat().st_mode & 0o777, 0o640)
+            self.assertEqual(source.parent.stat().st_mode & 0o777, 0o750)
             self.assertFalse(legacy.exists())
             self.assertTrue(known_hosts.exists())
             self.assertEqual(known_hosts.stat().st_mode & 0o777, 0o644)
 
             compose_data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
+            self.assertEqual(
+                compose_data["services"]["oxidized"]["group_add"],
+                [str(source.parent.stat().st_gid)],
+            )
             volumes = compose_data["services"]["oxidized"]["volumes"]
             self.assertIn(
                 f"{source.parent}:/etc/atlas-oxidized:ro",
@@ -128,9 +133,9 @@ class OxidizedRuntimeTests(unittest.TestCase):
         ).read_text(encoding="utf-8")
 
         self.assertIn("d /run/atlas 0710 root atlas -", content)
-        self.assertIn("d /run/atlas/oxidized 0755 atlas atlas -", content)
+        self.assertIn("d /run/atlas/oxidized 0750 atlas atlas -", content)
         self.assertIn(
-            "f /run/atlas/oxidized/router.json 0644 atlas atlas - []",
+            "f /run/atlas/oxidized/router.json 0640 atlas atlas - []",
             content,
         )
 
@@ -188,7 +193,7 @@ class OxidizedRuntimeTests(unittest.TestCase):
             deploy_oxidized.write_inventory(source, original)
 
             with patch("atlas.deployment.os.replace", side_effect=OSError("fixture")):
-                with self.assertRaises(OSError):
+                with self.assertRaises(RuntimeError):
                     deploy_oxidized.write_inventory(source, [])
 
             self.assertEqual(deploy_oxidized.read_inventory(source), original)
@@ -218,42 +223,66 @@ class OxidizedRuntimeTests(unittest.TestCase):
         settings = config()
         compose_file = Path("/test/docker-compose.yml")
         source = Path("/test/router.json")
-        inventory = [{
-            "name": "SW1",
-            "ip": "192.0.2.1",
-            "model": "ios",
-            "username": "ci",
-            "password": "ci-only",
-        }]
-
         with patch.object(deploy_oxidized, "require_running_container") as running, \
-             patch.object(deploy_oxidized, "write_inventory") as write_inventory, \
-             patch.object(deploy_oxidized, "reload_inventory") as reload_inventory, \
+             patch.object(deploy_oxidized, "build_runtime_services") as services, \
+             patch.object(deploy_oxidized, "OxidizedSyncService") as sync_service, \
              patch.object(deploy_oxidized, "compose") as compose:
+            services.return_value = (Mock(), Mock(), Mock())
+            sync_service.return_value.sync.return_value = SimpleNamespace(
+                status="success",
+                inventory_changed=False,
+                oxidized_reloaded=False,
+            )
             deploy_oxidized.reconcile_running(
                 settings,
                 compose_file,
                 source,
-                inventory,
             )
 
         running.assert_called_once()
-        write_inventory.assert_called_once_with(source, inventory)
-        reload_inventory.assert_called_once()
+        sync_service.return_value.sync.assert_called_once_with()
         compose.assert_not_called()
 
-    def test_empty_inventory_accepts_waiting_reload_response(self):
+    def test_deployment_reload_uses_shared_oxidized_service(self):
         with patch.object(
-            deploy_oxidized,
-            "reload_status",
-            return_value=503,
-        ):
+            deploy_oxidized.OxidizedService,
+            "reload_inventory",
+        ) as reload_inventory:
             deploy_oxidized.reload_inventory(
                 Path("/test/docker-compose.yml"),
                 "atlas-oxidized",
                 [],
                 1,
             )
+        reload_inventory.assert_called_once_with([])
+
+    def test_compose_requester_returns_status_and_json_body(self):
+        result = SimpleNamespace(
+            returncode=0,
+            stdout=json.dumps(
+                {
+                    "status": 200,
+                    "body": json.dumps(["reloaded list of nodes"]),
+                }
+            ),
+        )
+        requester = deploy_oxidized.ComposeRequester(
+            Path("/test/docker-compose.yml"),
+            "atlas-oxidized",
+        )
+        with patch.object(
+            deploy_oxidized,
+            "compose_exec",
+            return_value=result,
+        ):
+            response = requester.get(
+                "http://127.0.0.1:8888/reload?format=json",
+                headers={"Accept": "application/json"},
+                timeout=(2, 8),
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), ["reloaded list of nodes"])
 
     def test_secret_values_are_not_printed_during_inventory_generation(self):
         output = io.StringIO()
