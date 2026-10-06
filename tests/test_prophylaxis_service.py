@@ -20,6 +20,7 @@ def netbox_device():
     return {
         "id": 10,
         "name": "SW-CORE-01",
+        "status": {"value": "active", "label": "Active"},
         "primary_ip4": {"address": "10.10.10.1/32"},
         "primary_ip6": None,
         "platform": {"slug": "cisco-ios-xe"},
@@ -27,6 +28,7 @@ def netbox_device():
         "custom_fields": {
             "credential_profile": "cisco-default",
             "profylaxia_enabled": True,
+            "profylaxia_checks": ["CPU utilization"],
         },
     }
 
@@ -178,6 +180,30 @@ class ProphylaxisServiceTests(unittest.TestCase):
 
         self.assertEqual(result.error, "unsupported_platform")
         self.assertEqual(openbao.calls, [])
+
+    def test_disabled_or_unselected_device_never_reads_credentials(self):
+        cases = (
+            ("status", {"value": "offline"}, "device_inactive"),
+            ("profylaxia_enabled", False, "prophylaxis_disabled"),
+            ("profylaxia_checks", ["Memory utilization"], "check_not_selected"),
+        )
+        for field, value, expected in cases:
+            with self.subTest(field=field):
+                device = netbox_device()
+                if field == "status":
+                    device[field] = value
+                else:
+                    device["custom_fields"][field] = value
+                openbao = FakeOpenBao()
+
+                result = self.service(
+                    FakeNetBox([device]),
+                    openbao,
+                    CapturingRegistry(FakeDriver()),
+                ).collect_cpu("SW-CORE-01")
+
+                self.assertEqual(result.error, expected)
+                self.assertEqual(openbao.calls, [])
 
     def test_resolution_and_collection_errors_are_normalized(self):
         cases = (

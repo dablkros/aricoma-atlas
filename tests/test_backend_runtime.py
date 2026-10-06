@@ -24,6 +24,7 @@ def backend_config(**overrides):
             "environment": "production",
             "log_level": "INFO",
             "ssh_strict_host_keys": True,
+            "prophylaxis_result_retention": 10000,
         },
         "runtime": {
             "directory": ".runtime/backend",
@@ -73,6 +74,12 @@ class BackendConfigurationTests(unittest.TestCase):
         config = backend_config(backend={"ssh_strict_host_keys": "false"})
 
         with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            deploy_backend.validate_config(config)
+
+    def test_invalid_prophylaxis_retention_is_rejected(self):
+        config = backend_config(backend={"prophylaxis_result_retention": 0})
+
+        with self.assertRaisesRegex(ValueError, "result_retention"):
             deploy_backend.validate_config(config)
 
 
@@ -139,6 +146,14 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/atlas/oxidized/router.json",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_PROPHYLAXIS_RESULTS_FILE"],
+            "/run/atlas/prophylaxis/results.sqlite3",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
+            "10000",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],
             "/run/atlas/ssh/known_hosts",
         )
@@ -156,6 +171,15 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertIn(
             f"{self.inventory_directory}:/run/atlas/oxidized:rw",
             service["volumes"],
+        )
+        self.assertIn(
+            f"{self.root / '.runtime/prophylaxis'}:"
+            "/run/atlas/prophylaxis:rw",
+            service["volumes"],
+        )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/prophylaxis").st_mode & 0o777,
+            0o700,
         )
         self.assertIn(
             f"{self.root / '.runtime/oxidized/ssh/known_hosts'}:"

@@ -11,7 +11,9 @@ from atlas.network.errors import NetworkCollectionError
 from atlas.network.registry import DriverRegistry
 from atlas.network.transport import NetmikoTransport
 from atlas.prophylaxis.errors import (
+    CheckNotSelectedError,
     DeviceAmbiguousError,
+    DeviceInactiveError,
     DeviceNotFoundError,
     DeviceResolutionError,
     MissingCredentialProfileError,
@@ -19,8 +21,14 @@ from atlas.prophylaxis.errors import (
     MissingManufacturerError,
     MissingPlatformError,
     MissingPrimaryIPError,
+    ProphylaxisDisabledError,
 )
-from atlas.prophylaxis.models import CPU_CHECK_NAME, CPUCheckResult
+from atlas.prophylaxis.models import (
+    CPU_CHECK_NAME,
+    CPUCheckResult,
+    StoredCPUCheckResult,
+)
+from atlas.prophylaxis.store import ResultStoreError
 from atlas.services.errors import DependencyError
 
 
@@ -34,6 +42,28 @@ class DeviceTarget:
     platform: str
     vendor: str
     credential_profile: str
+
+
+@dataclass(frozen=True)
+class PublicProphylaxisDevice:
+    id: int
+    name: str
+    ip: str
+    platform: str
+
+
+def validate_cpu_selection(device: dict) -> None:
+    status = device.get("status")
+    status_value = status.get("value") if isinstance(status, dict) else status
+    if status_value != "active":
+        raise DeviceInactiveError()
+    fields = device.get("custom_fields")
+    fields = fields if isinstance(fields, dict) else {}
+    if fields.get("profylaxia_enabled") is not True:
+        raise ProphylaxisDisabledError()
+    checks = fields.get("profylaxia_checks")
+    if not isinstance(checks, list) or CPU_CHECK_NAME not in checks:
+        raise CheckNotSelectedError()
 
 
 def device_target(device: dict) -> DeviceTarget:
@@ -96,6 +126,7 @@ class ProphylaxisService:
         timeouts: SSHTimeouts,
         registry: DriverRegistry | None = None,
         transport=None,
+        result_store=None,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -104,6 +135,7 @@ class ProphylaxisService:
         self.timeouts = timeouts
         self.registry = registry or DriverRegistry()
         self.transport = transport or NetmikoTransport()
+        self.result_store = result_store
 
     def _get_device(self, identifier: int | str) -> dict:
         if isinstance(identifier, bool) or not isinstance(identifier, (int, str)):
@@ -131,6 +163,7 @@ class ProphylaxisService:
             raw_name = device.get("name")
             if isinstance(raw_name, str) and raw_name.strip():
                 device_name = raw_name.strip()
+            validate_cpu_selection(device)
             target = device_target(device)
             device_name = target.name
             platform = target.platform
@@ -176,6 +209,39 @@ class ProphylaxisService:
             values=values,
         )
 
+    def list_devices(self) -> list[PublicProphylaxisDevice]:
+        devices = self.netbox.get_prophylaxis_devices()
+        result = []
+        for device in devices:
+            try:
+                validate_cpu_selection(device)
+                target = device_target(device)
+                self.registry.driver_class(target.platform)
+                identifier = device.get("id")
+                if isinstance(identifier, bool) or not isinstance(identifier, int):
+                    continue
+            except (DeviceResolutionError, NetworkCollectionError):
+                continue
+            result.append(
+                PublicProphylaxisDevice(
+                    id=identifier,
+                    name=target.name,
+                    ip=target.host,
+                    platform=target.platform,
+                )
+            )
+        return sorted(result, key=lambda item: item.name.casefold())
+
+    def run_cpu_check(self, identifier: int | str) -> StoredCPUCheckResult:
+        if self.result_store is None:
+            raise ResultStoreError()
+        return self.result_store.save(self.collect_cpu(identifier))
+
+    def result_history(self, limit: int = 20) -> list[StoredCPUCheckResult]:
+        if self.result_store is None:
+            raise ResultStoreError()
+        return self.result_store.list(limit)
+
     @staticmethod
     def _error(device: str, platform: str | None, code: str) -> CPUCheckResult:
         logger.warning(
@@ -196,4 +262,10 @@ class ProphylaxisService:
         )
 
 
-__all__ = ["DeviceTarget", "ProphylaxisService", "device_target"]
+__all__ = [
+    "DeviceTarget",
+    "ProphylaxisService",
+    "PublicProphylaxisDevice",
+    "device_target",
+    "validate_cpu_selection",
+]

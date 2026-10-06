@@ -6,6 +6,7 @@ backend:
   environment: "production"
   log_level: "INFO"
   ssh_strict_host_keys: true
+  prophylaxis_result_retention: 10000
 
 runtime:
   directory: ".runtime/backend"

@@ -80,6 +80,16 @@ def validate_config(raw):
     if not isinstance(backend.get("ssh_strict_host_keys"), bool):
         raise ValueError("backend.ssh_strict_host_keys must be a boolean")
 
+    retention = backend.get("prophylaxis_result_retention")
+    if (
+        isinstance(retention, bool)
+        or not isinstance(retention, int)
+        or not 100 <= retention <= 1_000_000
+    ):
+        raise ValueError(
+            "backend.prophylaxis_result_retention must be an integer from 100 to 1000000"
+        )
+
     dockerfile = Path(backend["dockerfile"])
     if dockerfile.is_absolute() or ".." in dockerfile.parts:
         raise ValueError("backend.dockerfile must be a safe repository-relative path")
@@ -161,6 +171,14 @@ def prepare_runtime(config, root=ROOT):
     if inventory_directory.is_symlink() or not inventory_file.is_file():
         raise RuntimeError("Oxidized runtime inventory is not prepared")
 
+    prophylaxis_directory = root / ".runtime/prophylaxis"
+    if prophylaxis_directory.is_symlink():
+        raise RuntimeError("Profylaxia runtime cannot be a symlink")
+    if runtime_base.resolve() not in prophylaxis_directory.resolve().parents:
+        raise RuntimeError("Profylaxia runtime escaped the protected runtime directory")
+    prophylaxis_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(prophylaxis_directory, 0o700)
+
     runtime_user = os.geteuid()
     runtime_group = os.getegid()
     if runtime_user == 0:
@@ -178,6 +196,7 @@ def prepare_runtime(config, root=ROOT):
     volumes = [
         f"{identity_file}:/run/secrets/atlas-backend.json:ro",
         f"{inventory_directory}:/run/atlas/oxidized:rw",
+        f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
     ]
     if backend["ssh_strict_host_keys"]:
         volumes.append(
@@ -210,6 +229,10 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+                        "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
+                        "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
+                            backend["prophylaxis_result_retention"]
+                        ),
                         "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
                         "ATLAS_SSH_STRICT_HOST_KEYS": str(
                             backend["ssh_strict_host_keys"]

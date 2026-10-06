@@ -118,6 +118,16 @@ class NetBoxService:
             },
         )
 
+    def get_prophylaxis_devices(self) -> List[dict]:
+        """Return active devices explicitly enabled for Profylaxia."""
+        return self.get_all(
+            "/api/dcim/devices/",
+            params={
+                "cf_profylaxia_enabled": "true",
+                "status": "active",
+            },
+        )
+
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> dict:
         token = self.openbao.get_netbox_api_token()
         return self._request_json(self._endpoint_url(endpoint), token, params=params)

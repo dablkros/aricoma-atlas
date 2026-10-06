@@ -1,7 +1,8 @@
 # Profylaxia runtime: CPU collection
 
-Táto vrstva implementuje prvý read-only Profylaxia collection flow. Nevykonáva
-threshold evaluation, plánovanie, ukladanie histórie ani remediation.
+Táto vrstva implementuje prvý read-only Profylaxia collection flow a manuálnu
+Operations UI operáciu. Nevykonáva threshold evaluation, plánovanie ani
+remediation. Normalizované výsledky manuálnych behov ukladá lokálne na Atlas VM.
 
 ```text
 NetBox device (ID alebo presné name)
@@ -22,6 +23,9 @@ DriverRegistry
         |
         v
 CPUCheckResult
+        |
+        v
+SQLiteResultStore -> /opt/aricoma-atlas/.runtime/prophylaxis/results.sqlite3
 ```
 
 ## Reusable Python API
@@ -29,11 +33,16 @@ CPUCheckResult
 `build_dependency_services(settings).prophylaxis.collect_cpu(identifier)` prijíma
 číselné NetBox device ID alebo presné meno zariadenia. Pri názve s viacerými
 zhodami vráti `device_ambiguous`; resolver nehádá platformu ani vendor z názvu.
+Táto nízkoúrovňová metóda výsledok neukladá. UI/API používa
+`run_cpu_check(identifier)`, ktorá po collection zapíše normalizovaný výsledok
+do lokálnej histórie.
 
-Úspešný anonymizovaný výsledok:
+Úspešný anonymizovaný výsledok API po uložení:
 
 ```json
 {
+  "id": 42,
+  "collected_at": "2026-10-06T12:00:00Z",
   "device": "SW-CORE-01",
   "platform": "cisco-ios-xe",
   "check": "CPU utilization",
@@ -50,6 +59,33 @@ zhodami vráti `device_ambiguous`; resolver nehádá platformu ani vendor z náz
 `check` používa existujúcu hodnotu NetBox choice setu `CPU utilization`; nevytvára
 paralelnú hodnotu. Výsledok je iba collection. Hodnotenie warning/critical patrí
 do budúcej vyššej vrstvy.
+
+## Operations UI a lokálna história
+
+Frontend načíta zariadenia cez `GET /api/prophylaxis/devices`. NetBox query
+vyžaduje `status=active` a `profylaxia_enabled=true`; Atlas navyše kontroluje,
+že `profylaxia_checks` obsahuje presnú hodnotu `CPU utilization`, zariadenie má
+platný management IP, platformu a credential profil a platforma má registrovaný
+driver. Disabled zariadenie sa v zozname nezobrazí. Pri priamom pokuse o beh sa
+eligibility overí znova ešte pred načítaním credentials alebo SSH pripojením.
+
+Tlačidlo **Run CPU check** volá
+`POST /api/prophylaxis/devices/{id}/checks/cpu`. Uloží úspech aj normalizovanú
+chybu, aby bola história diagnosticky použiteľná. `GET /api/prophylaxis/results`
+vracia najnovšie záznamy v opačnom chronologickom poradí.
+
+Produkčný host adresár je:
+
+```text
+/opt/aricoma-atlas/.runtime/prophylaxis/
+└── results.sqlite3
+```
+
+Backend kontajner ho vidí na `/run/atlas/prophylaxis/`. Host adresár má režim
+`0700`, databáza `0600`; backend root filesystem zostáva read-only. Predvolený
+limit je 10 000 výsledkov a nastavuje sa cez
+`ATLAS_PROPHYLAXIS_RESULT_RETENTION`. Najstaršie záznamy sa po prekročení limitu
+odstránia. Databáza neobsahuje credentials ani raw CLI output.
 
 ## Implementované príkazy
 
@@ -101,10 +137,13 @@ lokálne private keys a nastavuje osobitný TCP, authentication a command timeou
 device_not_found
 device_ambiguous
 missing_device_name
+device_inactive
 missing_primary_ip
 missing_platform
 missing_credential_profile
 missing_manufacturer
+prophylaxis_disabled
+check_not_selected
 unsupported_platform
 credential_not_found
 invalid_credential_schema
@@ -116,6 +155,7 @@ connection_failed
 authentication_failed
 command_failed
 parse_failed
+result_store_unavailable
 ```
 
 Výsledok ani structured log neobsahuje username, password, enable password,
