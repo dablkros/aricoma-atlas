@@ -119,8 +119,8 @@ V aktuálnom beta prostredí:
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
 - Oxidized web/API je chránený OpenBao-backed Basic Auth,
-- Oxidized používa `secure: true` a odmieta neznáme SSH host keys,
-- zmena už dôveryhodného SSH host key sa nesmie automaticky prepísať.
+- Oxidized má v tejto beta konfigurácii vedome nastavené `secure: false`; SSH host key sa preto neoveruje,
+- návrat na `secure: true` vyžaduje naplnenie a správu persistentného `known_hosts`.
 
 Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
 
@@ -505,7 +505,7 @@ Milestone 3 pridáva prvú zápisovú orchestration operáciu:
 POST /api/oxidized/sync
 ```
 
-Atlas načíta cez paginovaný NetBox API iba zariadenia s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta príslušné admin credentials z OpenBao. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback credentials.
+Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta príslušné admin credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback credentials.
 
 Spracovanie používa jedno spoločné jadro pre API aj `sudo atlasctl oxidized reconcile`:
 
@@ -1738,9 +1738,11 @@ NetBox je zdroj identity zariadenia, management IP, platformy a príznaku `oxidi
 
 Súbor má mode `0640` a inventárový adresár `0750`; Oxidized proces používa GID hostiteľského inventárového adresára ako svoju primárnu runtime skupinu a mount zostáva read-only. Je to potrebné preto, že upstream image spúšťa aplikáciu cez `gosu oxidized`, ktoré zostaví skupiny procesu nanovo. Hostiteľský parent `/run/atlas` má mode `0710` a vlastní ho `root:atlas`. Adresárový mount zabezpečí, že atómová výmena súboru je po `GET /reload` viditeľná bez world-readable credentials.
 
-## SSH host-key trust
+## SSH host-key verification
 
-Oxidized má zapnuté strict host-key verification (`secure: true`). Dôveryhodné host keys sú uložené v:
+Oxidized má v tejto beta konfigurácii vypnuté host-key verification (`secure: false`). Oxidized 0.37.0 preto nastaví Net::SSH `verify_host_key: :never`. Toto odstraňuje onboarding blokovaný neznámym alebo zmeneným kľúčom, ale zároveň neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
+
+Persistentný súbor je naďalej pripravený na budúci návrat k `secure: true`:
 
 ```text
 /opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts
@@ -1748,7 +1750,7 @@ Oxidized má zapnuté strict host-key verification (`secure: true`). Dôveryhodn
 
 Interaktívne SSH pripojenie používateľa zapisuje do `~/.ssh/known_hosts`; tým sa automaticky nepridá trust pre Oxidized.
 
-Bezpečný acceptance flow:
+Po opätovnom zapnutí `secure: true` použi tento acceptance flow:
 
 1. zobraz kľúče, ktoré zariadenie aktuálne prezentuje:
 
@@ -1786,23 +1788,26 @@ sudo atlasctl status
 sudo atlasctl oxidized logs -f
 ```
 
-`scan` trust nemení. `accept` uloží iba kľúč, ktorý zariadenie pri danom spustení skutočne prezentuje a ktorého fingerprint sa presne zhoduje. Opakované prijatie je no-op. Konflikt rovnakého key typu zlyhá bez zmeny `known_hosts`; rotácia preto vyžaduje samostatné preskúmanie a odstránenie starého kľúča mimo automatického reconcile.
+Pri `secure: false` obsah `known_hosts` pripojenie neobmedzuje. Príkaz `scan` trust nemení a `accept` zostáva pripravený pre budúci návrat na strict verification.
 
-Ak log obsahuje `Net::SSH::HostKeyUnknown`, inventár je načítaný, ale kľúč ešte nie je dôveryhodný. Fingerprint najprv porovnaj; nevypínaj verification.
+## FortiGate a náhodne prešifrované ENC hodnoty
+
+FortiOS môže pri každom výpise konfigurácie vrátiť inú zašifrovanú hodnotu `ENC`, aj keď sa význam konfigurácie nezmenil. Atlas preto nastavuje pre model `fortigate` vstavaný Oxidized režim `output_store_mode: on_significant`. Oxidized konfiguráciu naďalej načíta podľa intervalu alebo manuálneho requestu, ale nevytvorí novú Git verziu, ak model vyhodnotí, že sa zmenili iba nestabilné `ENC` hodnoty. Uložený backup zostáva úplný; nejde o redakciu secretov.
+
+Kompromis tohto režimu: samostatná zmena hesla bez akejkoľvek inej významnej zmeny konfigurácie nevytvorí novú verziu. Nové zašifrované hodnoty sa uložia až s nasledujúcou významnou zmenou. Alternatíva `remove_secret: true` stabilizuje diff redakciou, ale backup už neobsahuje použiteľné secrets.
 
 ## Pridanie a odstránenie zariadenia
 
 Pridanie:
 
-1. v NetBoxe nastav zariadenie, primary management IP, podporovanú platformu, `credential_profile` a `oxidized_enabled=true`,
+1. v NetBoxe nastav zariadenie do stavu `active`, primary management IP, podporovanú platformu, `credential_profile` a `oxidized_enabled=true`,
 2. ulož príslušné credentials do OpenBao,
-3. explicitne prijmi overený SSH host key,
-4. spusti `sudo atlasctl oxidized reconcile`,
-5. over `/nodes.json`, log a prvý commit v Oxidized Git histórii.
+3. spusti `sudo atlasctl oxidized reconcile`,
+4. over `/nodes.json`, log a prvý commit v Oxidized Git histórii.
 
 Odstránenie:
 
-1. nastav `oxidized_enabled=false` alebo odstráň zariadenie z NetBoxu,
+1. nastav `oxidized_enabled=false`, zmeň stav zariadenia z `active` na neaktívny stav alebo zariadenie odstráň z NetBoxu,
 2. spusti `sudo atlasctl oxidized reconcile`,
 3. over, že zariadenie už nie je v `/nodes.json`.
 

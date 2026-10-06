@@ -377,6 +377,13 @@ def canonical_oxidized_config(settings):
                 "secure": False,
             },
         },
+        "models": {
+            "fortigate": {
+                "vars": {
+                    "output_store_mode": "on_significant",
+                },
+            },
+        },
         "output": {
             "default": "git",
             "clean_obsolete_nodes": False,
