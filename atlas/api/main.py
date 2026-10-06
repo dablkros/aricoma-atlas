@@ -18,6 +18,15 @@ from atlas.services.factory import DependencyServices, build_dependency_services
 STATIC_DIRECTORY = Path(__file__).resolve().parents[1] / "static"
 
 
+class NoCacheStaticFiles(StaticFiles):
+    """Prevent a new HTML shell from running stale JavaScript or CSS."""
+
+    async def get_response(self, path, scope):
+        response = await super().get_response(path, scope)
+        response.headers["Cache-Control"] = "no-store"
+        return response
+
+
 def create_app(
     settings: Optional[Settings] = None,
     dependencies: Optional[DependencyServices] = None,
@@ -42,7 +51,7 @@ def create_app(
     application.include_router(prophylaxis.router, prefix=settings.api_prefix)
     application.mount(
         "/static",
-        StaticFiles(directory=STATIC_DIRECTORY),
+        NoCacheStaticFiles(directory=STATIC_DIRECTORY),
         name="static",
     )
 

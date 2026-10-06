@@ -188,6 +188,11 @@ class ApiTests(unittest.TestCase):
         self.assertIn("ARICOMA ATLAS", page.text)
         self.assertEqual(script.status_code, 200)
         self.assertEqual(styles.status_code, 200)
+        self.assertEqual(script.headers["Cache-Control"], "no-store")
+        self.assertEqual(styles.headers["Cache-Control"], "no-store")
+        self.assertIn("/static/app.js?v=20261006-1", page.text)
+        self.assertIn("/static/styles.css?v=20261006-1", page.text)
+        self.assertIn("/api/prophylaxis/devices", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)
 

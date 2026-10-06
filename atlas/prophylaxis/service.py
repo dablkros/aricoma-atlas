@@ -213,14 +213,31 @@ class ProphylaxisService:
         devices = self.netbox.get_prophylaxis_devices()
         result = []
         for device in devices:
+            label = device.get("name") or device.get("id") or "unknown"
             try:
                 validate_cpu_selection(device)
                 target = device_target(device)
                 self.registry.driver_class(target.platform)
                 identifier = device.get("id")
                 if isinstance(identifier, bool) or not isinstance(identifier, int):
+                    logger.warning(
+                        "prophylaxis_device_skipped",
+                        extra={
+                            "event": "prophylaxis_device_skipped",
+                            "device": label,
+                            "reason_code": "missing_device_id",
+                        },
+                    )
                     continue
-            except (DeviceResolutionError, NetworkCollectionError):
+            except (DeviceResolutionError, NetworkCollectionError) as exc:
+                logger.warning(
+                    "prophylaxis_device_skipped",
+                    extra={
+                        "event": "prophylaxis_device_skipped",
+                        "device": label,
+                        "reason_code": exc.code,
+                    },
+                )
                 continue
             result.append(
                 PublicProphylaxisDevice(
