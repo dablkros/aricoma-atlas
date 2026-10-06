@@ -1359,6 +1359,17 @@ catalog/baseline/
 
 ### Profylaxia checks
 
+Prvá reusable runtime collection vrstva pre CPU je popísaná v
+[Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
+explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs` a `fortios`,
+načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
+secret-free normalizovaný výsledok. Threshold evaluation, scheduler a API route
+zatiaľ nie sú súčasťou tejto vrstvy.
+
+Pre lokálny development a test je host-key verification dočasne vypnutá cez
+`ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
+explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
+
 Aktuálne možnosti:
 
 - CPU utilization

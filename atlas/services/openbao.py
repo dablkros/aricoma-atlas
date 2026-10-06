@@ -134,7 +134,7 @@ class OpenBaoService:
         except DeviceValidationError as exc:
             raise DeviceValidationError(
                 "Invalid admin credential schema",
-                code="invalid_credentials",
+                code="invalid_credential_schema",
                 category="error",
             ) from exc
 
