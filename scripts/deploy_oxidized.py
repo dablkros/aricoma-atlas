@@ -374,7 +374,14 @@ def canonical_oxidized_config(settings):
         "input": {
             "default": "ssh",
             "ssh": {
-                "secure": True,
+                "secure": False,
+            },
+        },
+        "models": {
+            "fortigate": {
+                "vars": {
+                    "output_store_mode": "on_significant",
+                },
             },
         },
         "output": {

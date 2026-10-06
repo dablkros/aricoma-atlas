@@ -302,7 +302,7 @@ class NetBoxServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "invalid_response")
 
-    def test_oxidized_selection_uses_filter_and_pagination(self):
+    def test_oxidized_selection_uses_active_enabled_filter_and_pagination(self):
         requester = QueueRequester(
             FakeResponse(
                 data={
@@ -319,7 +319,10 @@ class NetBoxServiceTests(unittest.TestCase):
         self.assertEqual(result, [{"id": 1}, {"id": 2}])
         self.assertEqual(
             requester.calls[0][1]["params"],
-            {"cf_oxidized_enabled": "true"},
+            {
+                "cf_oxidized_enabled": "true",
+                "status": "active",
+            },
         )
 
 

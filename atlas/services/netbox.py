@@ -109,10 +109,13 @@ class NetBoxService:
         self._validate_page(data)
 
     def get_oxidized_devices(self) -> List[dict]:
-        """Return all explicitly enabled devices using NetBox pagination."""
+        """Return active, explicitly enabled devices using NetBox pagination."""
         return self.get_all(
             "/api/dcim/devices/",
-            params={"cf_oxidized_enabled": "true"},
+            params={
+                "cf_oxidized_enabled": "true",
+                "status": "active",
+            },
         )
 
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> dict:
