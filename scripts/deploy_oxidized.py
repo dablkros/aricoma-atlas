@@ -374,7 +374,7 @@ def canonical_oxidized_config(settings):
         "input": {
             "default": "ssh",
             "ssh": {
-                "secure": True,
+                "secure": False,
             },
         },
         "output": {
