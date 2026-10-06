@@ -55,6 +55,8 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_NETBOX_URL": "https://netbox.example.test",
                 "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                 "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+                "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
+                "ATLAS_PROPHYLAXIS_RESULT_RETENTION": "5000",
                 "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
                 "ATLAS_SSH_STRICT_HOST_KEYS": "false",
                 "ATLAS_SSH_CONNECT_TIMEOUT": "4",
@@ -79,6 +81,11 @@ class SettingsTests(unittest.TestCase):
             Path("/run/atlas/oxidized/router.json"),
         )
         self.assertEqual(
+            settings.prophylaxis_results_file,
+            Path("/run/atlas/prophylaxis/results.sqlite3"),
+        )
+        self.assertEqual(settings.prophylaxis_result_retention, 5000)
+        self.assertEqual(
             settings.ssh_known_hosts_file,
             Path("/run/atlas/ssh/known_hosts"),
         )
@@ -100,6 +107,8 @@ class SettingsTests(unittest.TestCase):
             {"openbao_identity_file": ""},
             {"openbao_identity_file": "../backend-identity.json"},
             {"oxidized_inventory_file": "../router.json"},
+            {"prophylaxis_results_file": "../results.sqlite3"},
+            {"prophylaxis_result_retention": 99},
             {"ssh_known_hosts_file": "../known_hosts"},
             {"ssh_connect_timeout": 0},
             {"ssh_auth_timeout": 61},

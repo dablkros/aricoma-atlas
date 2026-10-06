@@ -325,6 +325,23 @@ class NetBoxServiceTests(unittest.TestCase):
             },
         )
 
+    def test_prophylaxis_selection_uses_active_enabled_filter(self):
+        requester = QueueRequester(
+            FakeResponse(data={"next": None, "results": [{"id": 10}]})
+        )
+        service, _openbao = self.service(requester)
+
+        result = service.get_prophylaxis_devices()
+
+        self.assertEqual(result, [{"id": 10}])
+        self.assertEqual(
+            requester.calls[0][1]["params"],
+            {
+                "cf_profylaxia_enabled": "true",
+                "status": "active",
+            },
+        )
+
 
 class OxidizedServiceTests(unittest.TestCase):
     def service(self, requester, sleeper=None):

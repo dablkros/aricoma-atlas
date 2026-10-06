@@ -562,7 +562,10 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - bezpečný zoznam zariadení obsahujúci iba `name`, `ip` a `model`,
 - explicitnú operáciu **Sync inventory**,
 - výsledok posledného syncu v aktuálnej browser session,
-- explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára.
+- explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
+- samostatný zoznam aktívnych zariadení s `profylaxia_enabled=true` a zvolenou
+  kontrolou `CPU utilization`,
+- explicitné tlačidlo **Run CPU check** a posledný lokálne uložený výsledok.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
 
@@ -577,6 +580,17 @@ Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python 
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
 | `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
 | `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
+| `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
+| `POST /api/prophylaxis/devices/{id}/checks/cpu` | Vykoná jednu CPU kontrolu a uloží normalizovaný výsledok lokálne. |
+| `GET /api/prophylaxis/results?limit=50` | Vráti najnovšie lokálne uložené výsledky bez credentials a raw CLI výstupu. |
+
+Profylaxia história je SQLite databáza v kontajneri na
+`/run/atlas/prophylaxis/results.sqlite3`. Deployment pripája persistentný host
+adresár `/opt/aricoma-atlas/.runtime/prophylaxis/`, takže výsledky prežijú
+reštart alebo výmenu backend kontajnera. Databáza má režim `0600`, adresár
+`0700` a predvolený retention limit 10 000 výsledkov. Najstaršie záznamy sa po
+prekročení limitu odstránia. Neukladá sa username, password, OpenBao token ani
+raw príkazový výstup.
 
 `GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
 
@@ -1363,8 +1377,9 @@ Prvá reusable runtime collection vrstva pre CPU je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
 explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs` a `fortios`,
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Threshold evaluation, scheduler a API route
-zatiaľ nie sú súčasťou tejto vrstvy.
+secret-free normalizovaný výsledok. Threshold evaluation a scheduler zatiaľ nie
+sú súčasťou tejto vrstvy. Manuálnu CPU kontrolu, lokálnu históriu a frontend
+tlačidlo poskytuje Atlas Operations UI.
 
 Pre lokálny development a test je host-key verification dočasne vypnutá cez
 `ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje

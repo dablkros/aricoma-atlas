@@ -28,6 +28,14 @@ class Settings(BaseSettings):
     netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
     oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
     oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
+    prophylaxis_results_file: Path = Path(
+        "/run/atlas/prophylaxis/results.sqlite3"
+    )
+    prophylaxis_result_retention: int = Field(
+        default=10_000,
+        ge=100,
+        le=1_000_000,
+    )
     ssh_known_hosts_file: Path = Path("/run/atlas/ssh/known_hosts")
     ssh_strict_host_keys: bool = False
     ssh_connect_timeout: float = Field(default=10.0, gt=0, le=60)
@@ -72,6 +80,7 @@ class Settings(BaseSettings):
     @field_validator(
         "openbao_identity_file",
         "oxidized_inventory_file",
+        "prophylaxis_results_file",
         "ssh_known_hosts_file",
     )
     @classmethod

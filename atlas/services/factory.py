@@ -6,6 +6,7 @@ from atlas.config import Settings
 from atlas.network.base import SSHTimeouts
 from atlas.openbao_client import OpenBaoClient
 from atlas.prophylaxis.service import ProphylaxisService
+from atlas.prophylaxis.store import SQLiteResultStore
 from atlas.services.netbox import NetBoxService
 from atlas.services.openbao import OpenBaoService
 from atlas.services.oxidized import OxidizedService
@@ -68,6 +69,10 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
                 settings.ssh_connect_timeout,
                 settings.ssh_auth_timeout,
                 settings.ssh_command_timeout,
+            ),
+            result_store=SQLiteResultStore(
+                settings.prophylaxis_results_file,
+                settings.prophylaxis_result_retention,
             ),
         ),
     )

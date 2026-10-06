@@ -9,7 +9,7 @@ from fastapi.staticfiles import StaticFiles
 
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
-from atlas.api.routes import health, oxidized, readiness, status
+from atlas.api.routes import health, oxidized, prophylaxis, readiness, status
 from atlas.config import Settings, get_settings
 from atlas.logging import configure_logging
 from atlas.services.factory import DependencyServices, build_dependency_services
@@ -39,6 +39,7 @@ def create_app(
     application.include_router(readiness.router, prefix=settings.api_prefix)
     application.include_router(status.router, prefix=settings.api_prefix)
     application.include_router(oxidized.router, prefix=settings.api_prefix)
+    application.include_router(prophylaxis.router, prefix=settings.api_prefix)
     application.mount(
         "/static",
         StaticFiles(directory=STATIC_DIRECTORY),

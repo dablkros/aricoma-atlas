@@ -310,6 +310,30 @@ h2 {
   font-size: 0.78rem;
 }
 
+.panel-description {
+  margin: -0.35rem 0 1.1rem;
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.5;
+}
+
+.prophylaxis-panel {
+  margin-top: 1rem;
+}
+
+.check-result {
+  color: var(--healthy);
+  font-weight: 750;
+}
+
+.check-result.check-error {
+  color: var(--danger);
+}
+
+.button-check {
+  min-width: 116px;
+}
+
 .component-grid {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));

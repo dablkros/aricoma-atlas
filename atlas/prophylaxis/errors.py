@@ -36,13 +36,28 @@ class MissingDeviceNameError(DeviceResolutionError):
     code = "missing_device_name"
 
 
+class ProphylaxisDisabledError(DeviceResolutionError):
+    code = "prophylaxis_disabled"
+
+
+class CheckNotSelectedError(DeviceResolutionError):
+    code = "check_not_selected"
+
+
+class DeviceInactiveError(DeviceResolutionError):
+    code = "device_inactive"
+
+
 __all__ = [
     "DeviceAmbiguousError",
+    "DeviceInactiveError",
     "DeviceNotFoundError",
     "DeviceResolutionError",
+    "CheckNotSelectedError",
     "MissingCredentialProfileError",
     "MissingDeviceNameError",
     "MissingManufacturerError",
     "MissingPlatformError",
     "MissingPrimaryIPError",
+    "ProphylaxisDisabledError",
 ]

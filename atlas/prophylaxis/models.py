@@ -1,5 +1,6 @@
 """Secret-free normalized results for Profylaxia checks."""
 
+from datetime import datetime
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
@@ -35,4 +36,14 @@ class CPUCheckResult(BaseModel):
         return self
 
 
-__all__ = ["CPU_CHECK_NAME", "CPUCheckResult", "CPUUtilizationValues"]
+class StoredCPUCheckResult(CPUCheckResult):
+    id: int = Field(gt=0)
+    collected_at: datetime
+
+
+__all__ = [
+    "CPU_CHECK_NAME",
+    "CPUCheckResult",
+    "CPUUtilizationValues",
+    "StoredCPUCheckResult",
+]
