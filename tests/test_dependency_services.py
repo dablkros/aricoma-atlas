@@ -176,7 +176,7 @@ class OpenBaoServiceTests(unittest.TestCase):
             ),
             (
                 {"username": "fixture-user", "password": ""},
-                "invalid_credentials",
+                "invalid_credential_schema",
             ),
         )
         for value, code in cases:

@@ -77,6 +77,9 @@ def validate_config(raw):
         raise ValueError("backend.log_level is invalid")
     backend["log_level"] = log_level.upper()
 
+    if not isinstance(backend.get("ssh_strict_host_keys"), bool):
+        raise ValueError("backend.ssh_strict_host_keys must be a boolean")
+
     dockerfile = Path(backend["dockerfile"])
     if dockerfile.is_absolute() or ".." in dockerfile.parts:
         raise ValueError("backend.dockerfile must be a safe repository-relative path")
@@ -120,6 +123,7 @@ def runtime_path(config, root=ROOT):
 
 def prepare_runtime(config, root=ROOT):
     root = Path(root).resolve()
+    backend = config["backend"]
     runtime_base = root / ".runtime"
     if runtime_base.is_symlink():
         raise RuntimeError(f"Atlas runtime cannot be a symlink: {runtime_base}")
@@ -141,6 +145,13 @@ def prepare_runtime(config, root=ROOT):
             "Atlas backend AppRole identity is missing or is not a regular file"
         )
 
+    known_hosts_file = root / ".runtime/oxidized/ssh/known_hosts"
+    if (
+        backend["ssh_strict_host_keys"]
+        and (known_hosts_file.is_symlink() or not known_hosts_file.is_file())
+    ):
+        raise RuntimeError("Shared SSH known_hosts is not prepared")
+
     inventory_directory = Path(
         os.environ.get("ATLAS_OXIDIZED_RUN_DIR", "/run/atlas/oxidized")
     )
@@ -157,7 +168,6 @@ def prepare_runtime(config, root=ROOT):
             "Atlas backend deployment must run as the Atlas service user"
         )
 
-    backend = config["backend"]
     network = config["network"]
     healthcheck = (
         "import json,urllib.request; "
@@ -165,6 +175,14 @@ def prepare_runtime(config, root=ROOT):
         "data=json.load(response); "
         "assert response.status == 200 and data.get('status') == 'ok'"
     )
+    volumes = [
+        f"{identity_file}:/run/secrets/atlas-backend.json:ro",
+        f"{inventory_directory}:/run/atlas/oxidized:rw",
+    ]
+    if backend["ssh_strict_host_keys"]:
+        volumes.append(
+            f"{known_hosts_file}:/run/atlas/ssh/known_hosts:ro"
+        )
 
     compose_file = runtime / "docker-compose.yml"
     write_yaml(
@@ -192,12 +210,13 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+                        "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
+                        "ATLAS_SSH_STRICT_HOST_KEYS": str(
+                            backend["ssh_strict_host_keys"]
+                        ).lower(),
                     },
                     "user": f"{runtime_user}:{runtime_group}",
-                    "volumes": [
-                        f"{identity_file}:/run/secrets/atlas-backend.json:ro",
-                        f"{inventory_directory}:/run/atlas/oxidized:rw",
-                    ],
+                    "volumes": volumes,
                     "networks": {
                         "openbao": {},
                         "netbox": {},

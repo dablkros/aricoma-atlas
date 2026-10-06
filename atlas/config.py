@@ -28,6 +28,11 @@ class Settings(BaseSettings):
     netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
     oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
     oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
+    ssh_known_hosts_file: Path = Path("/run/atlas/ssh/known_hosts")
+    ssh_strict_host_keys: bool = False
+    ssh_connect_timeout: float = Field(default=10.0, gt=0, le=60)
+    ssh_auth_timeout: float = Field(default=10.0, gt=0, le=60)
+    ssh_command_timeout: float = Field(default=20.0, gt=0, le=300)
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 
@@ -64,7 +69,11 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("openbao_identity_file", "oxidized_inventory_file")
+    @field_validator(
+        "openbao_identity_file",
+        "oxidized_inventory_file",
+        "ssh_known_hosts_file",
+    )
     @classmethod
     def validate_runtime_file(cls, value: Path) -> Path:
         if not value.name or ".." in value.parts:

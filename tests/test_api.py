@@ -55,6 +55,11 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_NETBOX_URL": "https://netbox.example.test",
                 "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                 "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+                "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
+                "ATLAS_SSH_STRICT_HOST_KEYS": "false",
+                "ATLAS_SSH_CONNECT_TIMEOUT": "4",
+                "ATLAS_SSH_AUTH_TIMEOUT": "5",
+                "ATLAS_SSH_COMMAND_TIMEOUT": "30",
                 "ATLAS_HTTP_CONNECT_TIMEOUT": "2.5",
                 "ATLAS_HTTP_READ_TIMEOUT": "12",
             },
@@ -73,6 +78,14 @@ class SettingsTests(unittest.TestCase):
             settings.oxidized_inventory_file,
             Path("/run/atlas/oxidized/router.json"),
         )
+        self.assertEqual(
+            settings.ssh_known_hosts_file,
+            Path("/run/atlas/ssh/known_hosts"),
+        )
+        self.assertFalse(settings.ssh_strict_host_keys)
+        self.assertEqual(settings.ssh_connect_timeout, 4.0)
+        self.assertEqual(settings.ssh_auth_timeout, 5.0)
+        self.assertEqual(settings.ssh_command_timeout, 30.0)
         self.assertEqual(settings.http_connect_timeout, 2.5)
         self.assertEqual(settings.http_read_timeout, 12.0)
 
@@ -87,6 +100,10 @@ class SettingsTests(unittest.TestCase):
             {"openbao_identity_file": ""},
             {"openbao_identity_file": "../backend-identity.json"},
             {"oxidized_inventory_file": "../router.json"},
+            {"ssh_known_hosts_file": "../known_hosts"},
+            {"ssh_connect_timeout": 0},
+            {"ssh_auth_timeout": 61},
+            {"ssh_command_timeout": 301},
             {"http_connect_timeout": 0},
             {"http_read_timeout": 121},
         )

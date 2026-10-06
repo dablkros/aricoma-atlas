@@ -3,6 +3,8 @@ charset-normalizer==3.5.1
 fastapi==0.142.2
 httpx2==2.13.1
 idna==3.20
+netmiko==4.8.0
+paramiko==5.0.0
 pydantic==2.13.5
 pydantic-settings==2.15.0
 PyYAML==6.0.3

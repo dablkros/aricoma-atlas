@@ -1,0 +1,4 @@
+CPU utilization service is on.
+CPU utilization
+--------------------------------------------------
+five seconds: 5%; one minute: 3%; five minutes: 3%

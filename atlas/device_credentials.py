@@ -49,7 +49,7 @@ def validate_admin_secret(secret):
     ) or ("enable_password" in secret and not isinstance(secret["enable_password"], str)):
         raise DeviceValidationError(
             "Invalid admin credential schema",
-            code="invalid_credentials",
+            code="invalid_credential_schema",
             category="error",
         )
     return {key: secret[key] for key in ("username", "password", "enable_password") if key in secret}

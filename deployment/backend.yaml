@@ -5,6 +5,7 @@ backend:
   dockerfile: "deployment/backend/Dockerfile"
   environment: "production"
   log_level: "INFO"
+  ssh_strict_host_keys: true
 
 runtime:
   directory: ".runtime/backend"

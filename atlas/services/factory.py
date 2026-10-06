@@ -3,7 +3,9 @@
 from dataclasses import dataclass
 
 from atlas.config import Settings
+from atlas.network.base import SSHTimeouts
 from atlas.openbao_client import OpenBaoClient
+from atlas.prophylaxis.service import ProphylaxisService
 from atlas.services.netbox import NetBoxService
 from atlas.services.openbao import OpenBaoService
 from atlas.services.oxidized import OxidizedService
@@ -20,6 +22,7 @@ class DependencyServices:
     oxidized_sync: OxidizedSyncService
     oxidized_operations: OxidizedOperationsService
     platform_status: PlatformStatusService
+    prophylaxis: ProphylaxisService
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -56,6 +59,17 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             inventory_store,
         ),
         platform_status=PlatformStatusService(openbao, netbox, oxidized),
+        prophylaxis=ProphylaxisService(
+            netbox,
+            openbao,
+            known_hosts_file=settings.ssh_known_hosts_file,
+            strict_host_keys=settings.ssh_strict_host_keys,
+            timeouts=SSHTimeouts(
+                settings.ssh_connect_timeout,
+                settings.ssh_auth_timeout,
+                settings.ssh_command_timeout,
+            ),
+        ),
     )
 
 

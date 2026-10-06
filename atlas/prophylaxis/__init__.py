@@ -1,1 +1,1 @@
-"""Prophylaxis check definitions and execution workflows will live here."""
+"""Profylaxia check models and reusable collection orchestration."""

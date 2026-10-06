@@ -23,6 +23,7 @@ def backend_config(**overrides):
             "dockerfile": "deployment/backend/Dockerfile",
             "environment": "production",
             "log_level": "INFO",
+            "ssh_strict_host_keys": True,
         },
         "runtime": {
             "directory": ".runtime/backend",
@@ -68,6 +69,12 @@ class BackendConfigurationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "package version"):
             deploy_backend.validate_config(config)
 
+    def test_non_boolean_host_key_setting_is_rejected(self):
+        config = backend_config(backend={"ssh_strict_host_keys": "false"})
+
+        with self.assertRaisesRegex(ValueError, "must be a boolean"):
+            deploy_backend.validate_config(config)
+
 
 class BackendRuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -79,6 +86,9 @@ class BackendRuntimeTests(unittest.TestCase):
         identity = self.root / ".runtime/openbao-backend.json"
         identity.parent.mkdir(parents=True)
         identity.write_text("{}\n", encoding="utf-8")
+        known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
+        known_hosts.parent.mkdir(parents=True)
+        known_hosts.write_text("fixture host key\n", encoding="utf-8")
         self.inventory_directory = self.root / "run/atlas/oxidized"
         self.inventory_directory.mkdir(parents=True)
         (self.inventory_directory / "router.json").write_text(
@@ -128,6 +138,14 @@ class BackendRuntimeTests(unittest.TestCase):
             service["environment"]["ATLAS_OXIDIZED_INVENTORY_FILE"],
             "/run/atlas/oxidized/router.json",
         )
+        self.assertEqual(
+            service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],
+            "/run/atlas/ssh/known_hosts",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_SSH_STRICT_HOST_KEYS"],
+            "true",
+        )
         self.assertEqual(service["user"], f"{os.geteuid()}:{os.getegid()}")
         self.assertNotEqual(service["user"].split(":", 1)[0], "0")
         self.assertIn(
@@ -137,6 +155,11 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertIn(
             f"{self.inventory_directory}:/run/atlas/oxidized:rw",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{self.root / '.runtime/oxidized/ssh/known_hosts'}:"
+            "/run/atlas/ssh/known_hosts:ro",
             service["volumes"],
         )
         self.assertTrue(
@@ -172,6 +195,9 @@ class BackendRuntimeTests(unittest.TestCase):
 
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
+        (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
+        (self.root / ".runtime/oxidized/ssh").rmdir()
+        (self.root / ".runtime/oxidized").rmdir()
         (self.root / ".runtime").rmdir()
         target = self.root / "outside-runtime"
         target.mkdir()
@@ -179,6 +205,31 @@ class BackendRuntimeTests(unittest.TestCase):
 
         with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
             deploy_backend.prepare_runtime(self.config, self.root)
+
+    def test_development_mode_does_not_require_or_mount_known_hosts(self):
+        known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
+        known_hosts.unlink()
+        config = deploy_backend.validate_config(
+            backend_config(
+                backend={
+                    "environment": "development",
+                    "ssh_strict_host_keys": False,
+                }
+            )
+        )
+
+        compose_file = deploy_backend.prepare_runtime(config, self.root)
+        service = yaml.safe_load(compose_file.read_text(encoding="utf-8"))[
+            "services"
+        ]["backend"]
+
+        self.assertEqual(
+            service["environment"]["ATLAS_SSH_STRICT_HOST_KEYS"],
+            "false",
+        )
+        self.assertFalse(
+            any("known_hosts" in volume for volume in service["volumes"])
+        )
 
     def test_intermediate_runtime_symlink_cannot_escape_repository(self):
         runtime_base = self.root / ".runtime"
