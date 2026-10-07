@@ -171,6 +171,49 @@ class NetBoxClient:
 
         return response.json()
 
+    def patch(self, endpoint, payload):
+        response = self.session.patch(
+            self._url(endpoint),
+            json=payload,
+            timeout=30,
+        )
+
+        if not response.ok:
+            print()
+            print(
+                f"[ERROR] PATCH {endpoint}"
+            )
+
+            print(
+                f"HTTP "
+                f"{response.status_code}"
+            )
+
+            try:
+                print(
+                    yaml.safe_dump(
+                        response.json(),
+                        sort_keys=False,
+                    ).rstrip()
+                )
+
+            except Exception:
+                print(response.text)
+
+            print()
+            print("Payload:")
+
+            print(
+                yaml.safe_dump(
+                    payload,
+                    sort_keys=False,
+                ).rstrip()
+            )
+
+            response.raise_for_status()
+
+        return response.json()
+
     def status(self):
         return self.get(
             "/api/status/"
@@ -443,6 +486,56 @@ def print_drift(
 # Choice Sets
 # ---------------------------------------------------------------------------
 
+PROPHYLAXIS_CHOICE_SET = (
+    "Profylaxia checks"
+)
+
+LEGACY_PROPHYLAXIS_CHOICES = [
+    ["CPU utilization", "CPU utilization"],
+    ["Memory utilization", "Memory utilization"],
+    ["Interface utilization", "Interface utilization"],
+    ["interface errors", "interface errors"],
+    ["Routing table", "Routing table"],
+    [
+        "Routing protocol neighbors",
+        "Routing protocol neighbors",
+    ],
+    ["HA status", "HA status"],
+    ["Temperature", "Temperature"],
+]
+
+STABLE_ID_PROPHYLAXIS_CHOICES = [
+    ["cpu_utilization", "CPU utilization"],
+    ["os_version", "OS version"],
+    ["cpu_temperature", "CPU temperature"],
+    ["uptime", "Uptime"],
+    *LEGACY_PROPHYLAXIS_CHOICES[1:],
+]
+
+
+def is_supported_choice_set_migration(
+    desired,
+    existing,
+    drift,
+):
+    return (
+        desired.get("name")
+        == PROPHYLAXIS_CHOICE_SET
+        and
+        set(drift) == {"extra_choices"}
+        and
+        existing.get("extra_choices")
+        == LEGACY_PROPHYLAXIS_CHOICES
+        and
+        desired.get("extra_choices")
+        == STABLE_ID_PROPHYLAXIS_CHOICES
+        and
+        isinstance(existing.get("id"), int)
+        and
+        not isinstance(existing.get("id"), bool)
+    )
+
+
 def provision_choice_sets(
     client,
     desired_choice_sets,
@@ -466,6 +559,7 @@ def provision_choice_sets(
     created_count = 0
     missing_count = 0
     drift_count = 0
+    migrated_count = 0
 
     print()
     print(
@@ -517,6 +611,44 @@ def provision_choice_sets(
             )
         )
 
+        if (
+            drift
+            and
+            apply_changes
+            and
+            is_supported_choice_set_migration(
+                desired,
+                existing,
+                drift,
+            )
+        ):
+            print(
+                f"[MIGRATE] {name}: "
+                "legacy CPU choice -> stable check IDs"
+            )
+
+            existing = client.patch(
+                f"{endpoint}{existing['id']}/",
+                {
+                    "extra_choices": (
+                        desired["extra_choices"]
+                    ),
+                },
+            )
+
+            existing_by_name[name] = existing
+            drift = compare_declared_fields(
+                desired,
+                existing,
+            )
+
+            if not drift:
+                migrated_count += 1
+                print(
+                    f"[MIGRATED] {name} "
+                    f"(id={existing['id']})"
+                )
+
         if drift:
             drift_count += 1
 
@@ -547,6 +679,7 @@ def provision_choice_sets(
         "existing": existing_count,
         "missing": missing_count,
         "created": created_count,
+        "migrated": migrated_count,
         "drift": drift_count,
     }
 
@@ -819,6 +952,11 @@ def main():
             f"{choice_summary['created']}"
         )
 
+        print(
+            f"  migrated: "
+            f"{choice_summary['migrated']}"
+        )
+
     print(
         f"  drift:    "
         f"{choice_summary['drift']}"
@@ -867,7 +1005,7 @@ def main():
         )
 
         print(
-            "Existing objects were NOT "
+            "Remaining drift was NOT "
             "automatically modified."
         )
 

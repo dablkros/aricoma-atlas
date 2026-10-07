@@ -2083,6 +2083,14 @@ Ak objekt existuje, ale jeho konfigurácia sa líši od Atlas deklarácie, boots
 
 Cieľom je zabrániť nechcenej modifikácii existujúcej zákazníckej konfigurácie.
 
+Jedinou úzkou výnimkou je verzovaná migrácia pôvodného Atlas choice setu
+`Profylaxia checks`: ak sa existujúci objekt presne zhoduje so starou Atlas
+schémou, `--apply` nahradí pôvodnú CPU hodnotu stabilnými check ID a pridá nové
+deklarované voľby. Ak sa líši ktorékoľvek ďalšie pole alebo zoznam obsahuje
+zákaznícku úpravu, objekt zostane chránený a bootstrap naďalej oznámi drift.
+Existujúce hodnoty zariadení sa hromadne neprepisujú; backend počas migrácie
+akceptuje aj pôvodnú hodnotu `CPU utilization`.
+
 ---
 
 # Rebuild Atlas Device Catalog
