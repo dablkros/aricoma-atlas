@@ -569,6 +569,10 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
 
+HTML aj statické JavaScript/CSS assets sa servujú s `Cache-Control: no-store`.
+Asset URL obsahuje release cache-busting identifikátor, aby nový HTML layout po
+deployi nikdy nepoužil starý JavaScript z browser cache.
+
 ### API kontrakty pre Operations UI
 
 | Endpoint | Význam |
@@ -591,6 +595,40 @@ reštart alebo výmenu backend kontajnera. Databáza má režim `0600`, adresár
 `0700` a predvolený retention limit 10 000 výsledkov. Najstaršie záznamy sa po
 prekročení limitu odstránia. Neukladá sa username, password, OpenBao token ani
 raw príkazový výstup.
+
+### Manuálny test Profylaxia flow
+
+Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
+
+```bash
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261006-1' \
+  | grep -i '^cache-control:'
+```
+
+Očakávaná hodnota je `Cache-Control: no-store`. Potom over zariadenia, spusti
+kontrolu podľa vráteného NetBox ID a načítaj uloženú históriu:
+
+```bash
+curl -sS http://127.0.0.1:8081/api/prophylaxis/devices \
+  | python3 -m json.tool
+
+curl -sS -X POST \
+  http://127.0.0.1:8081/api/prophylaxis/devices/DEVICE_ID/checks/cpu \
+  | python3 -m json.tool
+
+curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
+  | python3 -m json.tool
+```
+
+Počas testu možno sledovať bezpečné structured logy:
+
+```bash
+sudo atlasctl backend logs -f
+```
+
+Vyradené zariadenie vytvorí event `prophylaxis_device_skipped` s bezpečným
+`reason_code`. Úspešný alebo neúspešný pokus vytvorí `cpu_collection_completed`
+alebo `cpu_collection_failed`; credentials a raw CLI output sa nelogujú.
 
 `GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
 

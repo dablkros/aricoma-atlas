@@ -68,6 +68,8 @@ vyžaduje `status=active` a `profylaxia_enabled=true`; Atlas navyše kontroluje,
 platný management IP, platformu a credential profil a platforma má registrovaný
 driver. Disabled zariadenie sa v zozname nezobrazí. Pri priamom pokuse o beh sa
 eligibility overí znova ešte pred načítaním credentials alebo SSH pripojením.
+Vyradenie zo zoznamu sa zaznamená ako `prophylaxis_device_skipped` s bezpečným
+`reason_code`, aby sa dalo odlíšiť chýbajúce pole od nepodporovanej platformy.
 
 Tlačidlo **Run CPU check** volá
 `POST /api/prophylaxis/devices/{id}/checks/cpu`. Uloží úspech aj normalizovanú
