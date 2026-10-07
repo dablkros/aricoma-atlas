@@ -3,8 +3,8 @@
 from dataclasses import dataclass
 
 from atlas.config import Settings
-from atlas.network.base import SSHTimeouts
 from atlas.openbao_client import OpenBaoClient
+from atlas.prophylaxis.ansible_backend import AnsibleBackend
 from atlas.prophylaxis.service import ProphylaxisService
 from atlas.prophylaxis.store import SQLiteResultStore
 from atlas.services.netbox import NetBoxService
@@ -63,12 +63,14 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         prophylaxis=ProphylaxisService(
             netbox,
             openbao,
-            known_hosts_file=settings.ssh_known_hosts_file,
-            strict_host_keys=settings.ssh_strict_host_keys,
-            timeouts=SSHTimeouts(
-                settings.ssh_connect_timeout,
-                settings.ssh_auth_timeout,
-                settings.ssh_command_timeout,
+            backend=AnsibleBackend(
+                settings.ansible_project_dir,
+                known_hosts_file=settings.ssh_known_hosts_file,
+                strict_host_keys=settings.ssh_strict_host_keys,
+                connect_timeout=settings.ssh_connect_timeout,
+                command_timeout=settings.ssh_command_timeout,
+                job_timeout=settings.ansible_job_timeout,
+                fortios_validate_certs=settings.fortios_validate_certs,
             ),
             result_store=SQLiteResultStore(
                 settings.prophylaxis_results_file,

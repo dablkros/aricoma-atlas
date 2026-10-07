@@ -36,11 +36,13 @@ class Settings(BaseSettings):
         ge=100,
         le=1_000_000,
     )
+    ansible_project_dir: Path = Path("automation")
+    ansible_job_timeout: int = Field(default=120, ge=1, le=1800)
     ssh_known_hosts_file: Path = Path("/run/atlas/ssh/known_hosts")
     ssh_strict_host_keys: bool = False
-    ssh_connect_timeout: float = Field(default=10.0, gt=0, le=60)
-    ssh_auth_timeout: float = Field(default=10.0, gt=0, le=60)
-    ssh_command_timeout: float = Field(default=20.0, gt=0, le=300)
+    ssh_connect_timeout: int = Field(default=10, ge=1, le=60)
+    ssh_command_timeout: int = Field(default=20, ge=1, le=300)
+    fortios_validate_certs: bool = True
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 
@@ -81,6 +83,7 @@ class Settings(BaseSettings):
         "openbao_identity_file",
         "oxidized_inventory_file",
         "prophylaxis_results_file",
+        "ansible_project_dir",
         "ssh_known_hosts_file",
     )
     @classmethod

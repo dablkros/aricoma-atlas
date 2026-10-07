@@ -1,182 +1,155 @@
-# Profylaxia runtime: CPU collection
+# Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Táto vrstva implementuje prvý read-only Profylaxia collection flow a manuálnu
-Operations UI operáciu. Nevykonáva threshold evaluation, plánovanie ani
-remediation. Normalizované výsledky manuálnych behov ukladá lokálne na Atlas VM.
+Stav dokumentácie: 2026-10-07. Implementácia zachováva Atlas ako orchestrátor;
+Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
+
+## Flow
 
 ```text
-NetBox device (ID alebo presné name)
-        |
-        | name, primary IP, platform.slug,
-        | device_type.manufacturer.slug, credential_profile
-        v
-ProphylaxisService -----> OpenBao atlas/devices/credentials/<vendor>/<profile>/admin
-        |
-        v
-ConnectionContext (secret fields sa nezobrazujú v repr)
-        |
-        v
-DriverRegistry
-  | cisco-ios, cisco-ios-xe -> CiscoIOSDriver
-  | cisco-cbs              -> CiscoSMBDriver
-  | fortios                -> FortiOSDriver
-        |
-        v
-CPUCheckResult
-        |
-        v
-SQLiteResultStore -> /opt/aricoma-atlas/.runtime/prophylaxis/results.sqlite3
+Atlas UI/API
+  -> ProphylaxisService.run_check(device_id, check_id)
+  -> existujúci NetBoxService
+  -> active + profylaxia_enabled + profylaxia_checks
+  -> device/IP/platform/vendor/credential_profile
+  -> existujúci OpenBaoService a admin credential namespace
+  -> AnsiblePlatformRegistry
+  -> AnsibleBackend / ansible-runner
+  -> read-only Ansible collection module
+  -> RawCheckResult
+  -> platform-specific Python parser
+  -> CheckResult
+  -> SQLite store / API / UI
 ```
 
-## Reusable Python API
+Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH polia
+`username`, `password` a voliteľné `enable_password` z:
 
-`build_dependency_services(settings).prophylaxis.collect_cpu(identifier)` prijíma
-číselné NetBox device ID alebo presné meno zariadenia. Pri názve s viacerými
-zhodami vráti `device_ambiguous`; resolver nehádá platformu ani vendor z názvu.
-Táto nízkoúrovňová metóda výsledok neukladá. UI/API používa
-`run_cpu_check(identifier)`, ktorá po collection zapíše normalizovaný výsledok
-do lokálnej histórie.
+```text
+devices/credentials/<manufacturer>/<credential_profile>/admin
+```
 
-Úspešný anonymizovaný výsledok API po uložení:
+FortiGate profylaxia používa z toho istého secretu pole `api_token`. Kombinovaný
+Fortinet secret preto môže obsahovať SSH údaje pre Oxidized aj API token pre
+Ansible. Resolver vráti iba polia požadované konkrétnym consumerom.
+
+## Stabilné check ID
+
+Interný kontrakt používa:
+
+```text
+cpu_utilization
+os_version
+cpu_temperature
+uptime
+```
+
+V tejto iterácii je implementovaný iba `cpu_utilization`. Registry vráti pre
+známu platformu a zatiaľ neimplementovaný check stav `unsupported`; nevydáva ho
+za connection error a nevytvára nulovú hodnotu.
+
+NetBox choice set používa stabilné ID ako value a ľudský text ako label.
+Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
+už uložené zariadenia neprestali fungovať okamžite po upgrade.
+
+## Platform registry
+
+| NetBox platform | Connection | Network OS | Modul pre CPU |
+| --- | --- | --- | --- |
+| `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
+| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
+| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
+| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
+
+Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
+`show cpu utilization`. FortiOS používa monitor selector
+`system_resource_usage` s `resource: cpu` a API tokenom.
+
+Primárne zdroje:
+
+- [Ansible Runner Python interface](https://docs.ansible.com/projects/runner/en/latest/python_interface/)
+- [ansible.netcommon 8.6.2](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/index.html)
+- [ansible.utils 6.1.0](https://docs.ansible.com/projects/ansible/latest/collections/ansible/utils/index.html)
+- [cisco.ios 11.5.1](https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/index.html)
+- [community.ciscosmb 1.0.12](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/index.html)
+- [community.ciscosmb.command](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/command_module.html)
+- [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
+- [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
+
+## Runtime a secrets
+
+Atlas vytvorí pre každý job jediný in-memory inventory host `atlas_target`.
+Používateľ ani API neposiela názov playbooku alebo task súboru. Check aj
+platforma sa prekladajú cez interné allow-listy v Pythone a v role.
+
+Credentials sa Ansible Runneru odovzdávajú iba ako environment konkrétneho
+procesu. `suppress_env_files=True` zabraňuje zápisu env/extravars súborov.
+Runner používa adresár vytvorený cez `TemporaryDirectory`, práva `0700`, a celý
+adresár vrátane eventov/artifactov sa po jobe odstráni. Event handler uchová iba
+kontrakt tasku `ATLAS_RESULT`; eventy neukladá. FortiOS task má `no_log: true`,
+aby token nebol v evente, stdout ani aplikačnom logu.
+
+Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts`
+do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
+SSH/Netmiko transport.
+
+TLS certifikát FortiGate sa štandardne validuje. Produkčný prepínač
+`fortios_validate_certs` sa dá explicitne zmeniť pre kontrolované laboratórium;
+zníženie validácie nie je odporúčaný produkčný stav.
+
+FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
+Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
+monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
+súčasťou podporovaného produkčného nastavenia.
+
+## Výsledok
+
+Transport vracia interný `RawCheckResult`. Python parser ho normalizuje napríklad
+na:
 
 ```json
 {
-  "id": 42,
-  "collected_at": "2026-10-06T12:00:00Z",
-  "device": "SW-CORE-01",
-  "platform": "cisco-ios-xe",
-  "check": "CPU utilization",
+  "schema_version": 1,
+  "device_id": 42,
+  "device": "SW01",
+  "platform": "cisco-ios",
+  "check": "cpu_utilization",
   "status": "ok",
   "values": {
-    "current_percent": 8.0,
-    "one_minute_percent": 6.0,
-    "five_minute_percent": 5.0
+    "current_percent": 12.0,
+    "one_minute_percent": 8.0,
+    "five_minute_percent": 6.0
   },
-  "error": null
+  "error_code": null,
+  "collected_at": "2026-10-07T10:00:00Z"
 }
 ```
 
-`check` používa existujúcu hodnotu NetBox choice setu `CPU utilization`; nevytvára
-paralelnú hodnotu. Výsledok je iba collection. Hodnotenie warning/critical patrí
-do budúcej vyššej vrstvy.
+FortiOS parser číta štruktúrovanú hodnotu `results.cpu[0].current`. Voliteľný
+jednominútový priemer prevezme iba vtedy, ak ho zariadenie skutočne vráti.
+Chýbajúce hodnoty zostanú `null`; nevypĺňajú sa odhadom.
 
-## Operations UI a lokálna história
+SQLite používa všeobecnú tabuľku `check_results`. Pri prvom otvorení migruje
+existujúce CPU riadky z `cpu_check_results` na check ID `cpu_utilization`.
 
-Frontend načíta zariadenia cez `GET /api/prophylaxis/devices`. NetBox query
-vyžaduje `status=active` a `profylaxia_enabled=true`; Atlas navyše kontroluje,
-že `profylaxia_checks` obsahuje presnú hodnotu `CPU utilization`, zariadenie má
-platný management IP, platformu a credential profil a platforma má registrovaný
-driver. Disabled zariadenie sa v zozname nezobrazí. Pri priamom pokuse o beh sa
-eligibility overí znova ešte pred načítaním credentials alebo SSH pripojením.
-NetBox REST API serializuje multiselect ako zoznam objektov `{value, label}`;
-Atlas porovnáva presné `value` a kvôli kompatibilite prijíma aj starší zoznam
-raw string hodnôt.
-Vyradenie zo zoznamu sa zaznamená ako `prophylaxis_device_skipped` s bezpečným
-`reason_code`, aby sa dalo odlíšiť chýbajúce pole od nepodporovanej platformy.
+## Pripnuté dependencies
 
-Tlačidlo **Run CPU check** volá
-`POST /api/prophylaxis/devices/{id}/checks/cpu`. Uloží úspech aj normalizovanú
-chybu, aby bola história diagnosticky použiteľná. `GET /api/prophylaxis/results`
-vracia najnovšie záznamy v opačnom chronologickom poradí.
-
-Produkčný host adresár je:
+Python balíky:
 
 ```text
-/opt/aricoma-atlas/.runtime/prophylaxis/
-└── results.sqlite3
+ansible-core==2.21.5
+ansible-pylibssh==1.4.0
+ansible-runner==2.4.3
 ```
 
-Backend kontajner ho vidí na `/run/atlas/prophylaxis/`. Host adresár má režim
-`0700`, databáza `0600`; backend root filesystem zostáva read-only. Predvolený
-limit je 10 000 výsledkov a nastavuje sa cez
-`ATLAS_PROPHYLAXIS_RESULT_RETENTION`. Najstaršie záznamy sa po prekročení limitu
-odstránia. Databáza neobsahuje credentials ani raw CLI output.
-
-## Implementované príkazy
-
-| NetBox platform | Netmiko adapter | Command | Normalizované hodnoty |
-|---|---|---|---|
-| `cisco-ios`, `cisco-ios-xe` | `cisco_ios` | `show processes cpu` | 5 s total, 1 min, 5 min |
-| `cisco-cbs` | `cisco_s300` | `show cpu utilization` | 5 s, 1 min, 5 min |
-| `fortios` | `fortinet` | `get system performance status` | current busy CPU (`100 - idle`) |
-
-Cisco IOS formát a význam prvej hodnoty sú zdokumentované v [Cisco show
-processes CPU dokumentácii](https://www.cisco.com/c/en/us/support/docs/ios-nx-os-software/ios-software-releases-120-mainline/15102-showproc-cpu.html).
-Cisco CBS syntax a výstup sú v [Cisco Business 250 CLI reference](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-250-cli/system-management-commands.html).
-FortiOS príkaz a `CPU states` výstup sú v [FortiGate 7.0.6 Administration
-Guide](https://docs.fortinet.com/document/fortigate/7.0.6/administration-guide/152469/troubleshooting-cpu-and-network-resources).
-
-CBS používa samostatný Atlas driver a samostatný parser. Netmiko 4.8.0 nemá
-adapter pomenovaný CBS; `cisco_s300` je zvolený ako najmenší Cisco Small
-Business transport adapter. Kompatibilita promptu a paging správania musí byť
-potvrdená manuálnym testom na cieľovom CBS250/CBS350 pred produkčným použitím.
-
-Transport používa priamo `netmiko==4.8.0` a jeho SSH exception typy z
-`paramiko==5.0.0`; obe priame dependencies sú pripnuté v `requirements.txt`.
-
-## SSH host keys a timeouty
-
-Konfigurácia je centrálna:
+Collections v `automation/collections/requirements.yml`:
 
 ```text
-ATLAS_SSH_STRICT_HOST_KEYS
-ATLAS_SSH_KNOWN_HOSTS_FILE
-ATLAS_SSH_CONNECT_TIMEOUT
-ATLAS_SSH_AUTH_TIMEOUT
-ATLAS_SSH_COMMAND_TIMEOUT
+ansible.netcommon 8.6.2
+ansible.utils 6.1.0
+cisco.ios 11.5.1
+community.ciscosmb 1.0.12
+fortinet.fortios 2.6.0
 ```
 
-`development` a `test` používajú default `ATLAS_SSH_STRICT_HOST_KEYS=false`,
-preto nevyžadujú položku `known_hosts`. Toto je vedomé zníženie ochrany proti
-MITM a je určené iba pre aktuálny lab/development režim.
-
-Produkčný `deployment/backend.yaml` nastavuje strict režim explicitne na `true`
-a backend dostane read-only mount existujúceho
-`.runtime/oxidized/ssh/known_hosts`. Neznámy a zmenený host key sa rozlišujú ako
-`host_key_unknown` a `host_key_mismatch`. Transport nepoužíva SSH agent ani
-lokálne private keys a nastavuje osobitný TCP, authentication a command timeout.
-
-## Chybové kódy
-
-```text
-device_not_found
-device_ambiguous
-missing_device_name
-device_inactive
-missing_primary_ip
-missing_platform
-missing_credential_profile
-missing_manufacturer
-prophylaxis_disabled
-check_not_selected
-unsupported_platform
-credential_not_found
-invalid_credential_schema
-dependency_unavailable
-host_key_unknown
-host_key_mismatch
-connection_timeout
-connection_failed
-authentication_failed
-command_failed
-parse_failed
-result_store_unavailable
-```
-
-Výsledok ani structured log neobsahuje username, password, enable password,
-OpenBao token alebo AppRole SecretID. Raw CLI output sa automaticky neukladá ani
-neloguje.
-
-## Referenčná diplomová práca
-
-Analyzované boli `backend/drivers/base.py`, `capabilities.py`, `factory.py`,
-`cisco_iosxe.py`, `backend/services/device_service.py`,
-`backend/clients/netbox_client.py`, `backend/core/platforms.py` a
-`requirements.txt` z `dablkros/diplomova_praca` (`main`, commit `33b7545`).
-
-Prevzatý bol koncept malého driver interface, explicitného platform resolvera,
-NetBox device lookupu a použitie Netmiko pre network CLI. CPU commandy, CPU
-parsery, CBS driver ani FortiOS driver sa v analyzovanom kóde nenachádzali, preto
-pochádzajú z vyššie uvedených vendor dokumentácií. Neprevzaté boli globálne SSH
-credentials, široký `if/elif` factory, potláčanie NETCONF výnimiek a
-`hostkey_verify=False`.
+Backend image ich inštaluje do `/usr/share/ansible/collections`; nepoužíva
+nekontrolované `latest`.

@@ -238,7 +238,7 @@ function resultText(result) {
   if (result.status === "ok") {
     return `${Number(result.values.current_percent).toFixed(1)}% CPU`;
   }
-  return titleCase(result.error);
+  return titleCase(result.error_code);
 }
 
 function resultTime(result) {
@@ -283,7 +283,7 @@ function renderProphylaxisDevices() {
 
     const stored = latestResult(device.name);
     const result = document.createElement("td");
-    result.className = stored?.status === "error" ? "check-result check-error" : "check-result";
+    result.className = stored && stored.status !== "ok" ? "check-result check-error" : "check-result";
     result.textContent = resultText(stored);
     const collected = document.createElement("td");
     collected.className = "muted";
@@ -443,7 +443,7 @@ async function runCpuCheck(device) {
     toast(
       result.status === "ok"
         ? `${result.device}: ${Number(result.values.current_percent).toFixed(1)}% CPU.`
-        : `${result.device}: ${titleCase(result.error)}.`,
+        : `${result.device}: ${titleCase(result.error_code)}.`,
       result.status === "ok" ? "success" : "error",
     );
   } catch (error) {

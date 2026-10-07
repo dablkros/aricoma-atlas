@@ -564,7 +564,7 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
 - samostatný zoznam aktívnych zariadení s `profylaxia_enabled=true` a zvolenou
-  kontrolou `CPU utilization`,
+  kontrolou `cpu_utilization` (label `CPU utilization`),
 - explicitné tlačidlo **Run CPU check** a posledný lokálne uložený výsledok.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -601,7 +601,7 @@ raw príkazový výstup.
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261006-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261007-1' \
   | grep -i '^cache-control:'
 ```
 
@@ -1419,9 +1419,10 @@ Prvá reusable runtime collection vrstva pre CPU je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
 explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs` a `fortios`,
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Threshold evaluation a scheduler zatiaľ nie
-sú súčasťou tejto vrstvy. Manuálnu CPU kontrolu, lokálnu históriu a frontend
-tlačidlo poskytuje Atlas Operations UI.
+secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
+Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
+Threshold evaluation a scheduler zatiaľ nie sú súčasťou tejto vrstvy. Manuálnu
+CPU kontrolu, lokálnu históriu a frontend tlačidlo poskytuje Atlas Operations UI.
 
 Pre lokálny development a test je host-key verification dočasne vypnutá cez
 `ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
@@ -1429,18 +1430,20 @@ explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
 
 Aktuálne možnosti:
 
-- CPU utilization
+- `cpu_utilization` — CPU utilization
+- `os_version` — OS version
+- `cpu_temperature` — CPU temperature
+- `uptime` — Uptime
 - Memory utilization
 - Interface utilization
 - interface errors
 - Routing table
 - Routing protocol neighbors
 - HA status
-- Temperature
+- Temperature (legacy choice; nový interný check používa `cpu_temperature`)
 
-Hodnoty sa zámerne zachovávajú presne v deklarovanej forme.
-
-Bootstrap ich automaticky nenormalizuje ani neprepisuje.
+Nové execution flow používa stabilné interné ID. Počas migrácie backend naďalej
+akceptuje pôvodnú CPU hodnotu `CPU utilization` na už existujúcich zariadeniach.
 
 ## Custom Fields
 

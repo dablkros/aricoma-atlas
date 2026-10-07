@@ -23,6 +23,8 @@ def backend_config(**overrides):
             "dockerfile": "deployment/backend/Dockerfile",
             "environment": "production",
             "log_level": "INFO",
+            "ansible_job_timeout": 120,
+            "fortios_validate_certs": True,
             "ssh_strict_host_keys": True,
             "prophylaxis_result_retention": 10000,
         },
@@ -81,6 +83,17 @@ class BackendConfigurationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "result_retention"):
             deploy_backend.validate_config(config)
+
+    def test_invalid_ansible_and_fortios_settings_are_rejected(self):
+        cases = (
+            ({"ansible_job_timeout": 0}, "ansible_job_timeout"),
+            ({"fortios_validate_certs": "true"}, "fortios_validate_certs"),
+        )
+        for values, message in cases:
+            with self.subTest(values=values), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                deploy_backend.validate_config(backend_config(backend=values))
 
 
 class BackendRuntimeTests(unittest.TestCase):
@@ -152,6 +165,18 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(
             service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
             "10000",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ANSIBLE_PROJECT_DIR"],
+            "/app/automation",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ANSIBLE_JOB_TIMEOUT"],
+            "120",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_FORTIOS_VALIDATE_CERTS"],
+            "true",
         )
         self.assertEqual(
             service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],
@@ -344,6 +369,8 @@ class BackendImageDefinitionTests(unittest.TestCase):
 
         self.assertIn("USER 10001:10001", dockerfile)
         self.assertIn("HEALTHCHECK", dockerfile)
+        self.assertIn("ansible-galaxy collection install", dockerfile)
+        self.assertIn("COPY --chown=atlas:atlas automation", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
 
 

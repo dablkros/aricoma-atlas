@@ -42,8 +42,28 @@ def credential_path(vendor, profile, purpose="admin"):
     return f"devices/credentials/{vendor}/{profile}/{purpose}"
 
 
-def validate_admin_secret(secret):
-    if not isinstance(secret, dict) or any(
+def validate_admin_secret(secret, authentication="ssh"):
+    if not isinstance(secret, dict):
+        raise DeviceValidationError(
+            "Invalid admin credential schema",
+            code="invalid_credential_schema",
+            category="error",
+        )
+    if authentication == "api_token":
+        token = secret.get("api_token")
+        if (
+            not isinstance(token, str)
+            or not token
+            or token != token.strip()
+            or any(character.isspace() for character in token)
+        ):
+            raise DeviceValidationError(
+                "Invalid admin credential schema",
+                code="invalid_credential_schema",
+                category="error",
+            )
+        return {"api_token": token}
+    if authentication != "ssh" or any(
         not isinstance(secret.get(key), str) or not secret[key].strip()
         for key in ("username", "password")
     ) or ("enable_password" in secret and not isinstance(secret["enable_password"], str)):
@@ -52,7 +72,11 @@ def validate_admin_secret(secret):
             code="invalid_credential_schema",
             category="error",
         )
-    return {key: secret[key] for key in ("username", "password", "enable_password") if key in secret}
+    return {
+        key: secret[key]
+        for key in ("username", "password", "enable_password")
+        if key in secret
+    }
 
 
 def validate_snmp_secret(secret):

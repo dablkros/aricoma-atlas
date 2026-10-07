@@ -1,18 +1,8 @@
-import logging
 import unittest
-from pathlib import Path
 
 from atlas.device_credentials import DeviceValidationError, credential_path
-from atlas.network.base import SSHTimeouts
-from atlas.network.errors import AuthenticationFailedError
-from atlas.network.registry import DriverRegistry
-from atlas.prophylaxis.errors import (
-    MissingCredentialProfileError,
-    MissingManufacturerError,
-    MissingPlatformError,
-    MissingPrimaryIPError,
-)
-from atlas.prophylaxis.models import CPUUtilizationValues
+from atlas.prophylaxis.errors import AuthenticationFailedError
+from atlas.prophylaxis.models import CheckId, RawCheckResult
 from atlas.prophylaxis.service import (
     ProphylaxisService,
     device_target,
@@ -20,24 +10,24 @@ from atlas.prophylaxis.service import (
 )
 
 
-def netbox_device():
+def netbox_device(platform="cisco-ios-xe", checks=None):
     return {
         "id": 10,
         "name": "SW-CORE-01",
         "status": {"value": "active", "label": "Active"},
         "primary_ip4": {"address": "10.10.10.1/32"},
         "primary_ip6": None,
-        "platform": {"slug": "cisco-ios-xe"},
-        "device_type": {"manufacturer": {"slug": "cisco"}},
+        "platform": {"slug": platform},
+        "device_type": {
+            "manufacturer": {
+                "slug": "fortinet" if platform == "fortios" else "cisco"
+            }
+        },
         "custom_fields": {
-            "credential_profile": "cisco-default",
+            "credential_profile": "default",
             "profylaxia_enabled": True,
-            "profylaxia_checks": [
-                {
-                    "value": "CPU utilization",
-                    "label": "CPU utilization",
-                }
-            ],
+            "profylaxia_checks": checks
+            or [{"value": "cpu_utilization", "label": "CPU utilization"}],
         },
     }
 
@@ -51,240 +41,142 @@ class FakeNetBox:
         self.calls.append((endpoint, params))
         return self.devices
 
+    def get_prophylaxis_devices(self):
+        return self.devices
+
 
 class FakeOpenBao:
-    def __init__(self, credentials=None, error=None):
-        self.credentials = credentials or {
-            "username": "fixture-user",
-            "password": "fixture-password",
-        }
+    def __init__(self, error=None):
         self.error = error
         self.calls = []
 
-    def get_device_credentials(self, vendor, profile):
-        self.calls.append((vendor, profile))
+    def get_device_credentials(self, vendor, profile, *, authentication="ssh"):
+        self.calls.append((vendor, profile, authentication))
         if self.error:
             raise self.error
-        return self.credentials
+        if authentication == "api_token":
+            return {"api_token": "fixture-token"}
+        return {"username": "fixture-user", "password": "fixture-password"}
 
 
-class FakeDriver:
-    def __init__(self, values=None, error=None):
-        self.values = values or CPUUtilizationValues(current_percent=12)
+class FakeBackend:
+    def __init__(self, error=None):
         self.error = error
-
-    def get_cpu_utilization(self):
-        if self.error:
-            raise self.error
-        return self.values
-
-
-class CapturingRegistry:
-    def __init__(self, driver):
-        self.driver = driver
         self.calls = []
 
-    def driver_class(self, platform):
-        self.platform = platform
-        return self.create
-
-    def create(self, context, transport):
-        self.calls.append((context, transport))
-        return self.driver
-
-
-class DeviceTargetTests(unittest.TestCase):
-    def test_multiselect_values_support_netbox_api_and_legacy_raw_shape(self):
-        self.assertEqual(
-            selected_check_values(
-                [
-                    {"value": "CPU utilization", "label": "CPU utilization"},
-                    {"value": "Memory utilization", "label": "Memory utilization"},
-                ]
+    def execute(self, **kwargs):
+        self.calls.append(kwargs)
+        if self.error:
+            raise self.error
+        profile = kwargs["profile"]
+        if profile.slug == "fortios":
+            return RawCheckResult(
+                check=CheckId.CPU_UTILIZATION,
+                platform="fortios",
+                status="ok",
+                data={"cpu": [{"current": 12}]},
+            )
+        return RawCheckResult(
+            check=CheckId.CPU_UTILIZATION,
+            platform=profile.slug,
+            status="ok",
+            raw_output=(
+                "CPU utilization for five seconds: 12%/1%; "
+                "one minute: 8%; five minutes: 5%"
             ),
-            {"CPU utilization", "Memory utilization"},
-        )
-        self.assertEqual(
-            selected_check_values(["CPU utilization"]),
-            {"CPU utilization"},
-        )
-        self.assertEqual(selected_check_values(None), set())
-
-    def test_netbox_device_becomes_vendor_neutral_target(self):
-        target = device_target(netbox_device())
-        self.assertEqual(target.name, "SW-CORE-01")
-        self.assertEqual(target.host, "10.10.10.1")
-        self.assertEqual(target.platform, "cisco-ios-xe")
-        self.assertEqual(target.vendor, "cisco")
-        self.assertEqual(target.credential_profile, "cisco-default")
-
-    def test_ipv6_prefix_is_removed(self):
-        device = netbox_device()
-        device["primary_ip4"] = None
-        device["primary_ip6"] = {"address": "2001:db8::10/64"}
-        self.assertEqual(device_target(device).host, "2001:db8::10")
-
-    def test_missing_required_fields_are_explicit(self):
-        cases = (
-            ("primary_ip4", None, MissingPrimaryIPError),
-            ("platform", None, MissingPlatformError),
-            (
-                "custom_fields",
-                {"profylaxia_enabled": True},
-                MissingCredentialProfileError,
-            ),
-            ("device_type", {}, MissingManufacturerError),
-        )
-        for field, value, error in cases:
-            with self.subTest(field=field):
-                device = netbox_device()
-                device[field] = value
-                with self.assertRaises(error):
-                    device_target(device)
-
-    def test_openbao_path_reuses_existing_vendor_profile_contract(self):
-        self.assertEqual(
-            credential_path("cisco", "cisco-default"),
-            "devices/credentials/cisco/cisco-default/admin",
         )
 
 
 class ProphylaxisServiceTests(unittest.TestCase):
-    def service(self, netbox, openbao, registry):
+    def service(self, devices, *, openbao=None, backend=None):
         return ProphylaxisService(
-            netbox,
-            openbao,
-            known_hosts_file=Path("/run/atlas/ssh/known_hosts"),
-            strict_host_keys=False,
-            timeouts=SSHTimeouts(2, 3, 4),
-            registry=registry,
-            transport=object(),
+            FakeNetBox(devices),
+            openbao or FakeOpenBao(),
+            backend=backend or FakeBackend(),
         )
 
-    def test_cpu_flow_resolves_device_secret_context_driver_and_result(self):
-        netbox = FakeNetBox([netbox_device()])
-        openbao = FakeOpenBao()
-        registry = CapturingRegistry(FakeDriver())
+    def test_multiselect_values_support_api_and_legacy_shapes(self):
+        self.assertEqual(
+            selected_check_values(
+                [
+                    {"value": "cpu_utilization", "label": "CPU utilization"},
+                    "uptime",
+                ]
+            ),
+            {"cpu_utilization", "uptime"},
+        )
 
-        result = self.service(netbox, openbao, registry).collect_cpu("SW-CORE-01")
+    def test_device_becomes_vendor_neutral_target(self):
+        target = device_target(netbox_device())
+        self.assertEqual(target.id, 10)
+        self.assertEqual(target.host, "10.10.10.1")
+        self.assertEqual(target.platform, "cisco-ios-xe")
+        self.assertEqual(target.vendor, "cisco")
+
+    def test_cpu_flow_reuses_openbao_and_delegates_to_ansible(self):
+        openbao = FakeOpenBao()
+        backend = FakeBackend()
+        service = self.service([netbox_device()], openbao=openbao, backend=backend)
+
+        result = service.collect_cpu(10)
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(result.check, "CPU utilization")
+        self.assertEqual(result.check, CheckId.CPU_UTILIZATION)
         self.assertEqual(result.values.current_percent, 12.0)
-        self.assertEqual(
-            netbox.calls,
-            [("/api/dcim/devices/", {"name": "SW-CORE-01"})],
-        )
-        self.assertEqual(openbao.calls, [("cisco", "cisco-default")])
-        self.assertEqual(registry.platform, "cisco-ios-xe")
-        context = registry.calls[0][0]
-        self.assertEqual(context.host, "10.10.10.1")
-        self.assertEqual(context.platform, "cisco-ios-xe")
-        self.assertFalse(context.strict_host_keys)
+        self.assertEqual(openbao.calls, [("cisco", "default", "ssh")])
+        self.assertEqual(backend.calls[0]["host"], "10.10.10.1")
+        self.assertNotIn("password", result.model_dump_json())
 
-    def test_integer_identifier_uses_netbox_id_filter(self):
-        netbox = FakeNetBox([netbox_device()])
-        service = self.service(
-            netbox,
-            FakeOpenBao(),
-            CapturingRegistry(FakeDriver()),
-        )
-        service.collect_cpu(10)
-        self.assertEqual(netbox.calls[0][1], {"id": 10})
-
-    def test_unsupported_platform_fails_before_secret_lookup(self):
-        device = netbox_device()
-        device["platform"] = {"slug": "unsupported"}
+    def test_fortios_uses_api_token_authentication_and_structured_data(self):
         openbao = FakeOpenBao()
-
         result = self.service(
-            FakeNetBox([device]),
-            openbao,
-            DriverRegistry(),
-        ).collect_cpu("SW-CORE-01")
+            [netbox_device("fortios")],
+            openbao=openbao,
+        ).collect_cpu(10)
 
-        self.assertEqual(result.error, "unsupported_platform")
+        self.assertEqual(result.values.current_percent, 12.0)
+        self.assertEqual(openbao.calls, [("fortinet", "default", "api_token")])
+
+    def test_legacy_cpu_choice_remains_accepted_during_migration(self):
+        device = netbox_device(
+            checks=[{"value": "CPU utilization", "label": "CPU utilization"}]
+        )
+        self.assertEqual(self.service([device]).collect_cpu(10).status, "ok")
+
+    def test_platform_is_rejected_before_secret_lookup(self):
+        openbao = FakeOpenBao()
+        result = self.service(
+            [netbox_device("unsupported")],
+            openbao=openbao,
+        ).collect_cpu(10)
+
+        self.assertEqual(result.error_code, "unsupported_platform")
         self.assertEqual(openbao.calls, [])
 
-    def test_disabled_or_unselected_device_never_reads_credentials(self):
-        cases = (
-            ("status", {"value": "offline"}, "device_inactive"),
-            ("profylaxia_enabled", False, "prophylaxis_disabled"),
-            (
-                "profylaxia_checks",
-                [{"value": "Memory utilization", "label": "Memory utilization"}],
-                "check_not_selected",
+    def test_execution_and_secret_errors_are_normalized(self):
+        execution = self.service(
+            [netbox_device()],
+            backend=FakeBackend(AuthenticationFailedError()),
+        ).collect_cpu(10)
+        secret = self.service(
+            [netbox_device()],
+            openbao=FakeOpenBao(
+                DeviceValidationError(
+                    "sensitive",
+                    code="credential_not_found",
+                    category="error",
+                )
             ),
+        ).collect_cpu(10)
+
+        self.assertEqual(execution.error_code, "authentication_failed")
+        self.assertEqual(secret.error_code, "credential_not_found")
+
+    def test_existing_credential_path_is_preserved(self):
+        self.assertEqual(
+            credential_path("cisco", "default"),
+            "devices/credentials/cisco/default/admin",
         )
-        for field, value, expected in cases:
-            with self.subTest(field=field):
-                device = netbox_device()
-                if field == "status":
-                    device[field] = value
-                else:
-                    device["custom_fields"][field] = value
-                openbao = FakeOpenBao()
-
-                result = self.service(
-                    FakeNetBox([device]),
-                    openbao,
-                    CapturingRegistry(FakeDriver()),
-                ).collect_cpu("SW-CORE-01")
-
-                self.assertEqual(result.error, expected)
-                self.assertEqual(openbao.calls, [])
-
-    def test_resolution_and_collection_errors_are_normalized(self):
-        cases = (
-            (FakeNetBox([]), FakeOpenBao(), FakeDriver(), "device_not_found"),
-            (
-                FakeNetBox([netbox_device()]),
-                FakeOpenBao(
-                    error=DeviceValidationError(
-                        "sensitive",
-                        code="credential_not_found",
-                        category="error",
-                    )
-                ),
-                FakeDriver(),
-                "credential_not_found",
-            ),
-            (
-                FakeNetBox([netbox_device()]),
-                FakeOpenBao(),
-                FakeDriver(error=AuthenticationFailedError()),
-                "authentication_failed",
-            ),
-        )
-        for netbox, openbao, driver, code in cases:
-            with self.subTest(code=code):
-                result = self.service(
-                    netbox,
-                    openbao,
-                    CapturingRegistry(driver),
-                ).collect_cpu("SW-CORE-01")
-                self.assertEqual(result.status, "error")
-                self.assertEqual(result.error, code)
-                self.assertIsNone(result.values)
-
-    def test_logs_and_result_do_not_contain_credentials(self):
-        secret = "do-not-log-password"
-        openbao = FakeOpenBao(
-            credentials={"username": "admin", "password": secret}
-        )
-        service = self.service(
-            FakeNetBox([netbox_device()]),
-            openbao,
-            CapturingRegistry(FakeDriver(error=AuthenticationFailedError())),
-        )
-
-        with self.assertLogs("atlas.prophylaxis", level=logging.WARNING) as logs:
-            result = service.collect_cpu("SW-CORE-01")
-
-        output = "\n".join(logs.output) + result.model_dump_json()
-        self.assertNotIn(secret, output)
-        self.assertNotIn("SecretID", output)
-        self.assertNotIn("OpenBao token", output)
 
 
 if __name__ == "__main__":

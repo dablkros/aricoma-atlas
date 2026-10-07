@@ -1,2 +1,0 @@
-CPU states: 28% user 0% system 0% nice 71% idle 0% iowait 0% irq 1% softirq
-CPU0 states: 28% user 0% system 0% nice 71% idle 0% iowait 0% irq 1% softirq

@@ -80,6 +80,19 @@ def validate_config(raw):
     if not isinstance(backend.get("ssh_strict_host_keys"), bool):
         raise ValueError("backend.ssh_strict_host_keys must be a boolean")
 
+    if not isinstance(backend.get("fortios_validate_certs"), bool):
+        raise ValueError("backend.fortios_validate_certs must be a boolean")
+
+    job_timeout = backend.get("ansible_job_timeout")
+    if (
+        isinstance(job_timeout, bool)
+        or not isinstance(job_timeout, int)
+        or not 1 <= job_timeout <= 1800
+    ):
+        raise ValueError(
+            "backend.ansible_job_timeout must be an integer from 1 to 1800"
+        )
+
     retention = backend.get("prophylaxis_result_retention")
     if (
         isinstance(retention, bool)
@@ -233,9 +246,16 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
                             backend["prophylaxis_result_retention"]
                         ),
+                        "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
+                        "ATLAS_ANSIBLE_JOB_TIMEOUT": str(
+                            backend["ansible_job_timeout"]
+                        ),
                         "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
                         "ATLAS_SSH_STRICT_HOST_KEYS": str(
                             backend["ssh_strict_host_keys"]
+                        ).lower(),
+                        "ATLAS_FORTIOS_VALIDATE_CERTS": str(
+                            backend["fortios_validate_certs"]
                         ).lower(),
                     },
                     "user": f"{runtime_user}:{runtime_group}",

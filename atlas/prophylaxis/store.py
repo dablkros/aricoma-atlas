@@ -1,14 +1,15 @@
 """Persistent, secret-free local result storage for Profylaxia."""
 
-from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import sqlite3
 
 from atlas.prophylaxis.models import (
-    CPUCheckResult,
     CPUUtilizationValues,
-    StoredCPUCheckResult,
+    CheckId,
+    CheckResult,
+    StoredCheckResult,
 )
 
 
@@ -37,113 +38,175 @@ class SQLiteResultStore:
             connection.execute("PRAGMA foreign_keys = ON")
             connection.execute(
                 """
-                CREATE TABLE IF NOT EXISTS cpu_check_results (
+                CREATE TABLE IF NOT EXISTS check_results (
                     id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    schema_version INTEGER NOT NULL,
                     collected_at TEXT NOT NULL,
+                    device_id INTEGER,
                     device TEXT NOT NULL,
                     platform TEXT,
-                    check_name TEXT NOT NULL,
-                    status TEXT NOT NULL CHECK (status IN ('ok', 'error')),
-                    current_percent REAL,
-                    one_minute_percent REAL,
-                    five_minute_percent REAL,
+                    check_id TEXT NOT NULL,
+                    status TEXT NOT NULL
+                        CHECK (status IN ('ok', 'error', 'unsupported')),
+                    values_json TEXT,
                     error_code TEXT
                 )
                 """
             )
+            connection.execute(
+                """
+                CREATE TABLE IF NOT EXISTS result_store_migrations (
+                    name TEXT PRIMARY KEY
+                )
+                """
+            )
+            self._migrate_legacy(connection)
             connection.commit()
             os.chmod(self.path, 0o600)
             return connection
+        except ResultStoreError:
+            raise
         except (OSError, sqlite3.Error) as exc:
             raise ResultStoreError() from exc
 
     @staticmethod
-    def _stored(row: sqlite3.Row) -> StoredCPUCheckResult:
-        values = None
-        if row["status"] == "ok":
-            values = CPUUtilizationValues(
-                current_percent=row["current_percent"],
-                one_minute_percent=row["one_minute_percent"],
-                five_minute_percent=row["five_minute_percent"],
+    def _migrate_legacy(connection: sqlite3.Connection) -> None:
+        migration_name = "cpu_check_results_to_check_results_v1"
+        migrated = connection.execute(
+            "SELECT 1 FROM result_store_migrations WHERE name = ?",
+            (migration_name,),
+        ).fetchone()
+        if migrated is not None:
+            return
+        legacy = connection.execute(
+            "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'cpu_check_results'"
+        ).fetchone()
+        if legacy is None:
+            connection.execute(
+                "INSERT INTO result_store_migrations (name) VALUES (?)",
+                (migration_name,),
             )
-        return StoredCPUCheckResult(
-            id=row["id"],
-            collected_at=datetime.fromisoformat(row["collected_at"]),
-            device=row["device"],
-            platform=row["platform"],
-            check=row["check_name"],
-            status=row["status"],
-            values=values,
-            error=row["error_code"],
+            return
+        existing = connection.execute("SELECT COUNT(*) FROM check_results").fetchone()[0]
+        if existing:
+            connection.execute(
+                "INSERT INTO result_store_migrations (name) VALUES (?)",
+                (migration_name,),
+            )
+            return
+        for row in connection.execute("SELECT * FROM cpu_check_results ORDER BY id"):
+            values = None
+            if row["status"] == "ok":
+                values = {
+                    "current_percent": row["current_percent"],
+                    "one_minute_percent": row["one_minute_percent"],
+                    "five_minute_percent": row["five_minute_percent"],
+                }
+            connection.execute(
+                """
+                INSERT INTO check_results (
+                    id, schema_version, collected_at, device_id, device,
+                    platform, check_id, status, values_json, error_code
+                ) VALUES (?, 1, ?, NULL, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    row["id"],
+                    row["collected_at"],
+                    row["device"],
+                    row["platform"],
+                    CheckId.CPU_UTILIZATION.value,
+                    row["status"],
+                    json.dumps(values) if values is not None else None,
+                    row["error_code"],
+                ),
+            )
+        connection.execute(
+            "INSERT INTO result_store_migrations (name) VALUES (?)",
+            (migration_name,),
         )
 
-    def save(self, result: CPUCheckResult) -> StoredCPUCheckResult:
-        collected_at = datetime.now(timezone.utc)
-        values = result.values
+    @staticmethod
+    def _stored(row: sqlite3.Row) -> StoredCheckResult:
+        values = None
+        if row["values_json"] is not None:
+            decoded = json.loads(row["values_json"])
+            values = CPUUtilizationValues.model_validate(decoded)
+        return StoredCheckResult(
+            id=row["id"],
+            schema_version=row["schema_version"],
+            collected_at=row["collected_at"],
+            device_id=row["device_id"],
+            device=row["device"],
+            platform=row["platform"],
+            check=row["check_id"],
+            status=row["status"],
+            values=values,
+            error_code=row["error_code"],
+        )
+
+    def save(self, result: CheckResult) -> StoredCheckResult:
+        values_json = (
+            json.dumps(result.values.model_dump(mode="json"), sort_keys=True)
+            if result.values is not None
+            else None
+        )
         try:
             with self._connect() as connection:
                 cursor = connection.execute(
                     """
-                    INSERT INTO cpu_check_results (
-                        collected_at, device, platform, check_name, status,
-                        current_percent, one_minute_percent,
-                        five_minute_percent, error_code
+                    INSERT INTO check_results (
+                        schema_version, collected_at, device_id, device,
+                        platform, check_id, status, values_json, error_code
                     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
-                        collected_at.isoformat(),
+                        result.schema_version,
+                        result.collected_at.isoformat(),
+                        result.device_id,
                         result.device,
                         result.platform,
-                        result.check,
+                        result.check.value,
                         result.status,
-                        values.current_percent if values else None,
-                        values.one_minute_percent if values else None,
-                        values.five_minute_percent if values else None,
-                        result.error,
+                        values_json,
+                        result.error_code,
                     ),
                 )
                 row = connection.execute(
-                    "SELECT * FROM cpu_check_results WHERE id = ?",
+                    "SELECT * FROM check_results WHERE id = ?",
                     (cursor.lastrowid,),
                 ).fetchone()
                 connection.execute(
                     """
-                    DELETE FROM cpu_check_results
+                    DELETE FROM check_results
                     WHERE id NOT IN (
-                        SELECT id FROM cpu_check_results
-                        ORDER BY id DESC
-                        LIMIT ?
+                        SELECT id FROM check_results ORDER BY id DESC LIMIT ?
                     )
                     """,
                     (self.max_results,),
                 )
-        except sqlite3.Error as exc:
+        except (OSError, sqlite3.Error) as exc:
             raise ResultStoreError() from exc
         if row is None:
             raise ResultStoreError()
         try:
             return self._stored(row)
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ResultStoreError() from exc
 
-    def list(self, limit: int = 20) -> list[StoredCPUCheckResult]:
+    def list(self, limit: int = 20) -> list[StoredCheckResult]:
         if isinstance(limit, bool) or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100")
         try:
             with self._connect() as connection:
                 rows = connection.execute(
-                    """
-                    SELECT * FROM cpu_check_results
-                    ORDER BY id DESC
-                    LIMIT ?
-                    """,
+                    "SELECT * FROM check_results ORDER BY id DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
-        except sqlite3.Error as exc:
+        except (OSError, sqlite3.Error) as exc:
             raise ResultStoreError() from exc
         try:
             return [self._stored(row) for row in rows]
-        except (TypeError, ValueError) as exc:
+        except (TypeError, ValueError, json.JSONDecodeError) as exc:
             raise ResultStoreError() from exc
 
 

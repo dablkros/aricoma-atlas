@@ -34,14 +34,14 @@ class SQLiteResultStoreTests(unittest.TestCase):
                 device="FW01",
                 platform="fortios",
                 status="error",
-                error="authentication_failed",
+                error_code="authentication_failed",
             )
         )
 
         history = SQLiteResultStore(self.path).list(20)
 
         self.assertEqual([item.id for item in history], [failure.id, success.id])
-        self.assertEqual(history[0].error, "authentication_failed")
+        self.assertEqual(history[0].error_code, "authentication_failed")
         self.assertEqual(history[1].values.current_percent, 8.0)
         self.assertEqual(os.stat(self.path).st_mode & 0o777, 0o600)
 

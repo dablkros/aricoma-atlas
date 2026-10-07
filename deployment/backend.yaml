@@ -5,6 +5,8 @@ backend:
   dockerfile: "deployment/backend/Dockerfile"
   environment: "production"
   log_level: "INFO"
+  ansible_job_timeout: 120
+  fortios_validate_certs: true
   ssh_strict_host_keys: true
   prophylaxis_result_retention: 10000
 

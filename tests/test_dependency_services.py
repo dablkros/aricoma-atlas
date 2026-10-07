@@ -195,6 +195,29 @@ class OpenBaoServiceTests(unittest.TestCase):
                 self.assertEqual(raised.exception.category, "error")
                 self.assertNotIn("sensitive", str(raised.exception))
 
+    def test_fortios_api_token_reuses_admin_credential_namespace(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "username": "oxidized-user",
+            "password": "oxidized-password",
+            "api_token": "prophylaxis-token",
+        }
+        service = self.service(client)
+
+        credentials = service.get_device_credentials(
+            "fortinet",
+            "default",
+            authentication="api_token",
+        )
+
+        self.assertEqual(credentials, {"api_token": "prophylaxis-token"})
+        client.kv_read.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/fortinet/default/admin",
+            mount="atlas",
+        )
+
 
 class NetBoxServiceTests(unittest.TestCase):
     def service(self, requester, token="nbt_key.plaintext"):

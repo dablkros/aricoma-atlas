@@ -48,16 +48,64 @@ class DeviceInactiveError(DeviceResolutionError):
     code = "device_inactive"
 
 
+class ProphylaxisExecutionError(RuntimeError):
+    code = "execution_failed"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
+class UnsupportedPlatformError(ProphylaxisExecutionError):
+    code = "unsupported_platform"
+
+
+class AnsibleExecutionError(ProphylaxisExecutionError):
+    code = "ansible_execution_failed"
+
+
+class HostKeyUnknownError(ProphylaxisExecutionError):
+    code = "host_key_unknown"
+
+
+class HostKeyMismatchError(ProphylaxisExecutionError):
+    code = "host_key_mismatch"
+
+
+class ConnectionTimeoutError(ProphylaxisExecutionError):
+    code = "connection_timeout"
+
+
+class AuthenticationFailedError(ProphylaxisExecutionError):
+    code = "authentication_failed"
+
+
+class ConnectionFailedError(ProphylaxisExecutionError):
+    code = "connection_failed"
+
+
+class ParseFailedError(ProphylaxisExecutionError):
+    code = "parse_failed"
+
+
 __all__ = [
+    "AnsibleExecutionError",
+    "AuthenticationFailedError",
     "DeviceAmbiguousError",
     "DeviceInactiveError",
     "DeviceNotFoundError",
     "DeviceResolutionError",
     "CheckNotSelectedError",
+    "ConnectionFailedError",
+    "ConnectionTimeoutError",
+    "HostKeyMismatchError",
+    "HostKeyUnknownError",
     "MissingCredentialProfileError",
     "MissingDeviceNameError",
     "MissingManufacturerError",
     "MissingPlatformError",
     "MissingPrimaryIPError",
+    "ParseFailedError",
+    "ProphylaxisExecutionError",
     "ProphylaxisDisabledError",
+    "UnsupportedPlatformError",
 ]
