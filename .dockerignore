@@ -4,6 +4,8 @@
 !atlas/**
 !catalog/
 !catalog/**
+!automation/
+!automation/**
 !deployment/
 !deployment/backend/
 !deployment/backend/Dockerfile
