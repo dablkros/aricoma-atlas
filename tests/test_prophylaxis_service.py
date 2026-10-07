@@ -13,7 +13,11 @@ from atlas.prophylaxis.errors import (
     MissingPrimaryIPError,
 )
 from atlas.prophylaxis.models import CPUUtilizationValues
-from atlas.prophylaxis.service import ProphylaxisService, device_target
+from atlas.prophylaxis.service import (
+    ProphylaxisService,
+    device_target,
+    selected_check_values,
+)
 
 
 def netbox_device():
@@ -28,7 +32,12 @@ def netbox_device():
         "custom_fields": {
             "credential_profile": "cisco-default",
             "profylaxia_enabled": True,
-            "profylaxia_checks": ["CPU utilization"],
+            "profylaxia_checks": [
+                {
+                    "value": "CPU utilization",
+                    "label": "CPU utilization",
+                }
+            ],
         },
     }
 
@@ -85,6 +94,22 @@ class CapturingRegistry:
 
 
 class DeviceTargetTests(unittest.TestCase):
+    def test_multiselect_values_support_netbox_api_and_legacy_raw_shape(self):
+        self.assertEqual(
+            selected_check_values(
+                [
+                    {"value": "CPU utilization", "label": "CPU utilization"},
+                    {"value": "Memory utilization", "label": "Memory utilization"},
+                ]
+            ),
+            {"CPU utilization", "Memory utilization"},
+        )
+        self.assertEqual(
+            selected_check_values(["CPU utilization"]),
+            {"CPU utilization"},
+        )
+        self.assertEqual(selected_check_values(None), set())
+
     def test_netbox_device_becomes_vendor_neutral_target(self):
         target = device_target(netbox_device())
         self.assertEqual(target.name, "SW-CORE-01")
@@ -185,7 +210,11 @@ class ProphylaxisServiceTests(unittest.TestCase):
         cases = (
             ("status", {"value": "offline"}, "device_inactive"),
             ("profylaxia_enabled", False, "prophylaxis_disabled"),
-            ("profylaxia_checks", ["Memory utilization"], "check_not_selected"),
+            (
+                "profylaxia_checks",
+                [{"value": "Memory utilization", "label": "Memory utilization"}],
+                "check_not_selected",
+            ),
         )
         for field, value, expected in cases:
             with self.subTest(field=field):

@@ -630,6 +630,10 @@ Vyradené zariadenie vytvorí event `prophylaxis_device_skipped` s bezpečným
 `reason_code`. Úspešný alebo neúspešný pokus vytvorí `cpu_collection_completed`
 alebo `cpu_collection_failed`; credentials a raw CLI output sa nelogujú.
 
+NetBox multiselect custom field sa z REST API číta ako zoznam objektov
+`{value, label}`. Atlas používa presnú hodnotu `value`; prijíma aj raw string
+zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
+
 `GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
 
 ### CLI a API hranice

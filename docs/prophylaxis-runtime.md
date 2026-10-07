@@ -68,6 +68,9 @@ vyžaduje `status=active` a `profylaxia_enabled=true`; Atlas navyše kontroluje,
 platný management IP, platformu a credential profil a platforma má registrovaný
 driver. Disabled zariadenie sa v zozname nezobrazí. Pri priamom pokuse o beh sa
 eligibility overí znova ešte pred načítaním credentials alebo SSH pripojením.
+NetBox REST API serializuje multiselect ako zoznam objektov `{value, label}`;
+Atlas porovnáva presné `value` a kvôli kompatibilite prijíma aj starší zoznam
+raw string hodnôt.
 Vyradenie zo zoznamu sa zaznamená ako `prophylaxis_device_skipped` s bezpečným
 `reason_code`, aby sa dalo odlíšiť chýbajúce pole od nepodporovanej platformy.
 

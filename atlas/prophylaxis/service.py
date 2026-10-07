@@ -52,6 +52,21 @@ class PublicProphylaxisDevice:
     platform: str
 
 
+def selected_check_values(raw_checks: object) -> set[str]:
+    """Return exact stored values from NetBox multiselect serialization."""
+    if not isinstance(raw_checks, list):
+        return set()
+    values = set()
+    for item in raw_checks:
+        if isinstance(item, str):
+            values.add(item)
+        elif isinstance(item, dict):
+            value = item.get("value")
+            if isinstance(value, str):
+                values.add(value)
+    return values
+
+
 def validate_cpu_selection(device: dict) -> None:
     status = device.get("status")
     status_value = status.get("value") if isinstance(status, dict) else status
@@ -61,8 +76,8 @@ def validate_cpu_selection(device: dict) -> None:
     fields = fields if isinstance(fields, dict) else {}
     if fields.get("profylaxia_enabled") is not True:
         raise ProphylaxisDisabledError()
-    checks = fields.get("profylaxia_checks")
-    if not isinstance(checks, list) or CPU_CHECK_NAME not in checks:
+    checks = selected_check_values(fields.get("profylaxia_checks"))
+    if CPU_CHECK_NAME not in checks:
         raise CheckNotSelectedError()
 
 
@@ -284,5 +299,6 @@ __all__ = [
     "ProphylaxisService",
     "PublicProphylaxisDevice",
     "device_target",
+    "selected_check_values",
     "validate_cpu_selection",
 ]
