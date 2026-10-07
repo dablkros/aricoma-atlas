@@ -94,6 +94,22 @@ Required admin shape (placeholders only):
 {"username": "<device-account>", "password": "<device-password>"}
 ```
 
+For a FortiGate used by both Oxidized and Profylaxia, extend the same existing
+secret rather than creating another credential path:
+
+```json
+{
+  "username": "<device-account>",
+  "password": "<device-password>",
+  "api_token": "<read-only-fortigate-api-token>"
+}
+```
+
+Oxidized consumes only the SSH fields. The Ansible-backed FortiOS Profylaxia
+collector consumes only `api_token`. Adding this field is a one-time operator
+upgrade for existing Fortinet profiles; Atlas deployment does not create or
+rotate device API tokens.
+
 Optional `enable_password` is a string and is not required. `admin` is the purpose for Oxidized; `snmp` is separate. The path helper also allows the future `automation` purpose without changing the hierarchy.
 
 SNMPv2c:

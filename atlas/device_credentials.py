@@ -58,8 +58,8 @@ def validate_admin_secret(secret, authentication="ssh"):
             or any(character.isspace() for character in token)
         ):
             raise DeviceValidationError(
-                "Invalid admin credential schema",
-                code="invalid_credential_schema",
+                "API token missing or invalid",
+                code="api_token_missing_or_invalid",
                 category="error",
             )
         return {"api_token": token}

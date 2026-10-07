@@ -32,6 +32,12 @@ FortiGate profylaxia používa z toho istého secretu pole `api_token`. Kombinov
 Fortinet secret preto môže obsahovať SSH údaje pre Oxidized aj API token pre
 Ansible. Resolver vráti iba polia požadované konkrétnym consumerom.
 
+Pri upgrade existujúceho Fortinet profilu pridaj `api_token` do rovnakého
+`admin` secretu cez autentifikované OpenBao UI. Zachovaj existujúce
+`username`/`password`, ak profil používa aj Oxidized. Chýbajúci alebo neplatný
+token sa vracia ako `api_token_missing_or_invalid`; nejde o Ansible connection
+failure.
+
 ## Stabilné check ID
 
 Interný kontrakt používa:

@@ -80,6 +80,10 @@ async function apiRequest(path, options = {}) {
 }
 
 function titleCase(value) {
+  const labels = {
+    api_token_missing_or_invalid: "API token missing or invalid",
+  };
+  if (labels[value]) return labels[value];
   return String(value || "unknown")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());

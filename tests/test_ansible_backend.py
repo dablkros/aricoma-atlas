@@ -79,6 +79,10 @@ class AnsibleBackendTests(unittest.TestCase):
             ["atlas_target"],
         )
         self.assertNotIn("secret", repr(call["inventory"]))
+        self.assertEqual(
+            call["roles_path"],
+            [str(ROOT / "automation" / "roles")],
+        )
         self.assertTrue(call["suppress_env_files"])
         self.assertFalse(Path(call["private_data_dir"]).exists())
 

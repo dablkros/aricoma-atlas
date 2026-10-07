@@ -139,8 +139,8 @@ class OpenBaoService:
             return validate_admin_secret(secret, authentication=authentication)
         except DeviceValidationError as exc:
             raise DeviceValidationError(
-                "Invalid admin credential schema",
-                code="invalid_credential_schema",
+                str(exc),
+                code=exc.code,
                 category="error",
             ) from exc
 

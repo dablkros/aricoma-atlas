@@ -218,6 +218,26 @@ class OpenBaoServiceTests(unittest.TestCase):
             mount="atlas",
         )
 
+    def test_fortios_missing_api_token_has_actionable_error(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "username": "oxidized-user",
+            "password": "oxidized-password",
+        }
+
+        with self.assertRaises(DeviceValidationError) as raised:
+            self.service(client).get_device_credentials(
+                "fortinet",
+                "default",
+                authentication="api_token",
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "api_token_missing_or_invalid",
+        )
+
 
 class NetBoxServiceTests(unittest.TestCase):
     def service(self, requester, token="nbt_key.plaintext"):

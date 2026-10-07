@@ -186,6 +186,7 @@ class AnsibleBackend:
                     private_data_dir=str(private_dir),
                     project_dir=str(self.project_dir),
                     playbook="playbooks/run_check.yml",
+                    roles_path=[str(self.project_dir / "roles")],
                     inventory=self._inventory(host, profile),
                     extravars={
                         "atlas_check": check_id.value,
