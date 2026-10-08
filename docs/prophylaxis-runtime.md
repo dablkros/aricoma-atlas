@@ -91,8 +91,10 @@ Credentials sa Ansible Runneru odovzdávajú iba ako environment konkrétneho
 procesu. `suppress_env_files=True` zabraňuje zápisu env/extravars súborov.
 Runner používa adresár vytvorený cez `TemporaryDirectory`, práva `0700`, a celý
 adresár vrátane eventov/artifactov sa po jobe odstráni. Event handler uchová iba
-kontrakt tasku `ATLAS_RESULT`; eventy neukladá. FortiOS task má `no_log: true`,
-aby token nebol v evente, stdout ani aplikačnom logu.
+kontrakt tasku `ATLAS_RESULT` a posledný failure event; eventy neukladá.
+FortiOS modul deklaruje parameter `access_token` ako `no_log`, takže ho Ansible
+maskuje. Atlas navyše pred zápisom diagnostického `ansible_message` nahradí
+všetky hodnoty credentials a bežné token/password formáty za `[REDACTED]`.
 
 Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts`
 do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
@@ -120,8 +122,10 @@ Príkaz akceptuje rovnaké voľby ako `docker compose logs`, napríklad `--tail`
 `--since` a `-f`. Zobrazuje iba eventy `ansible_execution_failed`,
 `ansible_runner_failed`, `prophylaxis_collection_completed` a
 `prophylaxis_collection_failed`. Diagnostika môže obsahovať bezpečný
-`reason_code`, Runner status/return code a názov Ansible eventu a tasku.
-Credentials, text výnimky a raw výstup zariadenia sa do logu nezapisujú.
+`reason_code`, Runner status/return code, názov Ansible eventu a tasku a
+redigovaný modulový `msg`. Pre FortiOS sa pridá aj numerický HTTP status a
+bezpečný API status, ak ich modul vráti. Credentials, traceback, stderr a raw
+výstup zariadenia sa do logu nezapisujú.
 
 ## Výsledok
 

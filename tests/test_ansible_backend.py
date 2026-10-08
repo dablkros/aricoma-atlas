@@ -3,7 +3,11 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from atlas.prophylaxis.ansible_backend import AnsibleBackend, _failure_from_event
+from atlas.prophylaxis.ansible_backend import (
+    AnsibleBackend,
+    _failure_context,
+    _failure_from_event,
+)
 from atlas.prophylaxis.errors import (
     AnsibleContentError,
     AuthenticationFailedError,
@@ -146,6 +150,41 @@ class AnsibleBackendTests(unittest.TestCase):
                     }
                 )
                 self.assertIsInstance(failure, expected)
+
+    def test_failure_context_redacts_secret_and_keeps_safe_http_status(self):
+        context = _failure_context(
+            {
+                "event": "runner_on_failed",
+                "event_data": {
+                    "task": "Collect FortiOS CPU utilization through the monitor API",
+                    "res": {
+                        "msg": "request failed with access_token=secret-token",
+                        "meta": {"http_status": 403, "status": "error"},
+                    },
+                },
+            },
+            secrets=("secret-token",),
+        )
+
+        self.assertEqual(context["ansible_http_status"], 403)
+        self.assertEqual(context["ansible_api_status"], "error")
+        self.assertNotIn("secret-token", repr(context))
+        self.assertIn("[REDACTED]", context["ansible_message"])
+
+    def test_fortios_http_auth_failure_is_classified(self):
+        failure = _failure_from_event(
+            {
+                "event": "runner_on_failed",
+                "event_data": {
+                    "res": {
+                        "msg": "Error in repo",
+                        "meta": {"http_status": 403, "status": "error"},
+                    }
+                },
+            }
+        )
+
+        self.assertIsInstance(failure, AuthenticationFailedError)
 
 
 if __name__ == "__main__":

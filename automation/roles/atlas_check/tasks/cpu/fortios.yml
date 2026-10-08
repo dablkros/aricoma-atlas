@@ -10,7 +10,6 @@
       interval: 1-min
   register: atlas_fortios_cpu
   changed_when: false
-  no_log: true
 
 - name: Prepare FortiOS structured CPU data for Atlas
   ansible.builtin.set_fact:

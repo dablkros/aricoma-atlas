@@ -3,9 +3,10 @@
 import logging
 import os
 from pathlib import Path
+import re
 import shutil
 import tempfile
-from typing import Callable
+from typing import Callable, Iterable
 
 from atlas.prophylaxis.errors import (
     AnsibleContentError,
@@ -31,9 +32,14 @@ def _ansible_run(**kwargs):
     return ansible_runner.run(**kwargs)
 
 
-def _failure_from_event(event: dict | None):
+def _failure_result(event: dict | None) -> dict:
     event_data = event.get("event_data", {}) if isinstance(event, dict) else {}
     result = event_data.get("res", {}) if isinstance(event_data, dict) else {}
+    return result if isinstance(result, dict) else {}
+
+
+def _failure_from_event(event: dict | None):
+    result = _failure_result(event)
     message = " ".join(
         str(result.get(key, "")) for key in ("msg", "exception", "stderr")
     ).lower()
@@ -63,14 +69,19 @@ def _failure_from_event(event: dict | None):
         )
     ):
         return HostKeyUnknownError()
-    if any(
+    meta = result.get("meta", {})
+    meta = meta if isinstance(meta, dict) else {}
+    if meta.get("http_status") in {401, 403} or any(
         phrase in message
         for phrase in (
             "authentication failed",
             "failed to authenticate",
             "access denied",
+            "invalid access token",
+            "invalid credential",
             "permission denied",
             "unauthorized",
+            "wrong credentials",
         )
     ):
         return AuthenticationFailedError()
@@ -103,18 +114,55 @@ def _failure_from_event(event: dict | None):
     return AnsibleExecutionError()
 
 
-def _failure_context(event: dict | None) -> dict[str, str]:
+def _redacted_message(value: object, secrets: Iterable[object]) -> str:
+    if not isinstance(value, str) or not value.strip():
+        return "not_available"
+    message = " ".join(value.split())
+    for secret in secrets:
+        if isinstance(secret, str) and secret:
+            message = message.replace(secret, "[REDACTED]")
+    message = re.sub(
+        r"(?i)(bearer\s+)[^\s,;]+",
+        r"\1[REDACTED]",
+        message,
+    )
+    message = re.sub(
+        r"(?i)((?:access[_-]?token|token|password|passwd|secret|authorization)"
+        r"\s*[=:]\s*)(?:\"[^\"]*\"|'[^']*'|[^\s,;]+)",
+        r"\1[REDACTED]",
+        message,
+    )
+    return message[:512]
+
+
+def _failure_context(
+    event: dict | None,
+    *,
+    secrets: Iterable[object] = (),
+) -> dict[str, object]:
     if not isinstance(event, dict):
         return {
             "ansible_event": "not_captured",
             "ansible_task": "unknown",
+            "ansible_message": "not_available",
         }
     event_data = event.get("event_data", {})
     event_data = event_data if isinstance(event_data, dict) else {}
-    return {
+    result = _failure_result(event)
+    context: dict[str, object] = {
         "ansible_event": str(event.get("event") or "unknown")[:64],
         "ansible_task": str(event_data.get("task") or "unknown")[:160],
+        "ansible_message": _redacted_message(result.get("msg"), secrets),
     }
+    meta = result.get("meta", {})
+    if isinstance(meta, dict):
+        http_status = meta.get("http_status")
+        if isinstance(http_status, int) and not isinstance(http_status, bool):
+            context["ansible_http_status"] = http_status
+        api_status = meta.get("status")
+        if isinstance(api_status, str) and api_status:
+            context["ansible_api_status"] = api_status[:64]
+    return context
 
 
 class AnsibleBackend:
@@ -293,7 +341,10 @@ class AnsibleBackend:
                             getattr(result, "status", "unknown")
                         )[:32],
                         "runner_rc": getattr(result, "rc", None),
-                        **_failure_context(captured_failure),
+                        **_failure_context(
+                            captured_failure,
+                            secrets=credentials.values(),
+                        ),
                     },
                 )
                 raise failure
