@@ -100,6 +100,7 @@ class AnsibleBackendTests(unittest.TestCase):
         )
         self.assertEqual(call["envvars"]["USER"], "atlas")
         self.assertEqual(call["envvars"]["LOGNAME"], "atlas")
+        self.assertNotIn("ANSIBLE_PRIVATE_KEY_FILE", call["envvars"])
         self.assertTrue(call["suppress_env_files"])
         self.assertFalse(Path(call["private_data_dir"]).exists())
 

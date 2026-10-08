@@ -302,7 +302,6 @@ class AnsibleBackend:
                 "ANSIBLE_LOCAL_TEMP": str(local_tmp),
                 "ANSIBLE_HOST_KEY_CHECKING": str(self.strict_host_keys).lower(),
                 "ANSIBLE_HOST_KEY_AUTO_ADD": str(not self.strict_host_keys).lower(),
-                "ANSIBLE_PRIVATE_KEY_FILE": "",
                 "SSH_AUTH_SOCK": "",
                 **self._credential_environment(profile, credentials),
             }

@@ -53,6 +53,7 @@ class BackendConfigurationTests(unittest.TestCase):
             config["backend"]["docker_image"],
             f"aricoma-atlas-backend:{__version__}",
         )
+        self.assertFalse(config["backend"]["fortios_validate_certs"])
 
     def test_public_listen_address_is_rejected(self):
         config = backend_config(network={"listen_address": "0.0.0.0"})

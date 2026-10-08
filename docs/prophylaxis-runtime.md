@@ -127,9 +127,13 @@ Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts
 do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
 SSH/Netmiko transport.
 
-TLS certifikát FortiGate sa štandardne validuje. Produkčný prepínač
-`fortios_validate_certs` sa dá explicitne zmeniť pre kontrolované laboratórium;
-zníženie validácie nie je odporúčaný produkčný stav.
+Nasadzovaný profil má `fortios_validate_certs: false`, takže FortiOS HTTPS
+spojenie je šifrované, ale Atlas neoveruje identitu zariadenia podľa TLS
+certifikátu. Je to vedomý prevádzkový kompromis pre zariadenia s lokálnymi alebo
+factory certifikátmi a zvyšuje riziko MITM útoku. Hodnota sa nastavuje v
+`deployment/backend.yaml`; jej zmena sa aplikuje cez `sudo atlasctl deploy`.
+Interný fallback aplikácie zostáva `true`, aby spustenie bez deployment
+konfigurácie validáciu certifikátov nevypínalo potichu.
 
 FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
