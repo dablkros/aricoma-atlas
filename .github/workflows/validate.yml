@@ -728,24 +728,21 @@ jobs:
       # Cleanup
       # ---------------------------------------------------------------------
 
-      - name: Diagnose Full Atlas Oxidized failure (ephemeral CI environment only)
+      - name: Diagnose Full Atlas service failure (ephemeral CI environment only)
         if: failure()
         run: |
-          if [ -f ".runtime/oxidized/docker-compose.yml" ]; then
-            docker compose \
-              -p atlas-oxidized \
-              -f .runtime/oxidized/docker-compose.yml \
-              logs \
-              --tail=100 \
-              oxidized \
-              || true
-          fi
+          for component in oxidized zabbix; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" ps -a || true
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" logs --tail=100 || true
+            fi
+          done
 
       - name: Clean up Atlas
         if: always()
         shell: bash
         run: |
-          for component in proxy oxidized; do
+          for component in proxy zabbix oxidized; do
             if [ -f ".runtime/${component}/docker-compose.yml" ]; then
               docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
             fi
@@ -1176,6 +1173,16 @@ jobs:
       # Cleanup
       # ---------------------------------------------------------------------
 
+      - name: Diagnose upgrade service failure (ephemeral CI environment only)
+        if: failure()
+        run: |
+          for component in oxidized zabbix; do
+            if [ -f ".runtime/${component}/docker-compose.yml" ]; then
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" ps -a || true
+              docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" logs --tail=100 || true
+            fi
+          done
+
       - name: Clean up upgrade environment
         if: always()
         shell: bash
@@ -1184,7 +1191,7 @@ jobs:
             "${RUNNER_TEMP}/capture-atlas-unseal.py" \
             "${RUNNER_TEMP}/atlas-upgrade-unseal-keys.json"
 
-          for component in proxy oxidized; do
+          for component in proxy zabbix oxidized; do
             if [ -f ".runtime/${component}/docker-compose.yml" ]; then
               docker compose -p "atlas-${component}" -f ".runtime/${component}/docker-compose.yml" down -v --remove-orphans || true
             fi

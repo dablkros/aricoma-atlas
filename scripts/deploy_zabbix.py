@@ -7,6 +7,7 @@ import ipaddress
 import os
 import re
 import secrets
+import subprocess
 import sys
 import time
 from pathlib import Path
@@ -19,7 +20,6 @@ sys.path.insert(0, str(ROOT))
 
 from atlas.deployment import (  # noqa: E402
     ZABBIX_NETWORK,
-    compose,
     connect_openbao,
     ensure_network,
     optional_secret,
@@ -133,8 +133,21 @@ def prepare_runtime(config, database_secret, root=ROOT):
         raise RuntimeError("Zabbix secret directory cannot be a symbolic link")
     secret_dir.mkdir(mode=0o700, exist_ok=True)
     os.chmod(secret_dir, 0o700)
-    write_private(secret_dir / "postgres-user", database_secret["username"] + "\n")
-    write_private(secret_dir / "postgres-password", database_secret["password"] + "\n")
+    # Compose implements file-backed secrets as bind mounts and cannot remap
+    # their ownership.  The Zabbix images run as UID 1997, so host-only 0600
+    # files are unreadable in those containers.  Keep both parent directories
+    # private (0700) and expose only read-only files through the per-service
+    # Compose secret grants.
+    write_private(
+        secret_dir / "postgres-user",
+        database_secret["username"] + "\n",
+        mode=0o444,
+    )
+    write_private(
+        secret_dir / "postgres-password",
+        database_secret["password"] + "\n",
+        mode=0o444,
+    )
 
     zabbix = config["zabbix"]
     network = config["network"]
@@ -240,6 +253,30 @@ def prepare_runtime(config, database_secret, root=ROOT):
     )
     os.chmod(compose_file, 0o600)
     return compose_file
+
+
+def compose_step(file, project, label, *args):
+    """Run one Zabbix Compose step with bounded, actionable diagnostics."""
+    result = subprocess.run(
+        ["docker", "compose", "-p", project, "-f", str(file), *args],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if result.returncode == 0:
+        return
+
+    # Compose receives only paths to secret files, never their values.  Its
+    # stderr is therefore safe to retain and identifies image, mount, network,
+    # dependency-health, and container-start failures that the shared runner
+    # intentionally suppresses.
+    detail = (result.stderr or result.stdout).strip()
+    if detail:
+        detail = "\n".join(detail.splitlines()[-20:])[-4000:]
+        raise RuntimeError(
+            f"Zabbix {label} failed (exit {result.returncode}):\n{detail}"
+        )
+    raise RuntimeError(f"Zabbix {label} failed (exit {result.returncode})")
 
 
 def api_url(config):
@@ -519,12 +556,18 @@ def main():
         compose_file = prepare_runtime(config, database_secret)
         project = config["runtime"]["compose_project"]
         ensure_network(ZABBIX_NETWORK)
-        compose(compose_file, project, "config", "--quiet")
+        compose_step(
+            compose_file,
+            project,
+            "Compose validation",
+            "config",
+            "--quiet",
+        )
         if args.prepare_only:
             print("[OK] Zabbix runtime and secrets prepared; no containers started")
             return
-        compose(compose_file, project, "pull")
-        compose(compose_file, project, "up", "-d")
+        compose_step(compose_file, project, "image pull", "pull")
+        compose_step(compose_file, project, "container start", "up", "-d")
         for service in ("database", "server", "web"):
             wait_healthy(
                 compose_file,

@@ -417,11 +417,36 @@ class ZabbixDeploymentTests(unittest.TestCase):
                 "atlas-zabbix-database",
             )
             self.assertEqual(os.stat(second).st_mode & 0o777, 0o600)
+            self.assertEqual(os.stat(second.parent).st_mode & 0o777, 0o700)
+            self.assertEqual(
+                os.stat(second.parent / "secrets").st_mode & 0o777,
+                0o700,
+            )
             for name in ("postgres-user", "postgres-password"):
                 self.assertEqual(
                     os.stat(second.parent / "secrets" / name).st_mode & 0o777,
-                    0o600,
+                    0o444,
                 )
+
+    def test_compose_failure_keeps_safe_docker_diagnostic(self):
+        failure = SimpleNamespace(
+            returncode=1,
+            stdout="",
+            stderr="dependency failed to start: container server is unhealthy\n",
+        )
+        with patch.object(deploy_zabbix.subprocess, "run", return_value=failure):
+            with self.assertRaises(RuntimeError) as raised:
+                deploy_zabbix.compose_step(
+                    Path("/runtime/docker-compose.yml"),
+                    "atlas-zabbix",
+                    "container start",
+                    "up",
+                    "-d",
+                )
+
+        message = str(raised.exception)
+        self.assertIn("Zabbix container start failed (exit 1)", message)
+        self.assertIn("container server is unhealthy", message)
 
     def test_cli_returns_failure_for_partial_sync(self):
         response = {
