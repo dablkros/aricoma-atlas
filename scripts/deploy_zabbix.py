@@ -343,12 +343,14 @@ def _admin_client(config, bao, bao_token):
             raise RuntimeError("Zabbix user.login returned invalid data")
         return value
 
-    session = login(password)
+    current_password = password
+    session = login(current_password)
     using_default = stored is None
     if session is None and stored is not None:
         # Recovery for an interrupted first deployment: the desired password
         # was committed to OpenBao before Zabbix accepted the password update.
-        session = login("zabbix")
+        current_password = "zabbix"
+        session = login(current_password)
         using_default = session is not None
     if session is None:
         raise RuntimeError("Zabbix bootstrap administrator authentication failed")
@@ -368,7 +370,21 @@ def _admin_client(config, bao, bao_token):
                 "zabbix/admin",
                 {"username": "Admin", "password": new_password},
             )
-        admin.call("user.update", {"userid": user["userid"], "passwd": new_password})
+        try:
+            admin.call(
+                "user.update",
+                {
+                    "userid": user["userid"],
+                    "passwd": new_password,
+                    # Zabbix requires the current password when a user changes
+                    # its own password through user.update.
+                    "current_passwd": current_password,
+                },
+            )
+        except ZabbixAPIError as exc:
+            raise RuntimeError(
+                f"Zabbix administrator password update failed ({exc.code})"
+            ) from None
         try:
             admin.call("user.logout", [])
         except ZabbixAPIError:

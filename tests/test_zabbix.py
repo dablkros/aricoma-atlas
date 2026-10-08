@@ -511,10 +511,43 @@ class ZabbixDeploymentTests(unittest.TestCase):
         self.assertIn(
             call(
                 "user.update",
-                {"userid": "1", "passwd": desired_password},
+                {
+                    "userid": "1",
+                    "passwd": desired_password,
+                    "current_passwd": "zabbix",
+                },
             ),
             default_admin.call.mock_calls,
         )
+
+    def test_admin_password_update_failure_has_safe_context(self):
+        desired_password = "stored-password-value-that-is-long-enough-123"
+        unauthenticated = Mock()
+        unauthenticated.call.side_effect = [
+            ZabbixAPIError("authentication_failed"),
+            "default-session",
+        ]
+        default_admin = Mock()
+        default_admin.call.side_effect = [
+            [{"userid": "1", "username": "Admin"}],
+            ZabbixAPIError("api_error"),
+        ]
+        config = {"network": {"listen_address": "127.0.0.1", "host_port": 8082}}
+        secret = {"username": "Admin", "password": desired_password}
+
+        with patch.object(deploy_zabbix, "optional_secret", return_value=secret):
+            with patch.object(
+                deploy_zabbix,
+                "ZabbixClient",
+                side_effect=[unauthenticated, default_admin],
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Zabbix administrator password update failed \\(api_error\\)",
+                ) as raised:
+                    deploy_zabbix._admin_client(config, Mock(), "bao-token")
+
+        self.assertNotIn(desired_password, str(raised.exception))
 
 
 class MetricClient:
