@@ -68,11 +68,13 @@ jobs:
           files = [
               Path("catalog/manifest.yaml"),
               Path("catalog/platforms.yaml"),
+              Path("catalog/zabbix.yaml"),
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
               Path("deployment/netbox.yaml"),
               Path("deployment/oxidized.yaml"),
               Path("deployment/backend.yaml"),
+              Path("deployment/zabbix.yaml"),
               Path("deployment/proxy.example.yaml"),
           ]
 
@@ -147,7 +149,6 @@ jobs:
             deployment/openbao/policies/atlas-operator.hcl
             deployment/openbao/policies/device-credentials-read.hcl
             deployment/openbao/policies/netbox-runtime.hcl
-            deployment/openbao/policies/checkmk-runtime.hcl
             deployment/openbao/policies/oxidized-runtime.hcl
           )
 
@@ -440,7 +441,7 @@ jobs:
         run: |
           python3 -m pip install -r requirements.txt
           python3 scripts/ci_ingress.py fixtures --empty-inventory
-          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test zabbix.atlas.test' | sudo tee -a /etc/hosts > /dev/null
       - name: Deploy OpenBao
         shell: bash
         run: |
@@ -529,7 +530,7 @@ jobs:
       - name: Prepare ephemeral CI certificates and DNS
         run: |
           python3 scripts/ci_ingress.py fixtures
-          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test zabbix.atlas.test' | sudo tee -a /etc/hosts > /dev/null
 
       - name: Verify prepare-only does not start application containers
         shell: bash
@@ -538,7 +539,7 @@ jobs:
           umask 077
           python3 scripts/deploy_atlas.py --prepare-only 2>&1 \
             | sed -E 's/^(Unseal Key [0-9]+: ).*/\1[REDACTED]/'
-          for component in netbox oxidized proxy; do
+          for component in netbox oxidized zabbix backend proxy; do
             if docker ps --filter "label=com.docker.compose.project=atlas-${component}" --format '{{.ID}}' | grep -q .; then
               echo "[ERROR] prepare-only started ${component} containers"
               exit 1
@@ -829,7 +830,7 @@ jobs:
       - name: Prepare BASE ingress certificates and DNS
         run: |
           python3 scripts/ci_ingress.py fixtures --empty-inventory
-          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test zabbix.atlas.test' | sudo tee -a /etc/hosts > /dev/null
 
       - name: Deploy BASE Atlas
         shell: bash
@@ -973,7 +974,7 @@ jobs:
       - name: Prepare HEAD ingress certificates and DNS
         run: |
           python3 scripts/ci_ingress.py fixtures
-          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test' | sudo tee -a /etc/hosts > /dev/null
+          printf '%s\n' '127.0.0.1 netbox.atlas.test oxidized.atlas.test zabbix.atlas.test' | sudo tee -a /etc/hosts > /dev/null
 
       - name: Apply HEAD OpenBao runtime and unseal for upgrade
         env:

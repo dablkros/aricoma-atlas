@@ -20,6 +20,7 @@ from atlas.deployment import (  # noqa: E402
     NETBOX_NETWORK,
     OPENBAO_NETWORK,
     OXIDIZED_NETWORK,
+    ZABBIX_NETWORK,
     compose,
     wait_healthy,
     write_yaml,
@@ -241,6 +242,7 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+                        "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
@@ -264,6 +266,7 @@ def prepare_runtime(config, root=ROOT):
                         "openbao": {},
                         "netbox": {},
                         "oxidized": {},
+                        "zabbix": {},
                     },
                     "ports": [
                         f"{network['listen_address']}:{network['host_port']}:{network['container_port']}"
@@ -286,6 +289,7 @@ def prepare_runtime(config, root=ROOT):
                 "openbao": {"external": True, "name": OPENBAO_NETWORK},
                 "netbox": {"external": True, "name": NETBOX_NETWORK},
                 "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
+                "zabbix": {"external": True, "name": ZABBIX_NETWORK},
             },
         },
     )

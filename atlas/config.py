@@ -27,6 +27,7 @@ class Settings(BaseSettings):
     openbao_identity_file: Path = Path(".runtime/openbao-backend.json")
     netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
     oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
+    zabbix_url: AnyHttpUrl = "http://127.0.0.1:8082/api_jsonrpc.php"
     oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
     prophylaxis_results_file: Path = Path(
         "/run/atlas/prophylaxis/results.sqlite3"
@@ -70,7 +71,7 @@ class Settings(BaseSettings):
     def normalize_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
 
-    @field_validator("openbao_url", "netbox_url", "oxidized_url")
+    @field_validator("openbao_url", "netbox_url", "oxidized_url", "zabbix_url")
     @classmethod
     def validate_dependency_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
         if value.username or value.password or value.query or value.fragment:

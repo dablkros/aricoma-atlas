@@ -128,6 +128,16 @@ class NetBoxService:
             },
         )
 
+    def get_monitoring_devices(self) -> List[dict]:
+        """Return active devices selected for the configured monitoring backend."""
+        return self.get_all(
+            "/api/dcim/devices/",
+            params={
+                "cf_monitoring_enabled": "true",
+                "status": "active",
+            },
+        )
+
     def get_device_services(self, device_id: int, name: str) -> List[dict]:
         """Return an exact named application service assigned to one device."""
         return self.get_all(

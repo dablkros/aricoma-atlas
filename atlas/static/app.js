@@ -115,7 +115,7 @@ function setPill(element, status, text = titleCase(status)) {
 }
 
 function renderPlatformStatus(payload) {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const card = document.querySelector(`[data-component="${name}"]`);
     const target = card.querySelector(".component-status");
     const componentStatus = payload.components?.[name]?.status || "unknown";
@@ -128,7 +128,7 @@ function renderPlatformStatus(payload) {
 }
 
 function renderPlatformUnavailable() {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const target = document.querySelector(
       `[data-component="${name}"] .component-status`,
     );

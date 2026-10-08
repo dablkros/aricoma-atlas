@@ -10,6 +10,7 @@ ATLAS_ROOT="/opt/aricoma-atlas"
 PYTHON="${ATLAS_ROOT}/.venv/bin/python3"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
 BACKEND_COMPOSE="${RUNTIME_DIR}/backend/docker-compose.yml"
+ZABBIX_COMPOSE="${RUNTIME_DIR}/zabbix/docker-compose.yml"
 PROXY_COMPOSE="${RUNTIME_DIR}/proxy/docker-compose.yml"
 PROXY_CONFIG="${ATLAS_PROXY_CONFIG:-${RUNTIME_DIR}/proxy.yaml}"
 OXIDIZED_INVENTORY_DIR="${ATLAS_OXIDIZED_RUN_DIR:-/run/atlas/oxidized}"
@@ -27,6 +28,9 @@ Usage:
   sudo atlasctl oxidized host-key scan HOST [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized logs [docker compose logs options]
+  sudo atlasctl zabbix status
+  sudo atlasctl zabbix sync
+  sudo atlasctl zabbix logs [docker compose logs options]
   sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
   sudo atlasctl proxy logs [docker compose logs options]
@@ -38,6 +42,9 @@ Commands:
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
+  zabbix status         Show Zabbix API and managed-host state.
+  zabbix sync           Reconcile NetBox desired state into Zabbix.
+  zabbix logs           Show Zabbix server, web, and database logs.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
   proxy logs            Show Nginx ingress container logs.
@@ -140,6 +147,28 @@ show_status() {
         printf '  health: http://127.0.0.1:8081/api/health\n'
     fi
 
+    printf '\nZabbix:\n'
+    if [[ ! -f "$ZABBIX_COMPOSE" ]]; then
+        printf '  state: NOT_PREPARED\n'
+    else
+        local zabbix_container zabbix_state
+        zabbix_container="$(
+            docker compose -f "$ZABBIX_COMPOSE" -p atlas-zabbix \
+                ps -q server 2>/dev/null || true
+        )"
+        if [[ -z "$zabbix_container" ]]; then
+            printf '  state: STOPPED\n'
+        else
+            zabbix_state="$(
+                docker inspect --format \
+                    '{{if .State.Health}}{{.State.Health.Status}}{{else}}{{.State.Status}}{{end}}' \
+                    "$zabbix_container" 2>/dev/null || printf 'UNKNOWN'
+            )"
+            printf '  state: %s\n' "$zabbix_state"
+        fi
+        printf '  api: http://127.0.0.1:8081/api/zabbix/status\n'
+    fi
+
     local source="${OXIDIZED_INVENTORY_DIR}/router.json"
     printf '\nOxidized:\n'
 
@@ -182,6 +211,12 @@ prophylaxis_logs() {
 proxy_logs() {
     [[ -f "$PROXY_COMPOSE" ]] || die "Nginx proxy runtime is not prepared"
     exec docker compose -f "$PROXY_COMPOSE" -p atlas-proxy logs "$@" proxy
+}
+
+zabbix_logs() {
+    [[ -f "$ZABBIX_COMPOSE" ]] || die "Zabbix runtime is not prepared"
+    exec docker compose -f "$ZABBIX_COMPOSE" -p atlas-zabbix logs "$@" \
+        database server web
 }
 
 main() {
@@ -246,6 +281,26 @@ main() {
                 logs)
                     shift
                     oxidized_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        zabbix)
+            shift
+            case "${1:-}" in
+                status|sync)
+                    local action=$1
+                    shift
+                    [[ $# -eq 0 ]] || die "zabbix ${action} accepts no options"
+                    run_python_as_atlas \
+                        "${ATLAS_ROOT}/scripts/zabbix_cli.py" "$action"
+                    ;;
+                logs)
+                    shift
+                    zabbix_logs "$@"
                     ;;
                 *)
                     usage

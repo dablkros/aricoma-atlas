@@ -1,0 +1,16 @@
+zabbix:
+  version: "7.0.31"
+  server_image: "docker.io/zabbix/zabbix-server-pgsql:alpine-7.0.31"
+  web_image: "docker.io/zabbix/zabbix-web-nginx-pgsql:alpine-7.0.31"
+  postgres_image: "docker.io/library/postgres:16.15-alpine3.24"
+  server_name: "Aricoma Atlas"
+
+runtime:
+  directory: ".runtime/zabbix"
+  compose_project: "atlas-zabbix"
+  startup_timeout: 300
+
+network:
+  listen_address: "127.0.0.1"
+  host_port: 8082
+  container_port: 8080

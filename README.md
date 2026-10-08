@@ -7,6 +7,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **OpenBao 2.7.0** ako centrálny secrets backend,
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
+- **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
 - **Atlas FastAPI backend 0.3.0-beta** zostavený a spustený v samostatnom kontajneri,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
@@ -32,6 +33,9 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
+sudo atlasctl zabbix status
+sudo atlasctl zabbix sync
+sudo atlasctl zabbix logs -f
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
@@ -47,7 +51,7 @@ Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, D
 
 Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
-Aktuálne overený clean-install flow zahŕňa:
+Definovaný clean-install flow zahŕňa:
 
 - prípravu zákazníckeho alebo LAB TLS vstupu,
 - import lokálnej `.runtime/` konfigurácie cez `install.sh`,
@@ -55,6 +59,7 @@ Aktuálne overený clean-install flow zahŕňa:
 - OpenBao init, Shamir 5/3 unseal, Raft readiness a bootstrap,
 - zdravý NetBox stack a idempotentný NetBox bootstrap,
 - zdravý Oxidized backend s prázdnym inventárom,
+- zdravý Zabbix API/server/web/database stack,
 - waiting stránku namiesto chyby backendu pri nulovom inventári,
 - reload inventára cez `atlasctl oxidized reconcile`,
 - strict SSH host-key verification,
@@ -70,6 +75,8 @@ Deklarovaná kombinácia pre tento deployment:
 - NetBox Docker `5.1.1`
 - NetBox image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
+- Zabbix server/web `alpine-7.0.31`
+- Zabbix PostgreSQL `16.15-alpine3.24`
 - Atlas backend image `aricoma-atlas-backend:0.3.0-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
@@ -113,7 +120,7 @@ V aktuálnom beta prostredí:
 - OpenBao API používa lokálne HTTP,
 - OpenBao listener má `tls_disable = true`,
 - OpenBao API je bindnuté na loopback adresu,
-- NetBox a Oxidized sú publikované cez spoločný Nginx a HTTPS,
+- NetBox, Oxidized a Zabbix UI sú publikované cez spoločný Nginx a HTTPS,
 - Atlas backend je publikovaný iba na loopback adrese `127.0.0.1:8081`,
 - Atlas Operations UI nie je pripojené do Nginx, pretože používateľská autentifikácia je rozsah nasledujúceho milestone,
 - Oxidized web/API nemá publikovaný host port,
@@ -131,7 +138,7 @@ Pred produkčným nasadením je potrebné doplniť minimálne:
 2. dôveryhodný CA trust a certificate verification v Python klientoch,
 3. odstránenie `tls_disable`,
 4. lifecycle a obnovu certifikátov,
-5. backup/restore OpenBao, NetBox a Oxidized Git dát,
+5. backup/restore OpenBao, NetBox, Zabbix PostgreSQL a Oxidized Git dát,
 6. definovaný host-key rotation proces so samostatným schválením,
 7. individuálne roly alebo SSO pre administratívny web/API prístup.
 
@@ -226,7 +233,11 @@ aricoma-atlas/
 │   ├── services/
 │   │   ├── netbox.py
 │   │   ├── openbao.py
-│   │   └── oxidized.py
+│   │   ├── oxidized.py
+│   │   ├── zabbix.py
+│   │   └── zabbix_sync.py
+│   ├── integrations/
+│   │   └── zabbix/
 │   ├── devices/
 │   ├── prophylaxis/
 │   ├── config.py
@@ -242,6 +253,7 @@ aricoma-atlas/
 │
 ├── catalog/
 │   ├── manifest.yaml
+│   ├── zabbix.yaml
 │   └── baseline/
 │       ├── custom_field_choice_sets.yaml
 │       └── custom_fields.yaml
@@ -252,6 +264,7 @@ aricoma-atlas/
 │   │   └── Dockerfile
 │   ├── netbox.yaml
 │   ├── oxidized.yaml
+│   ├── zabbix.yaml
 │   ├── proxy.example.yaml
 │   └── openbao/
 │       ├── docker-compose.yml
@@ -262,7 +275,6 @@ aricoma-atlas/
 │           ├── atlas-operator.hcl
 │           ├── device-credentials-read.hcl
 │           ├── netbox-runtime.hcl
-│           ├── checkmk-runtime.hcl
 │           └── oxidized-runtime.hcl
 │
 ├── scripts/
@@ -270,6 +282,7 @@ aricoma-atlas/
 │   ├── deploy_openbao.py
 │   ├── deploy_netbox.py
 │   ├── deploy_oxidized.py
+│   ├── deploy_zabbix.py
 │   ├── deploy_backend.py
 │   ├── deploy_proxy.py
 │   ├── openbao_access.py
@@ -331,11 +344,13 @@ Typický nainštalovaný runtime:
 ├── openbao-operator.json
 ├── openbao-backend.json
 ├── openbao-netbox.json
-├── openbao-checkmk.json
 ├── openbao-oxidized.json
 ├── netbox-docker/
 ├── backend/
 │   └── docker-compose.yml
+├── zabbix/
+│   ├── docker-compose.yml
+│   └── secrets/               # 0600, mimo Git
 └── oxidized/
     ├── config
     └── ssh/
@@ -427,7 +442,7 @@ FastAPI 0.142.2 vyžaduje Python 3.10 alebo novší. V dokumentácii a skriptoch
 
 ## Atlas backend API — Milestone 1
 
-Pri štandardnom nasadení `sudo atlasctl deploy` zostaví image z aktuálneho nainštalovaného Git checkoutu, spustí backend ako štvrtú z piatich fáz a počká na stav `healthy`. Konfigurácia image, portu a timeoutu je v `deployment/backend.yaml`; generovaný Compose runtime je v `.runtime/backend/docker-compose.yml`.
+Pri štandardnom nasadení `sudo atlasctl deploy` zostaví image z aktuálneho nainštalovaného Git checkoutu, spustí backend ako piatu zo šiestich fáz a počká na stav `healthy`. Konfigurácia image, portu a timeoutu je v `deployment/backend.yaml`; generovaný Compose runtime je v `.runtime/backend/docker-compose.yml`.
 
 Backend je na hoste zámerne dostupný iba lokálne:
 
@@ -458,7 +473,7 @@ Očakávané telo odpovede:
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
 
-`GET /api/health` zostáva iba liveness kontrola procesu. Nekontroluje NetBox, OpenBao ani Oxidized.
+`GET /api/health` zostáva iba liveness kontrola procesu. Nekontroluje NetBox, OpenBao, Oxidized ani Zabbix.
 
 ## Atlas backend API — Milestone 2
 
@@ -467,9 +482,9 @@ Milestone 2 pridáva bezpečnú read-only dependency vrstvu a samostatný readin
 | Endpoint | Význam | HTTP odpoveď |
 | --- | --- | --- |
 | `GET /api/health` | proces FastAPI beží | `200` bez ohľadu na stav externých služieb |
-| `GET /api/ready` | OpenBao, NetBox a Oxidized sú použiteľné | `200` pri úspechu, inak `503` |
+| `GET /api/ready` | OpenBao, NetBox, Oxidized a Zabbix sú použiteľné | `200` pri úspechu, inak `503` |
 
-Readiness overuje, že OpenBao je dostupné, inicializované a odomknuté a že funguje AppRole login identity `atlas-backend`. Následne cez token uložený výhradne v OpenBao vykoná lacný read-only NetBox request a načíta Oxidized `nodes.json`. Prázdne Oxidized pole `[]` je pripravený stav, nie chyba. Kontrola nevykonáva žiadny zápis do OpenBao, NetBoxu ani Oxidized a nevolá Oxidized `/reload`.
+Readiness overuje, že OpenBao je dostupné, inicializované a odomknuté a že funguje AppRole login identity `atlas-backend`. Následne cez tokeny uložené výhradne v OpenBao vykoná lacný read-only NetBox request, načíta Oxidized `nodes.json` a overí Zabbix `apiinfo.version` aj autorizovaný `host.get`. Prázdne Oxidized pole `[]` je pripravený stav, nie chyba. Kontrola nevykonáva žiadny zápis.
 
 Bezpečné dependency nastavenia:
 
@@ -478,6 +493,7 @@ ATLAS_OPENBAO_URL
 ATLAS_OPENBAO_IDENTITY_FILE
 ATLAS_NETBOX_URL
 ATLAS_OXIDIZED_URL
+ATLAS_ZABBIX_URL
 ATLAS_HTTP_CONNECT_TIMEOUT
 ATLAS_HTTP_READ_TIMEOUT
 ```
@@ -496,7 +512,7 @@ Chybová odpoveď readiness obsahuje iba stav dependency a bezpečný dôvod, na
 
 ### Kontajnerové zapojenie
 
-Od Milestone 4 má backend kontajner read-only mount AppRole identity, read-write mount výhradne na ephemeral Oxidized inventory adresár a pripojenie do troch interných aplikačných sietí. Neobsahuje Docker socket a beží pod numerickým UID/GID neprivilegovaného Atlas service accountu. Kontajnerový healthcheck naďalej používa lacný `/api/health`; dependency readiness je samostatný endpoint.
+Od Milestone 4 má backend kontajner read-only mount AppRole identity, read-write mount výhradne na ephemeral Oxidized inventory adresár a pripojenie do štyroch interných aplikačných sietí vrátane Zabbix API siete. Neobsahuje Docker socket a beží pod numerickým UID/GID neprivilegovaného Atlas service accountu. Kontajnerový healthcheck naďalej používa lacný `/api/health`; dependency readiness je samostatný endpoint.
 
 ## Atlas backend API — Milestone 3
 
@@ -558,7 +574,7 @@ Milestone 4 dopĺňa backend kontajneru AppRole identity, Oxidized runtime inven
 
 FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je čisté HTML, CSS a vanilla JavaScript bez CDN, npm alebo Node build procesu. Poskytuje:
 
-- aplikačný stav Atlasu, OpenBao, NetBoxu a Oxidized,
+- aplikačný stav Atlasu, OpenBao, NetBoxu, Oxidized a Zabbixu,
 - porovnanie NetBox-enabled zariadení s aktuálnym runtime inventárom,
 - bezpečný zoznam zariadení obsahujúci iba `name`, `ip` a `model`,
 - explicitnú operáciu **Sync inventory**,
@@ -645,6 +661,8 @@ zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
 | --- | --- | --- |
 | `atlasctl status` | `GET /api/status` | CLI môže navyše kontrolovať Docker, filesystem a host runtime; API zostáva bez host privileges. |
 | `atlasctl oxidized reconcile` | `POST /api/oxidized/sync` | Obe cesty používajú shared reconciliation service. |
+| `atlasctl zabbix sync` | `POST /api/zabbix/sync` | Obe cesty používajú ten istý reconciliation service. |
+| `atlasctl zabbix status` | `GET /api/zabbix/status` | Overí Zabbix verziu, autentifikáciu a prístup k hostom. |
 | prioritný Oxidized node | `POST /api/oxidized/devices/{name}/backup` | Požiadavka node iba zaradí; výsledok backupu spravuje Oxidized. |
 
 `atlasctl deploy` a `atlasctl openbao` nemajú UI ani API ekvivalent.
@@ -704,6 +722,7 @@ Vyplň všetky povinné hodnoty v `.runtime/proxy.yaml`:
 | `tls.ca_certificate` | Absolútna cesta k PEM trust bundle internej CA. |
 | `services.netbox.hostname` | DNS názov NetBoxu smerujúci na management IP VM. |
 | `services.oxidized.hostname` | Samostatný DNS názov Oxidized smerujúci na rovnakú management IP. |
+| `services.zabbix.hostname` | Samostatný DNS názov Zabbix UI smerujúci na rovnakú management IP. |
 | `services.*.certificate` | Absolútna cesta k PEM server certifikátu vrátane intermediate chain. |
 | `services.*.private_key` | Absolútna cesta k príslušnému nešifrovanému PEM private key. |
 
@@ -718,6 +737,7 @@ export ATLAS_IP="10.99.98.114"
 export ATLAS_ALLOWED_NETWORK="10.99.98.0/23"
 export NETBOX_HOSTNAME="netbox.atlas.test"
 export OXIDIZED_HOSTNAME="oxidized.atlas.test"
+export ZABBIX_HOSTNAME="zabbix.atlas.test"
 
 umask 077
 mkdir -p .runtime/tls
@@ -737,7 +757,7 @@ openssl req -new -newkey rsa:2048 -nodes -sha256 \
   -out .runtime/tls/server.csr
 
 cat > .runtime/tls/server.ext <<EOF
-subjectAltName=DNS:${NETBOX_HOSTNAME},DNS:${OXIDIZED_HOSTNAME}
+subjectAltName=DNS:${NETBOX_HOSTNAME},DNS:${OXIDIZED_HOSTNAME},DNS:${ZABBIX_HOSTNAME}
 extendedKeyUsage=serverAuth
 basicConstraints=critical,CA:FALSE
 keyUsage=critical,digitalSignature,keyEncipherment
@@ -836,6 +856,9 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
+sudo atlasctl zabbix status
+sudo atlasctl zabbix sync
+sudo atlasctl zabbix logs [docker compose logs options]
 sudo atlasctl prophylaxis logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
 sudo atlasctl proxy logs [docker compose logs options]
@@ -846,10 +869,13 @@ Význam:
 | Príkaz | Úloha |
 |---|---|
 | `sudo atlasctl deploy` | Nasadí alebo zosúladí celý Atlas stack. |
-| `sudo atlasctl status` | Zobrazí stav kontajnerov a Oxidized inventára. |
+| `sudo atlasctl status` | Zobrazí stav kontajnerov, Zabbix servera a Oxidized inventára. |
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |
 | `sudo atlasctl oxidized reconcile` | Overí runtime mounty a zosúladí/reloadne Oxidized inventory. |
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
+| `sudo atlasctl zabbix status` | Overí Zabbix JSON-RPC API a počet Atlas-managed hostov. |
+| `sudo atlasctl zabbix sync` | Zosúladí `monitoring_enabled=true` zariadenia z NetBoxu do Zabbixu. |
+| `sudo atlasctl zabbix logs -f` | Sleduje Zabbix server, web a databázové logy. |
 | `sudo atlasctl prophylaxis logs -f` | Sleduje iba bezpečné profylaxia/Ansible diagnostické eventy z backendu. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
 | `sudo atlasctl proxy logs -f` | Sleduje live logy Nginx HTTPS ingressu. |
@@ -943,6 +969,84 @@ Po úspešnom unseal-e pokračuje automaticky. `sudo atlasctl openbao` je servis
 
 ---
 
+# Zabbix monitoring
+
+Zabbix je monitoring backend spravovaný Atlasom, nie source of truth.
+
+```text
+NetBox monitoring_enabled + platform + primary IP + credential_profile
+        │
+        ▼
+Atlas reconciliation ── OpenBao SNMP secret
+        │
+        ▼
+Zabbix host + template + SNMP interface + ownership tags
+```
+
+Nasadenie používa Zabbix `7.0.31` LTS, oficiálne server/web image a samostatný
+PostgreSQL kontajner. Verzia je pripnutá v `deployment/zabbix.yaml` a mapovanie
+v `catalog/zabbix.yaml`. Zabbix server ani databáza nemajú hostom publikovaný
+port; web je lokálne na `127.0.0.1:8082` a administrátorské UI sa sprístupňuje
+cez existujúci Nginx/TLS model ako `zabbix` služba v `.runtime/proxy.yaml`.
+Podporu a vydanie verzie dokumentuje [Zabbix lifecycle policy](https://www.zabbix.com/life_cycle_and_release_policy)
+a [release note 7.0.31](https://www.zabbix.com/rn/rn7.0.31) (overené 2026-10-08).
+
+Reconciliation používa iba aktívne NetBox zariadenia s
+`monitoring_enabled=true`. Stabilná identita je NetBox device ID v tagu
+`netbox_id`; každý vlastnený host má aj `managed_by=aricoma-atlas`. Atlas
+číta a mení iba takto označené hosty. Zariadenie odstránené z NetBoxu alebo s
+vypnutým monitoringom sa v Zabbixe deaktivuje, nemaže, aby sa zachovala
+história. Manuálne Zabbix hosty zostávajú mimo reconciliation query.
+
+Centralizované mapovanie pre Zabbix 7.0 je:
+
+| NetBox platform | Zabbix template |
+|---|---|
+| `cisco-ios`, `cisco-ios-xe` | `Cisco IOS by SNMP` |
+| `cisco-cbs` | `Network Generic Device by SNMP` |
+| `fortios` | `FortiGate by SNMP` |
+| `junos` | `Juniper by SNMP` |
+
+Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business template;
+`cisco-cbs` preto používa generic SNMP template. To poskytuje základné SNMP
+dáta, ale negarantuje vendor-specific CPU item. Chýbajúci template alebo CPU
+item je explicitný stav, nie silent fallback. Názvy sú viazané na oficiálny
+[Zabbix integrations katalóg](https://www.zabbix.com/integrations/snmp) a
+[FortiGate 7.0 template source](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/fortinet/fortigate_snmp?at=release%2F7.0).
+
+SNMPv2c community sa číta z
+`atlas/devices/credentials/<manufacturer>/<credential_profile>/snmp`, vloží sa
+do Zabbix secret macro `{$SNMP_COMMUNITY}` a nikdy sa nevracia cez Atlas API.
+Schéma už rozpoznáva SNMPv3 credentials, ale prvá Zabbix verzia ich zámerne
+odmietne ako `unsupported_snmp_version`, kým nebude implementované presné
+mapovanie authPriv/authNoPriv.
+
+Atlas backend sa autentifikuje Zabbix API tokenom z `atlas/zabbix/api`.
+Administrátorské heslo používa iba idempotentný deployment bootstrap a je v
+`atlas/zabbix/admin`; backend k nemu nemá OpenBao právo. JSON-RPC klient používa
+oficiálne `api_jsonrpc.php` API s Bearer tokenom, timeoutmi a secret-free
+chybami podľa [Zabbix API manual 7.0](https://www.zabbix.com/documentation/7.0/en/manual/api).
+
+Prevádzkové a aplikačné rozhrania:
+
+```text
+sudo atlasctl zabbix status
+sudo atlasctl zabbix sync
+sudo atlasctl zabbix logs -f
+
+POST /api/zabbix/sync
+GET  /api/zabbix/status
+GET  /api/zabbix/hosts
+GET  /api/zabbix/problems
+GET  /api/devices/{device_id}/monitoring
+GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d
+```
+
+Metrika sa hľadá podľa centralizovaného item-key prefixu, nie podľa nestabilného
+`itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` používa
+`trend.get`. API vracia normalizované body `{timestamp, value}` určené pre
+vlastný Atlas graf, nie embed celého Zabbix frontendu.
+
 # OpenBao storage
 
 OpenBao používa integrovaný **Raft storage**.
@@ -976,8 +1080,10 @@ atlas/
 │
 ├── netbox/
 │   └── ...
-├── checkmk/
-│   └── ...
+├── zabbix/
+│   ├── admin
+│   ├── api
+│   └── database
 └── oxidized/
     └── ...
 ```
@@ -986,7 +1092,8 @@ Význam:
 
 - `atlas/devices/credentials/*` – spoločné credentials pre spravované zariadenia,
 - `atlas/netbox/*` – interné NetBox secrets,
-- `atlas/checkmk/*` – interné Checkmk secrets,
+- `atlas/zabbix/api` – token obmedzeného Atlas API používateľa,
+- `atlas/zabbix/admin` a `atlas/zabbix/database` – iba deployment/bootstrap secrets,
 - `atlas/oxidized/*` – interné Oxidized secrets.
 
 KV v2 nepoužíva klasické adresáre. Prefix sa v UI zobrazí až vtedy, keď pod ním existuje key alebo metadata. Fresh deployment preto bežne zobrazuje iba reálne použité prefixy, napríklad:
@@ -997,7 +1104,7 @@ atlas/
 └── oxidized/
 ```
 
-`devices/` a `checkmk/` sa zobrazia až po prvom zápise zodpovedajúceho secretu. Policies a AppRoles samy o sebe KV paths nevytvárajú. Toto je očakávané správanie, nie chyba bootstrapu.
+`devices/` sa zobrazí až po prvom zápise zodpovedajúceho secretu. Policies a AppRoles samy o sebe KV paths nevytvárajú. Toto je očakávané správanie, nie chyba bootstrapu.
 
 ---
 
@@ -1015,7 +1122,7 @@ Oddelená operator identita pre autentifikovaný `generate-root` workflow. Nepou
 
 ## `atlas-backend`
 
-Runtime machine identita Atlas aplikácie. Samostatná policy `atlas-backend` povoľuje iba `read` pre presný NetBox token path `atlas/data/netbox/api` a device credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis, mazanie, root operácie ani prístup k NetBox admin, PostgreSQL, Redis alebo deployer secretom.
+Runtime machine identita Atlas aplikácie. Samostatná policy `atlas-backend` povoľuje iba `read` pre presné token paths `atlas/data/netbox/api`, `atlas/data/zabbix/api` a device credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis, mazanie, root operácie ani prístup k admin, PostgreSQL, Redis alebo deployer secretom.
 
 Fresh OpenBao bootstrap túto policy, AppRole a machine identity vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile atlas-backend policy`. Operácia vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
 
@@ -1027,17 +1134,6 @@ Policies:
 
 ```text
 netbox-runtime
-device-credentials-read
-```
-
-## `checkmk-runtime`
-
-Runtime identita pripravená pre budúci Checkmk deployment.
-
-Policies:
-
-```text
-checkmk-runtime
 device-credentials-read
 ```
 
@@ -1070,7 +1166,7 @@ umožňuje runtime službám čítať spoločný strom:
 atlas/devices/credentials/*
 ```
 
-Cieľom je, aby sa rovnaké credentials sieťových zariadení nemuseli duplikovať pre Checkmk, Oxidized a ďalšie Atlas aplikácie. App-specific secrets zostávajú oddelené.
+Cieľom je, aby sa rovnaké credentials sieťových zariadení nemuseli duplikovať pre Zabbix, Oxidized a ďalšie Atlas aplikácie. App-specific secrets zostávajú oddelené.
 
 Oxidized reconcile číta tento strom cez `oxidized-runtime`, v pamäti zostaví úplný desired-state inventár a atómovo nahradí ephemeral `router.json`.
 
@@ -1281,13 +1377,14 @@ Priamy vývojový vstup:
 python3 scripts/deploy_atlas.py --prepare-only
 ```
 
-OpenBao sa spustí a overí. NetBox, Oxidized, Atlas backend a Nginx pripravia runtime, Compose konfiguráciu a potrebné secrets bez štartu svojich aplikačných kontajnerov. Aj tento režim vyžaduje platnú proxy konfiguráciu a certifikáty.
+OpenBao sa spustí a overí. NetBox, Oxidized, Zabbix, Atlas backend a Nginx pripravia runtime, Compose konfiguráciu a potrebné secrets bez štartu svojich aplikačných kontajnerov. Aj tento režim vyžaduje platnú proxy konfiguráciu a certifikáty.
 
 Samostatne možno použiť:
 
 ```bash
 python3 scripts/deploy_netbox.py --prepare-only
 python3 scripts/deploy_oxidized.py --prepare-only
+python3 scripts/deploy_zabbix.py --prepare-only
 python3 scripts/deploy_backend.py --prepare-only
 python3 scripts/deploy_proxy.py --prepare-only
 ```
@@ -1393,11 +1490,12 @@ Rizikové persistentné dáta zahŕňajú:
 - OpenBao Raft storage,
 - NetBox PostgreSQL a media volumes,
 - Oxidized Git volume `atlas-oxidized-data`,
+- Zabbix PostgreSQL volume `atlas-zabbix-database`,
 - `/run/atlas/oxidized/router.json` (ephemeral materializácia credentials),
 - `/opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts`,
 - site-specific proxy/TLS runtime.
 
-Odstránenie OpenBao volume znamená stratu secrets a identity konfigurácie. Odstránenie NetBox PostgreSQL volume znamená stratu NetBox dát. Odstránenie Oxidized Git volume znamená stratu histórie konfigurácií, aj keď inventory súbor ostane na hoste.
+Odstránenie OpenBao volume znamená stratu secrets a identity konfigurácie. Odstránenie NetBox alebo Zabbix PostgreSQL volume znamená stratu príslušných dát. Odstránenie Oxidized Git volume znamená stratu histórie konfigurácií, aj keď inventory súbor ostane na hoste.
 
 ---
 
@@ -1454,10 +1552,11 @@ akceptuje pôvodnú CPU hodnotu `CPU utilization` na už existujúcich zariadeni
 
 | Name | Type | Group |
 |---|---|---|
-| `checkmk_enabled` | Boolean | Monitoring |
+| `monitoring_enabled` | Boolean | Monitoring |
 | `oxidized_enabled` | Boolean | backuping |
 | `profylaxia_enabled` | Boolean | Profylaxia |
 | `profylaxia_checks` | Multiple selection | Profylaxia |
+| `credential_profile` | Text | Atlas |
 
 Všetky aktuálne Custom Fields sú priradené k objektu:
 
@@ -1466,6 +1565,11 @@ dcim.device
 ```
 
 Baseline provisioner kontroluje aj configuration drift.
+
+Pri upgrade provisioner najprv vytvorí `monitoring_enabled`, skopíruje hodnotu
+z historického `checkmk_enabled` na každom zariadení a až po úspešnom prenose
+staré pole odstráni. Operácia je idempotentná; clean install staré pole
+nevytvára. Atlas monitoring používa výhradne `monitoring_enabled`.
 
 Ak deklarácia a existujúca konfigurácia NetBoxu nesedia, provisioning existujúce Custom Fieldy automaticky neprepíše. Namiesto toho oznámi drift.
 
@@ -2415,8 +2519,8 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 - GUI/API nad existujúcim výberom NetBox zariadení a reconcile logikou,
 - pending-approval evidencia a riadená rotácia SSH host keys,
 - automatická validácia prvého backupu po schválení zariadenia,
-- Checkmk deployment a provisioning,
-- napojenie Checkmk/Oxidized na spoločné device credentials,
+- Zabbix alert notifications a prípadné vendor-specific custom templates,
+- rozšírenie Zabbix SNMPv3 podpory a Atlas monitoring dashboardu,
 - individuálne prístupy alebo SSO pre proxy,
 - centrálne logging/monitoring,
 - zákaznícke deployment profily,
@@ -2460,7 +2564,7 @@ Oxidized
   ├── configuration collection
   └── Git history
         +
-Checkmk and additional integrations
+Zabbix monitoring and additional integrations
 ```
 
 Aktuálna beta už pokrýva základ:

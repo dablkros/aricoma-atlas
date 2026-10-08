@@ -9,7 +9,7 @@ from pathlib import Path
 
 import yaml
 
-from atlas.deployment import ROOT, NETBOX_NETWORK, OXIDIZED_NETWORK
+from atlas.deployment import ROOT, NETBOX_NETWORK, OXIDIZED_NETWORK, ZABBIX_NETWORK
 from atlas.deployment import optional_secret, run, write_private, write_yaml
 
 HOSTNAME = re.compile(r"(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$")
@@ -40,8 +40,12 @@ def load_config(path=None, validate_tls=True):
     image = proxy["docker_image"]
     if not isinstance(image, str) or not re.fullmatch(r"[a-zA-Z0-9./_-]+:[0-9][a-zA-Z0-9._-]*", image):
         raise ValueError("Proxy docker_image must use an explicit version tag")
-    if set(config["services"]) != {"netbox", "oxidized"}:
-        raise ValueError("Configure exactly the netbox and oxidized services")
+    service_names = set(config["services"])
+    if service_names not in (
+        {"netbox", "oxidized"},
+        {"netbox", "oxidized", "zabbix"},
+    ):
+        raise ValueError("Configure netbox and oxidized, with optional zabbix ingress")
     hostnames = []
     for name, service in config["services"].items():
         hostname = service["hostname"]
@@ -55,7 +59,7 @@ def load_config(path=None, validate_tls=True):
             if validate_tls and not filename.is_file():
                 raise ValueError(f"Missing TLS file for {name}: {field}")
     if len(set(hostnames)) != len(hostnames):
-        raise ValueError("NetBox and Oxidized must use different DNS hostnames")
+        raise ValueError("Every proxied service must use a unique DNS hostname")
     ca = config["tls"]["ca_certificate"]
     if not ca or not Path(ca).is_absolute():
         raise ValueError("tls.ca_certificate must be an absolute PEM CA bundle path")
@@ -103,7 +107,11 @@ def render_nginx(config):
     allow = "\n".join(f"        allow {network};" for network in proxy["allowed_networks"])
     servers = []
     for name, service in config["services"].items():
-        upstream = "atlas-netbox:8080" if name == "netbox" else "atlas-oxidized:8888"
+        upstream = {
+            "netbox": "atlas-netbox:8080",
+            "oxidized": "atlas-oxidized:8888",
+            "zabbix": "atlas-zabbix-web:8080",
+        }[name]
         authentication = ""
         if name == "oxidized":
             authentication = ('        auth_basic "Atlas Oxidized";\n'
@@ -172,21 +180,27 @@ def prepare_runtime(config, secret):
     if ":" in address:
         address = f"[{address}]"
     file = runtime / "docker-compose.yml"
+    service_networks = ["netbox", "oxidized"]
+    if "zabbix" in config["services"]:
+        service_networks.append("zabbix")
+    networks = {
+        "netbox": {"external": True, "name": NETBOX_NETWORK},
+        "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
+    }
+    if "zabbix" in config["services"]:
+        networks["zabbix"] = {"external": True, "name": ZABBIX_NETWORK}
     write_yaml(file, {
         "services": {"proxy": {
             "image": config["proxy"]["docker_image"], "restart": "unless-stopped",
             "command": ["nginx", "-c", "/etc/atlas/nginx.conf", "-g", "daemon off;"],
             "ports": [f"{address}:{config['proxy']['https_port']}:8443"],
             "volumes": [f"{runtime}:/etc/atlas:ro"],
-            "networks": ["netbox", "oxidized"],
+            "networks": service_networks,
             "healthcheck": {
                 "test": ["CMD", "nginx", "-c", "/etc/atlas/nginx.conf", "-t"],
                 "interval": "10s", "timeout": "5s", "retries": 6,
             },
         }},
-        "networks": {
-            "netbox": {"external": True, "name": NETBOX_NETWORK},
-            "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
-        },
+        "networks": networks,
     })
     return file

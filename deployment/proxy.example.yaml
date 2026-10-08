@@ -16,3 +16,7 @@ services:
     hostname: ""
     certificate: ""
     private_key: ""
+  zabbix:
+    hostname: ""
+    certificate: ""
+    private_key: ""

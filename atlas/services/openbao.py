@@ -8,6 +8,7 @@ from atlas.device_credentials import (
     DeviceValidationError,
     credential_path,
     validate_admin_secret,
+    validate_snmp_secret,
 )
 from atlas.openbao_client import (
     OpenBaoAuthenticationError,
@@ -110,12 +111,58 @@ class OpenBaoService:
             lambda token: self.client.kv_read(token, path, mount="atlas")
         )
 
+    def read_secret_with_metadata(self, path: str) -> tuple[dict, dict]:
+        return self._authenticated(
+            lambda token: self.client.kv_read_with_metadata(
+                token,
+                path,
+                mount="atlas",
+            )
+        )
+
     def get_netbox_api_token(self) -> str:
         secret = self.read_secret("netbox/api")
         token = secret.get("token") if isinstance(secret, dict) else None
         if not isinstance(token, str) or not token.strip():
             raise DependencyError("secret_not_found")
         return token
+
+    def get_zabbix_api_token(self) -> str:
+        secret = self.read_secret("zabbix/api")
+        token = secret.get("token") if isinstance(secret, dict) else None
+        if (
+            not isinstance(token, str)
+            or not token
+            or token != token.strip()
+            or any(character.isspace() for character in token)
+        ):
+            raise DependencyError("secret_not_found")
+        return token
+
+    def get_snmp_credentials(self, manufacturer: str, profile: str) -> tuple[dict, int]:
+        try:
+            path = credential_path(manufacturer, profile, purpose="snmp")
+            secret, metadata = self.read_secret_with_metadata(path)
+        except DependencyError as exc:
+            if exc.reason == "secret_not_found":
+                raise DeviceValidationError(
+                    "SNMP credential profile not found",
+                    code="snmp_credential_not_found",
+                    category="error",
+                ) from None
+            raise
+        try:
+            validated = validate_snmp_secret(secret)
+        except DeviceValidationError as exc:
+            raise DeviceValidationError(
+                "Invalid SNMP credential schema",
+                code="invalid_snmp_credential_schema",
+                category="error",
+            ) from exc
+        version = metadata.get("version")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise DependencyError("invalid_response")
+        return validated, version
 
     def get_device_credentials(
         self,

@@ -1,7 +1,8 @@
 # Atlas device platform and credential contract
 
-Status: data model/bootstrap plus reusable Python resolver, reviewed 2026-10-02.
-NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
+Status: implemented data model, Oxidized reconciliation and Zabbix monitoring
+integration; reviewed 2026-10-08. NetBox 4.7.1 (NetBox Docker 5.1.1),
+Oxidized 0.37.0 and Zabbix 7.0.31 LTS.
 
 ## Ownership and deployment
 
@@ -9,8 +10,9 @@ NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
 |---|---|
 | NetBox | Device identity, manufacturer, Device Type, platform, primary IP, enable flags, explicit `credential_profile` |
 | OpenBao | Usernames, passwords, enable passwords, SNMP secrets, KV v2 mount `atlas` |
-| Atlas | Declarative catalog enrichment, service mappings, credential reference resolution and validation; future orchestration |
+| Atlas | Declarative catalog enrichment, service mappings, credential resolution and reconciliation orchestration |
 | Oxidized | Configuration collection and its independent Git history |
+| Zabbix | Current monitoring state, problems and metric history for Atlas-managed hosts |
 
 `sudo atlasctl deploy` retains the existing `bootstrap_netbox.py` flow:
 
@@ -131,11 +133,15 @@ SNMPv3 (authPriv shape):
 }
 ```
 
-The shape validator checks required nonempty strings. Protocol labels are stored as data; this does not assert Checkmk/driver support for every algorithm. Other SNMPv3 security levels need an explicit future schema extension.
+The shape validator checks required nonempty strings. Protocol labels are stored
+as data; this does not assert collector support for every algorithm. Zabbix
+reconciliation currently accepts SNMPv2c and explicitly reports
+`unsupported_snmp_version` for SNMPv3. Enabling authPriv/authNoPriv requires an
+explicit interface-details mapping and tests; no protocol fallback is used.
 
 ## Runtime contract and limits
 
-`atlas/device_credentials.py` is reusable by the future FastAPI layer:
+`atlas/device_credentials.py` is shared by the FastAPI and deployment layers:
 
 - `oxidized_reference(device)` ignores devices whose flag is not the boolean `true`; validates an enabled Device's platform, service mapping, explicit profile, vendor slug, name and IP.
 - `resolve_oxidized_device(device, client, token)` reads the exact `admin` path from OpenBao and validates username/password. The return object's representation hides credentials. Callers must not serialize or log its credential dictionary.
@@ -150,10 +156,14 @@ NetBox: manufacturer.slug=cisco, platform.slug=cisco-ios-xe
         credential_profile=cisco-default, oxidized_enabled=true
 Atlas:  cisco-ios-xe -> ios
 Bao:    atlas / devices/credentials/cisco/cisco-default/admin
-Future inventory consumer: name=SW-CORE-01, model=ios, credentials from Bao
+Consumers: Oxidized model=ios; Zabbix template=Cisco IOS by SNMP
 ```
 
-This change **does not implement FastAPI or automatic Oxidized inventory reconciliation**. The current `atlasctl oxidized reconcile` still reconciles its existing manually maintained private runtime inventory; it does not query NetBox. No generated secret file or NetBox-to-Oxidized writer is introduced. The runtime CSV remains a legacy beta manual workflow, not a second authoritative credential store. A future orchestrator must consume the resolver and handle inventory serialization, reloads and secret lifetimes explicitly.
+`atlasctl oxidized reconcile` and `atlasctl zabbix sync` both query NetBox as
+the source of truth and resolve only the referenced credentials from OpenBao.
+Oxidized receives an ephemeral JSON inventory; Zabbix receives a secret macro
+through its official API. Neither consumer becomes an authoritative inventory
+or credential store.
 
 ## Operator steps
 
@@ -162,7 +172,9 @@ This change **does not implement FastAPI or automatic Oxidized inventory reconci
 3. In the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel), create the real `admin` and optionally `snmp` secrets at the exact profile paths. Do not paste real secrets into Git, command history, reports or NetBox.
 4. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
 5. If legacy secrets exist at old `devices/credentials/default`, `devices/credentials/cisco` or `devices/snmp/...` paths, copy them through the authenticated OpenBao UI to the new hierarchy and verify consumers before retiring old keys. Deployment neither migrates nor overwrites secrets. The narrowed read policy only permits the new credential hierarchy.
-6. For an actual backup today, continue the documented beta manual onboarding; automatic use of the new NetBox/OpenBao reference awaits the orchestrator. Perform physical-device acceptance tests before enabling any newly verified driver family.
+6. Run `sudo atlasctl oxidized reconcile` and `sudo atlasctl zabbix sync`, then
+   perform physical-device acceptance tests before enabling any newly verified
+   driver family.
 
 ## Verification and evidence
 

@@ -21,6 +21,7 @@ class PlatformComponentsResponse(BaseModel):
     openbao: ComponentStatusResponse
     netbox: ComponentStatusResponse
     oxidized: ComponentStatusResponse
+    zabbix: ComponentStatusResponse
 
 
 class PlatformStatusResponse(BaseModel):

@@ -35,6 +35,7 @@ NETBOX_DEPLOY_SCRIPT = (
     / "deploy_netbox.py"
 )
 OXIDIZED_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_oxidized.py"
+ZABBIX_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_zabbix.py"
 BACKEND_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_backend.py"
 PROXY_DEPLOY_SCRIPT = SCRIPTS_DIR / "deploy_proxy.py"
 
@@ -66,7 +67,7 @@ def parse_args():
         "--prepare-only",
         action="store_true",
         help=(
-            "Prepare NetBox, Oxidized, Atlas backend and Nginx runtimes "
+            "Prepare NetBox, Oxidized, Zabbix, Atlas backend and Nginx runtimes "
             "and secrets "
             "without starting their containers. "
             "OpenBao is still started because it "
@@ -251,7 +252,7 @@ def verify_openbao_ready():
 
 def deploy_openbao():
     header(
-        "ATLAS STAGE 1/5 - OPENBAO"
+        "ATLAS STAGE 1/6 - OPENBAO"
     )
 
     read_fd, write_fd = os.pipe()
@@ -335,7 +336,7 @@ def deploy_openbao():
 
 def deploy_netbox(args):
     header(
-        "ATLAS STAGE 2/5 - NETBOX"
+        "ATLAS STAGE 2/6 - NETBOX"
     )
 
     netbox_args = []
@@ -361,15 +362,23 @@ def deploy_netbox(args):
 
 
 def deploy_oxidized(args):
-    header("ATLAS STAGE 3/5 - OXIDIZED")
+    header("ATLAS STAGE 3/6 - OXIDIZED")
     run_script(
         OXIDIZED_DEPLOY_SCRIPT,
         ["--prepare-only"] if args.prepare_only else [],
     )
 
 
+def deploy_zabbix(args):
+    header("ATLAS STAGE 4/6 - ZABBIX")
+    run_script(
+        ZABBIX_DEPLOY_SCRIPT,
+        ["--prepare-only"] if args.prepare_only else [],
+    )
+
+
 def deploy_backend(args):
-    header("ATLAS STAGE 4/5 - ATLAS BACKEND")
+    header("ATLAS STAGE 5/6 - ATLAS BACKEND")
     run_script(
         BACKEND_DEPLOY_SCRIPT,
         ["--prepare-only"] if args.prepare_only else [],
@@ -377,7 +386,7 @@ def deploy_backend(args):
 
 
 def deploy_proxy(args):
-    header("ATLAS STAGE 5/5 - NGINX HTTPS INGRESS")
+    header("ATLAS STAGE 6/6 - NGINX HTTPS INGRESS")
     run_script(
         PROXY_DEPLOY_SCRIPT,
         ["--prepare-only"] if args.prepare_only else [],
@@ -468,6 +477,7 @@ def print_result(args):
         if args.prepare_only
         else "Atlas backend: ready on 127.0.0.1:8081"
     )
+    print("Zabbix: prepared only" if args.prepare_only else "Zabbix: ready")
     print("Nginx: prepared only" if args.prepare_only else "Nginx: ready")
 
 
@@ -498,6 +508,7 @@ def main():
             args
         )
         deploy_oxidized(args)
+        deploy_zabbix(args)
         deploy_backend(args)
         deploy_proxy(args)
 

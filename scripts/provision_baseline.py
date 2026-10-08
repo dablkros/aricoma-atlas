@@ -214,6 +214,13 @@ class NetBoxClient:
 
         return response.json()
 
+    def delete(self, endpoint):
+        response = self.session.delete(
+            self._url(endpoint),
+            timeout=30,
+        )
+        response.raise_for_status()
+
     def status(self):
         return self.get(
             "/api/status/"
@@ -821,12 +828,95 @@ def provision_custom_fields(
                 f"[OK] {name}"
             )
 
+    migration = migrate_monitoring_enabled(
+        client,
+        existing_by_name,
+        apply_changes,
+    )
+
     return {
         "existing": existing_count,
         "missing": missing_count,
         "created": created_count,
         "drift": drift_count,
+        "monitoring_migration": migration,
     }
+
+
+def migrate_monitoring_enabled(client, existing_by_name, apply_changes):
+    """Move legacy Checkmk selection into the vendor-neutral monitoring flag.
+
+    The old field is deleted only after every Device value has been copied.
+    This makes an interrupted run retryable and prevents a later run from
+    re-enabling monitoring after an operator intentionally disables it.
+    """
+    legacy = existing_by_name.get("checkmk_enabled")
+    current = existing_by_name.get("monitoring_enabled")
+    result = {
+        "legacy_found": legacy is not None,
+        "devices_examined": 0,
+        "devices_updated": 0,
+        "legacy_removed": False,
+    }
+    if legacy is None:
+        return result
+    if current is None:
+        if not apply_changes:
+            print("[MIGRATE] monitoring_enabled must be created before values move")
+            return result
+        raise RuntimeError(
+            "monitoring_enabled must exist before checkmk_enabled migration"
+        )
+
+    print()
+    print("Monitoring field migration")
+    print("-" * 72)
+    devices = client.get_all("/api/dcim/devices/")
+    result["devices_examined"] = len(devices)
+    pending = []
+    for device in devices:
+        custom_fields = device.get("custom_fields")
+        if not isinstance(custom_fields, dict):
+            raise RuntimeError(
+                f"Device {device.get('id')} returned invalid custom_fields"
+            )
+        legacy_value = custom_fields.get("checkmk_enabled")
+        if legacy_value not in {True, False, None}:
+            raise RuntimeError(
+                f"Device {device.get('id')} returned invalid checkmk_enabled"
+            )
+        desired_value = legacy_value is True
+        if custom_fields.get("monitoring_enabled") is desired_value:
+            continue
+        pending.append((device, desired_value))
+
+    print(
+        f"[MIGRATE] checkmk_enabled -> monitoring_enabled "
+        f"({len(pending)} device updates)"
+    )
+    if not apply_changes:
+        return result
+
+    for device, desired_value in pending:
+        device_id = device.get("id")
+        if isinstance(device_id, bool) or not isinstance(device_id, int):
+            raise RuntimeError("NetBox returned a Device without a valid id")
+        custom_fields = dict(device["custom_fields"])
+        custom_fields["monitoring_enabled"] = desired_value
+        client.patch(
+            f"/api/dcim/devices/{device_id}/",
+            {"custom_fields": custom_fields},
+        )
+        result["devices_updated"] += 1
+
+    legacy_id = legacy.get("id")
+    if isinstance(legacy_id, bool) or not isinstance(legacy_id, int):
+        raise RuntimeError("Legacy checkmk_enabled field has no valid id")
+    client.delete(f"/api/extras/custom-fields/{legacy_id}/")
+    existing_by_name.pop("checkmk_enabled", None)
+    result["legacy_removed"] = True
+    print("[MIGRATED] legacy checkmk_enabled field removed after value transfer")
+    return result
 
 
 # ---------------------------------------------------------------------------

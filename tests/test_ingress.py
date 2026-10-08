@@ -92,6 +92,21 @@ class IngressTests(unittest.TestCase):
         self.assertIn("ssl_reject_handshake on;", text)
         self.assertIn('proxy_set_header Authorization "";', oxidized)
 
+    def test_zabbix_ui_uses_the_existing_tls_proxy_model(self):
+        config = customer_config()
+        config["services"]["zabbix"] = {
+            "hostname": "zabbix.example.test",
+            "certificate": "/etc/atlas/zabbix.crt",
+            "private_key": "/etc/atlas/zabbix.key",
+        }
+
+        text = proxy.render_nginx(config)
+
+        zabbix = text.split("server_name zabbix.example.test;", 1)[1]
+        self.assertIn("http://atlas-zabbix-web:8080", zabbix)
+        self.assertNotIn("auth_basic", zabbix.split("    }", 1)[0])
+        self.assertIn("deny all;", zabbix)
+
     def test_generated_proxy_has_hash_only_and_restricted_private_keys(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

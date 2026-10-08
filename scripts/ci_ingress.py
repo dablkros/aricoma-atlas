@@ -34,10 +34,13 @@ def fixtures(seed_inventory=True):
     run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=netbox.atlas.test",
          "-keyout", str(key), "-out", str(csr)])
     extension = runtime / "extensions.cnf"
-    extension.write_text("subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test\n"
-                         "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n"
-                         "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                         "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
+    extension.write_text(
+        "subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test,"
+        "DNS:zabbix.atlas.test\n"
+        "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n"
+    )
     run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
          "-CAcreateserial", "-days", "2", "-out", str(certificate), "-extfile", str(extension)])
     for private in (key, ca_key):

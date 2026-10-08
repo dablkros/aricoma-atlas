@@ -238,6 +238,32 @@ class OpenBaoServiceTests(unittest.TestCase):
             "api_token_missing_or_invalid",
         )
 
+    def test_zabbix_token_and_versioned_snmp_secret_use_exact_paths(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {"token": "zabbix-api-token"}
+        client.kv_read_with_metadata.return_value = (
+            {"version": "2c", "community": "test-community"},
+            {"version": 4},
+        )
+        service = self.service(client)
+
+        self.assertEqual(service.get_zabbix_api_token(), "zabbix-api-token")
+        self.assertEqual(
+            service.get_snmp_credentials("cisco", "default"),
+            ({"version": "2c", "community": "test-community"}, 4),
+        )
+        client.kv_read.assert_called_once_with(
+            "runtime-token",
+            "zabbix/api",
+            mount="atlas",
+        )
+        client.kv_read_with_metadata.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/cisco/default/snmp",
+            mount="atlas",
+        )
+
 
 class NetBoxServiceTests(unittest.TestCase):
     def service(self, requester, token="nbt_key.plaintext"):
@@ -381,6 +407,21 @@ class NetBoxServiceTests(unittest.TestCase):
             requester.calls[0][1]["params"],
             {
                 "cf_profylaxia_enabled": "true",
+                "status": "active",
+            },
+        )
+
+    def test_monitoring_selection_uses_vendor_neutral_active_filter(self):
+        requester = QueueRequester(
+            FakeResponse(data={"next": None, "results": [{"id": 11}]})
+        )
+        service, _openbao = self.service(requester)
+
+        self.assertEqual(service.get_monitoring_devices(), [{"id": 11}])
+        self.assertEqual(
+            requester.calls[0][1]["params"],
+            {
+                "cf_monitoring_enabled": "true",
                 "status": "active",
             },
         )

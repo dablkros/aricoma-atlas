@@ -37,6 +37,7 @@ class MemoryNetBox:
     def __init__(self):
         self.tables = {endpoint: [] for endpoint in (
             "/api/dcim/platforms/", "/api/dcim/manufacturers/", "/api/dcim/device-types/",
+            "/api/dcim/devices/",
             "/api/extras/custom-fields/", "/api/extras/custom-field-choice-sets/",
             *(spec["endpoint"] for spec in provision_netbox.COMPONENT_SPECS.values()))}
         self.writes = []
@@ -65,6 +66,12 @@ class MemoryNetBox:
         obj.update(copy.deepcopy(payload))
         self.writes.append(("PATCH", endpoint, payload))
         return copy.deepcopy(obj)
+
+    def delete(self, endpoint):
+        prefix, pk, _ = endpoint.rsplit("/", 2)
+        table = self.tables[prefix + "/"]
+        table[:] = [obj for obj in table if obj["id"] != int(pk)]
+        self.writes.append(("DELETE", endpoint, None))
 
 
 def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C"):
@@ -162,6 +169,71 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(first["created"], 1)
         self.assertEqual(second["created"], 0)
         self.assertEqual(second["drift"], 0)
+
+    def test_clean_install_uses_only_vendor_neutral_monitoring_field(self):
+        _choice_sets, fields = provision_baseline.load_baseline()
+        names = {field["name"] for field in fields}
+
+        self.assertIn("monitoring_enabled", names)
+        self.assertNotIn("checkmk_enabled", names)
+
+    def test_legacy_monitoring_values_migrate_and_rerun_is_idempotent(self):
+        client = MemoryNetBox()
+        legacy = client.post(
+            "/api/extras/custom-fields/",
+            {"name": "checkmk_enabled"},
+        )
+        client.tables["/api/dcim/devices/"] = [
+            {
+                "id": 100,
+                "custom_fields": {
+                    "checkmk_enabled": True,
+                    "monitoring_enabled": False,
+                    "credential_profile": "default",
+                },
+            },
+            {
+                "id": 101,
+                "custom_fields": {
+                    "checkmk_enabled": False,
+                    "monitoring_enabled": True,
+                },
+            },
+        ]
+        _choice_sets, fields = provision_baseline.load_baseline()
+        monitoring = [field for field in fields if field["name"] == "monitoring_enabled"]
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_custom_fields(
+                client,
+                monitoring,
+                {},
+                True,
+            )
+            writes = copy.deepcopy(client.writes)
+            second = provision_baseline.provision_custom_fields(
+                client,
+                monitoring,
+                {},
+                True,
+            )
+
+        self.assertTrue(first["monitoring_migration"]["legacy_removed"])
+        self.assertEqual(first["monitoring_migration"]["devices_updated"], 2)
+        self.assertFalse(second["monitoring_migration"]["legacy_found"])
+        self.assertEqual(client.writes, writes)
+        self.assertEqual(
+            [
+                device["custom_fields"]["monitoring_enabled"]
+                for device in client.tables["/api/dcim/devices/"]
+            ],
+            [True, False],
+        )
+        self.assertNotIn(
+            legacy,
+            client.tables["/api/extras/custom-fields/"],
+        )
 
     def test_exact_legacy_prophylaxis_choices_are_migrated_idempotently(self):
         client = MemoryNetBox()

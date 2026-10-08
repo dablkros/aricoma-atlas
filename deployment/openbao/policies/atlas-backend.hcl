@@ -5,3 +5,7 @@ path "atlas/data/netbox/api" {
 path "atlas/data/devices/credentials/*" {
   capabilities = ["read"]
 }
+
+path "atlas/data/zabbix/api" {
+  capabilities = ["read"]
+}

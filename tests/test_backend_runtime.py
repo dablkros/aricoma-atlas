@@ -156,6 +156,10 @@ class BackendRuntimeTests(unittest.TestCase):
             "http://atlas-oxidized:8888",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_ZABBIX_URL"],
+            "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_OXIDIZED_INVENTORY_FILE"],
             "/run/atlas/oxidized/router.json",
         )
@@ -190,7 +194,7 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(service["user"], f"{os.geteuid()}:{os.getegid()}")
         self.assertNotEqual(service["user"].split(":", 1)[0], "0")
         self.assertIn(
-            f"{self.root / '.runtime/openbao-backend.json'}:"
+            f"{(self.root / '.runtime/openbao-backend.json').resolve()}:"
             "/run/secrets/atlas-backend.json:ro",
             service["volumes"],
         )
@@ -199,7 +203,7 @@ class BackendRuntimeTests(unittest.TestCase):
             service["volumes"],
         )
         self.assertIn(
-            f"{self.root / '.runtime/prophylaxis'}:"
+            f"{(self.root / '.runtime/prophylaxis').resolve()}:"
             "/run/atlas/prophylaxis:rw",
             service["volumes"],
         )
@@ -208,7 +212,7 @@ class BackendRuntimeTests(unittest.TestCase):
             0o700,
         )
         self.assertIn(
-            f"{self.root / '.runtime/oxidized/ssh/known_hosts'}:"
+            f"{(self.root / '.runtime/oxidized/ssh/known_hosts').resolve()}:"
             "/run/atlas/ssh/known_hosts:ro",
             service["volumes"],
         )
@@ -220,7 +224,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             set(service["networks"]),
-            {"openbao", "netbox", "oxidized"},
+            {"openbao", "netbox", "oxidized", "zabbix"},
         )
         self.assertEqual(
             data["networks"],
@@ -236,6 +240,10 @@ class BackendRuntimeTests(unittest.TestCase):
                 "oxidized": {
                     "external": True,
                     "name": "atlas-oxidized-web",
+                },
+                "zabbix": {
+                    "external": True,
+                    "name": "atlas-zabbix-api",
                 },
             },
         )
@@ -344,6 +352,10 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                 side_effect=lambda _: order.append("oxidized"),
             ),
             patch(
+                "scripts.deploy_atlas.deploy_zabbix",
+                side_effect=lambda _: order.append("zabbix"),
+            ),
+            patch(
                 "scripts.deploy_atlas.deploy_backend",
                 side_effect=lambda _: order.append("backend"),
             ),
@@ -358,7 +370,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
 
         self.assertEqual(
             order,
-            ["openbao", "netbox", "oxidized", "backend", "proxy"],
+            ["openbao", "netbox", "oxidized", "zabbix", "backend", "proxy"],
         )
 
 

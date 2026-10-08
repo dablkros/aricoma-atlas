@@ -11,7 +11,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from atlas.deployment import (  # noqa: E402
-    NETBOX_NETWORK, OXIDIZED_NETWORK, connect_openbao, ensure_network,
+    NETBOX_NETWORK, OXIDIZED_NETWORK, ZABBIX_NETWORK, connect_openbao, ensure_network,
     wait_healthy,
 )
 from atlas.proxy import ensure_web_secret, load_config, prepare_runtime  # noqa: E402
@@ -68,7 +68,10 @@ def main():
     if args.prepare_only:
         print("[OK] Nginx configuration and credentials prepared; no containers started")
         return
-    for network in (NETBOX_NETWORK, OXIDIZED_NETWORK):
+    networks = [NETBOX_NETWORK, OXIDIZED_NETWORK]
+    if "zabbix" in config["services"]:
+        networks.append(ZABBIX_NETWORK)
+    for network in networks:
         ensure_network(network)
     compose_step(file, "Compose validation", "config", "--quiet")
     compose_step(file, "image pull", "pull")
