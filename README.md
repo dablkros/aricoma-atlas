@@ -32,6 +32,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
+sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
 ```
@@ -620,15 +621,17 @@ curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
   | python3 -m json.tool
 ```
 
-Počas testu možno sledovať bezpečné structured logy:
+Počas checku možno sledovať filtrované bezpečné structured logy:
 
 ```bash
-sudo atlasctl backend logs -f
+sudo atlasctl prophylaxis logs --tail=100 -f
 ```
 
-Vyradené zariadenie vytvorí event `prophylaxis_device_skipped` s bezpečným
-`reason_code`. Úspešný alebo neúspešný pokus vytvorí `cpu_collection_completed`
-alebo `cpu_collection_failed`; credentials a raw CLI output sa nelogujú.
+Príkaz zobrazuje eventy `ansible_execution_failed`, `ansible_runner_failed`,
+`prophylaxis_collection_completed` a `prophylaxis_collection_failed`. Pri
+Ansible chybe obsahuje bezpečnú kategóriu `reason_code`, stav a návratový kód
+Runnera a názov eventu/tasku. Credentials, exception text a raw CLI output sa
+nelogujú. Celý backend stream zostáva dostupný cez `sudo atlasctl backend logs`.
 
 NetBox multiselect custom field sa z REST API číta ako zoznam objektov
 `{value, label}`. Atlas používa presnú hodnotu `value`; prijíma aj raw string
@@ -833,6 +836,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
+sudo atlasctl prophylaxis logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
 sudo atlasctl proxy logs [docker compose logs options]
 ```
@@ -846,6 +850,7 @@ Význam:
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |
 | `sudo atlasctl oxidized reconcile` | Overí runtime mounty a zosúladí/reloadne Oxidized inventory. |
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
+| `sudo atlasctl prophylaxis logs -f` | Sleduje iba bezpečné profylaxia/Ansible diagnostické eventy z backendu. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
 | `sudo atlasctl proxy logs -f` | Sleduje live logy Nginx HTTPS ingressu. |
 

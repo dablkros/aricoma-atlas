@@ -107,6 +107,22 @@ Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným 
 monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
 súčasťou podporovaného produkčného nastavenia.
 
+## Prevádzková diagnostika
+
+Filtrované profylaxia a Ansible eventy z backend kontajnera zobrazí:
+
+```bash
+sudo atlasctl prophylaxis logs --tail=100
+sudo atlasctl prophylaxis logs -f
+```
+
+Príkaz akceptuje rovnaké voľby ako `docker compose logs`, napríklad `--tail`,
+`--since` a `-f`. Zobrazuje iba eventy `ansible_execution_failed`,
+`ansible_runner_failed`, `prophylaxis_collection_completed` a
+`prophylaxis_collection_failed`. Diagnostika môže obsahovať bezpečný
+`reason_code`, Runner status/return code a názov Ansible eventu a tasku.
+Credentials, text výnimky a raw výstup zariadenia sa do logu nezapisujú.
+
 ## Výsledok
 
 Transport vracia interný `RawCheckResult`. Python parser ho normalizuje napríklad

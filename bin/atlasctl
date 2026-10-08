@@ -27,6 +27,7 @@ Usage:
   sudo atlasctl oxidized host-key scan HOST [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized logs [docker compose logs options]
+  sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
   sudo atlasctl proxy logs [docker compose logs options]
 
@@ -37,6 +38,7 @@ Commands:
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
+  prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
   proxy logs            Show Nginx ingress container logs.
 EOF
@@ -165,6 +167,18 @@ backend_logs() {
     exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend logs "$@" backend
 }
 
+prophylaxis_logs() {
+    [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
+    docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
+        logs --no-color "$@" backend \
+        | awk '
+            /"event"[[:space:]]*:[[:space:]]*"ansible_execution_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"ansible_runner_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_completed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_failed"/
+        '
+}
+
 proxy_logs() {
     [[ -f "$PROXY_COMPOSE" ]] || die "Nginx proxy runtime is not prepared"
     exec docker compose -f "$PROXY_COMPOSE" -p atlas-proxy logs "$@" proxy
@@ -245,6 +259,19 @@ main() {
                 logs)
                     shift
                     backend_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        prophylaxis)
+            shift
+            case "${1:-}" in
+                logs)
+                    shift
+                    prophylaxis_logs "$@"
                     ;;
                 *)
                     usage
