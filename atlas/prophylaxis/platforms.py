@@ -13,6 +13,8 @@ AuthenticationType = Literal["ssh", "api_token"]
 class AnsiblePlatformProfile:
     slug: str
     transport: Literal["ssh", "https"]
+    default_port: int
+    netbox_service_name: str | None
     ansible_connection: str
     ansible_network_os: str
     authentication: AuthenticationType
@@ -30,6 +32,8 @@ ANSIBLE_PLATFORMS = {
     "cisco-ios": AnsiblePlatformProfile(
         slug="cisco-ios",
         transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
         ansible_connection="ansible.netcommon.network_cli",
         ansible_network_os="cisco.ios.ios",
         authentication="ssh",
@@ -40,6 +44,8 @@ ANSIBLE_PLATFORMS = {
     "cisco-ios-xe": AnsiblePlatformProfile(
         slug="cisco-ios-xe",
         transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
         ansible_connection="ansible.netcommon.network_cli",
         ansible_network_os="cisco.ios.ios",
         authentication="ssh",
@@ -50,6 +56,8 @@ ANSIBLE_PLATFORMS = {
     "cisco-cbs": AnsiblePlatformProfile(
         slug="cisco-cbs",
         transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
         ansible_connection="ansible.netcommon.network_cli",
         ansible_network_os="community.ciscosmb.ciscosmb",
         authentication="ssh",
@@ -60,6 +68,8 @@ ANSIBLE_PLATFORMS = {
     "fortios": AnsiblePlatformProfile(
         slug="fortios",
         transport="https",
+        default_port=443,
+        netbox_service_name="fortios-api",
         ansible_connection="ansible.netcommon.httpapi",
         ansible_network_os="fortinet.fortios.fortios",
         authentication="api_token",

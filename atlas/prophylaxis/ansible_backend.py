@@ -206,6 +206,7 @@ class AnsibleBackend:
     def _inventory(
         self,
         host: str,
+        port: int,
         profile: AnsiblePlatformProfile,
     ) -> dict:
         variables = {
@@ -217,13 +218,14 @@ class AnsibleBackend:
             "ansible_host_key_checking": self.strict_host_keys,
         }
         if profile.transport == "ssh":
+            variables["ansible_port"] = port
             variables["ansible_network_cli_ssh_type"] = "libssh"
         if profile.transport == "https":
             variables.update(
                 {
                     "ansible_httpapi_use_ssl": True,
                     "ansible_httpapi_validate_certs": self.fortios_validate_certs,
-                    "ansible_httpapi_port": 443,
+                    "ansible_httpapi_port": port,
                 }
             )
         return {"all": {"hosts": {"atlas_target": variables}}}
@@ -245,6 +247,7 @@ class AnsibleBackend:
         self,
         *,
         host: str,
+        port: int,
         profile: AnsiblePlatformProfile,
         check_id: CheckId,
         credentials: dict,
@@ -309,7 +312,7 @@ class AnsibleBackend:
                     project_dir=str(self.project_dir),
                     playbook="playbooks/run_check.yml",
                     roles_path=[str(self.project_dir / "roles")],
-                    inventory=self._inventory(host, profile),
+                    inventory=self._inventory(host, port, profile),
                     extravars={
                         "atlas_check": check_id.value,
                         "atlas_platform": profile.slug,
@@ -328,6 +331,7 @@ class AnsibleBackend:
                     extra={
                         "event": "ansible_runner_failed",
                         "platform": profile.slug,
+                        "port": port,
                         "check": check_id.value,
                         "reason_code": "ansible_execution_failed",
                         "exception_type": type(exc).__name__,
@@ -342,6 +346,7 @@ class AnsibleBackend:
                     extra={
                         "event": "ansible_execution_failed",
                         "platform": profile.slug,
+                        "port": port,
                         "check": check_id.value,
                         "reason_code": failure.code,
                         "runner_status": str(

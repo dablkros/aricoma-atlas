@@ -81,7 +81,9 @@ async function apiRequest(path, options = {}) {
 
 function titleCase(value) {
   const labels = {
+    ambiguous_service_port: "Ambiguous service port",
     api_token_missing_or_invalid: "API token missing or invalid",
+    invalid_service_port: "Invalid service port",
   };
   if (labels[value]) return labels[value];
   return String(value || "unknown")

@@ -48,6 +48,14 @@ class DeviceInactiveError(DeviceResolutionError):
     code = "device_inactive"
 
 
+class AmbiguousServicePortError(DeviceResolutionError):
+    code = "ambiguous_service_port"
+
+
+class InvalidServicePortError(DeviceResolutionError):
+    code = "invalid_service_port"
+
+
 class ProphylaxisExecutionError(RuntimeError):
     code = "execution_failed"
 
@@ -96,6 +104,7 @@ class ParseFailedError(ProphylaxisExecutionError):
 
 
 __all__ = [
+    "AmbiguousServicePortError",
     "AnsibleContentError",
     "AnsibleExecutionError",
     "AuthenticationFailedError",
@@ -108,6 +117,7 @@ __all__ = [
     "ConnectionTimeoutError",
     "HostKeyMismatchError",
     "HostKeyUnknownError",
+    "InvalidServicePortError",
     "MissingCredentialProfileError",
     "MissingDeviceNameError",
     "MissingManufacturerError",

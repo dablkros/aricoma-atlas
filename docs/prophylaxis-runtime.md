@@ -1,6 +1,6 @@
 # Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Stav dokumentácie: 2026-10-07. Implementácia zachováva Atlas ako orchestrátor;
+Stav dokumentácie: 2026-10-08. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
@@ -11,6 +11,7 @@ Atlas UI/API
   -> existujúci NetBoxService
   -> active + profylaxia_enabled + profylaxia_checks
   -> device/IP/platform/vendor/credential_profile
+  -> NetBox Application Service -> connection port
   -> existujúci OpenBaoService a admin credential namespace
   -> AnsiblePlatformRegistry
   -> AnsibleBackend / ansible-runner
@@ -37,6 +38,29 @@ Pri upgrade existujúceho Fortinet profilu pridaj `api_token` do rovnakého
 `username`/`password`, ak profil používa aj Oxidized. Chýbajúci alebo neplatný
 token sa vracia ako `api_token_missing_or_invalid`; nejde o Ansible connection
 failure.
+
+## Port služby z NetBoxu
+
+Pre platformu `fortios` Atlas vyhľadá na konkrétnom zariadení Application
+Service s presným názvom `fortios-api`. Z NetBox 4.7 poľa `port_mappings`
+akceptuje práve jednu TCP hodnotu, napríklad:
+
+```text
+fortios-api -> TCP/444 -> ["tcp/444"]
+```
+
+Port sa odovzdá do `ansible.netcommon.httpapi` ako `ansible_httpapi_port`.
+Atlas porty aktívne neskenuje. Ak služba `fortios-api` na zariadení neexistuje,
+použije platformový default `443`, aby ostala zachovaná kompatibilita. Viac
+služieb s rovnakým názvom alebo viac port mappings skončí s
+`ambiguous_service_port`; iný protokol, neplatný port alebo neplatná odpoveď
+skončí s `invalid_service_port`. Port sa vyhodnotí ešte pred čítaním secretu.
+
+Kontrakt zodpovedá NetBox 4.7.1, ktorý reprezentuje mapovania ako zoznam
+`protocol/port` reťazcov a podporuje REST filtre `device_id` a `name`:
+
+- [NetBox 4.7.1 Service model](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/models/ipam/service.md)
+- [NetBox 4.7.1 ServiceFilterSet](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/ipam/filtersets.py#L1292-L1368)
 
 ## Stabilné check ID
 

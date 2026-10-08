@@ -6,11 +6,13 @@ import logging
 
 from atlas.device_credentials import DeviceValidationError
 from atlas.prophylaxis.errors import (
+    AmbiguousServicePortError,
     CheckNotSelectedError,
     DeviceAmbiguousError,
     DeviceInactiveError,
     DeviceNotFoundError,
     DeviceResolutionError,
+    InvalidServicePortError,
     MissingCredentialProfileError,
     MissingDeviceNameError,
     MissingManufacturerError,
@@ -26,7 +28,10 @@ from atlas.prophylaxis.models import (
     StoredCheckResult,
 )
 from atlas.prophylaxis.parsers import normalize_cpu
-from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
+from atlas.prophylaxis.platforms import (
+    AnsiblePlatformProfile,
+    AnsiblePlatformRegistry,
+)
 from atlas.prophylaxis.store import ResultStoreError
 from atlas.services.errors import DependencyError
 
@@ -134,6 +139,36 @@ def device_target(device: dict) -> DeviceTarget:
     )
 
 
+def resolve_service_port(services: object, default_port: int) -> int:
+    """Resolve one exact NetBox 4.7 TCP port mapping or use the platform default."""
+    if not isinstance(services, list):
+        raise InvalidServicePortError()
+    if not services:
+        return default_port
+    if len(services) != 1:
+        raise AmbiguousServicePortError()
+
+    service = services[0]
+    if not isinstance(service, dict):
+        raise InvalidServicePortError()
+    mappings = service.get("port_mappings")
+    if not isinstance(mappings, list) or not mappings:
+        raise InvalidServicePortError()
+    if len(mappings) != 1:
+        raise AmbiguousServicePortError()
+
+    mapping = mappings[0]
+    if not isinstance(mapping, str):
+        raise InvalidServicePortError()
+    protocol, separator, raw_port = mapping.partition("/")
+    if protocol != "tcp" or separator != "/" or not raw_port.isdecimal():
+        raise InvalidServicePortError()
+    port = int(raw_port)
+    if not 1 <= port <= 65535:
+        raise InvalidServicePortError()
+    return port
+
+
 class ProphylaxisService:
     def __init__(
         self,
@@ -168,6 +203,19 @@ class ProphylaxisService:
             raise DeviceAmbiguousError()
         return devices[0]
 
+    def _connection_port(
+        self,
+        target: DeviceTarget,
+        profile: AnsiblePlatformProfile,
+    ) -> int:
+        if profile.netbox_service_name is None:
+            return profile.default_port
+        services = self.netbox.get_device_services(
+            target.id,
+            profile.netbox_service_name,
+        )
+        return resolve_service_port(services, profile.default_port)
+
     def collect(self, identifier: int | str, check_id: CheckId | str) -> CheckResult:
         try:
             check_id = CheckId(check_id)
@@ -200,6 +248,7 @@ class ProphylaxisService:
                     check_id=check_id,
                     status="unsupported",
                 )
+            connection_port = self._connection_port(target, profile)
             credentials = self.openbao.get_device_credentials(
                 target.vendor,
                 target.credential_profile,
@@ -207,6 +256,7 @@ class ProphylaxisService:
             )
             raw_result = self.backend.execute(
                 host=target.host,
+                port=connection_port,
                 profile=profile,
                 check_id=check_id,
                 credentials=credentials,
@@ -250,6 +300,7 @@ class ProphylaxisService:
                 "event": "prophylaxis_collection_completed",
                 "device": device_name,
                 "platform": platform,
+                "port": connection_port,
                 "check": check_id.value,
                 "status": "ok",
             },
@@ -350,6 +401,7 @@ __all__ = [
     "ProphylaxisService",
     "PublicProphylaxisDevice",
     "device_target",
+    "resolve_service_port",
     "selected_check_values",
     "validate_check_selection",
     "validate_cpu_selection",

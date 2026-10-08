@@ -385,6 +385,31 @@ class NetBoxServiceTests(unittest.TestCase):
             },
         )
 
+    def test_device_services_use_exact_device_and_name_filters(self):
+        requester = QueueRequester(
+            FakeResponse(
+                data={
+                    "next": None,
+                    "results": [
+                        {
+                            "id": 7,
+                            "name": "fortios-api",
+                            "port_mappings": ["tcp/444"],
+                        }
+                    ],
+                }
+            )
+        )
+        service, _openbao = self.service(requester)
+
+        result = service.get_device_services(10, "fortios-api")
+
+        self.assertEqual(result[0]["port_mappings"], ["tcp/444"])
+        self.assertEqual(
+            requester.calls[0][1]["params"],
+            {"device_id": 10, "name": "fortios-api"},
+        )
+
 
 class OxidizedServiceTests(unittest.TestCase):
     def service(self, requester, sleeper=None):

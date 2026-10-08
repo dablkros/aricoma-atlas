@@ -33,8 +33,9 @@ def netbox_device(platform="cisco-ios-xe", checks=None):
 
 
 class FakeNetBox:
-    def __init__(self, devices):
+    def __init__(self, devices, services=None):
         self.devices = devices
+        self.services = services or []
         self.calls = []
 
     def get_all(self, endpoint, params=None):
@@ -43,6 +44,12 @@ class FakeNetBox:
 
     def get_prophylaxis_devices(self):
         return self.devices
+
+    def get_device_services(self, device_id, name):
+        self.calls.append(
+            ("/api/ipam/services/", {"device_id": device_id, "name": name})
+        )
+        return self.services
 
 
 class FakeOpenBao:
@@ -88,9 +95,9 @@ class FakeBackend:
 
 
 class ProphylaxisServiceTests(unittest.TestCase):
-    def service(self, devices, *, openbao=None, backend=None):
+    def service(self, devices, *, services=None, openbao=None, backend=None):
         return ProphylaxisService(
-            FakeNetBox(devices),
+            FakeNetBox(devices, services),
             openbao or FakeOpenBao(),
             backend=backend or FakeBackend(),
         )
@@ -125,17 +132,70 @@ class ProphylaxisServiceTests(unittest.TestCase):
         self.assertEqual(result.values.current_percent, 12.0)
         self.assertEqual(openbao.calls, [("cisco", "default", "ssh")])
         self.assertEqual(backend.calls[0]["host"], "10.10.10.1")
+        self.assertEqual(backend.calls[0]["port"], 22)
         self.assertNotIn("password", result.model_dump_json())
 
     def test_fortios_uses_api_token_authentication_and_structured_data(self):
         openbao = FakeOpenBao()
-        result = self.service(
+        backend = FakeBackend()
+        service = self.service(
             [netbox_device("fortios")],
+            services=[{"name": "fortios-api", "port_mappings": ["tcp/444"]}],
             openbao=openbao,
-        ).collect_cpu(10)
+            backend=backend,
+        )
+
+        result = service.collect_cpu(10)
 
         self.assertEqual(result.values.current_percent, 12.0)
         self.assertEqual(openbao.calls, [("fortinet", "default", "api_token")])
+        self.assertEqual(backend.calls[0]["port"], 444)
+        self.assertIn(
+            (
+                "/api/ipam/services/",
+                {"device_id": 10, "name": "fortios-api"},
+            ),
+            service.netbox.calls,
+        )
+
+    def test_fortios_without_named_service_uses_https_default(self):
+        backend = FakeBackend()
+
+        result = self.service(
+            [netbox_device("fortios")],
+            backend=backend,
+        ).collect_cpu(10)
+
+        self.assertEqual(result.status, "ok")
+        self.assertEqual(backend.calls[0]["port"], 443)
+
+    def test_invalid_or_ambiguous_fortios_service_stops_before_secret_lookup(self):
+        cases = (
+            ([{"port_mappings": ["udp/444"]}], "invalid_service_port"),
+            ([{"port_mappings": ["tcp/443", "tcp/444"]}], "ambiguous_service_port"),
+            (
+                [
+                    {"port_mappings": ["tcp/443"]},
+                    {"port_mappings": ["tcp/444"]},
+                ],
+                "ambiguous_service_port",
+            ),
+        )
+        for services, expected in cases:
+            with self.subTest(expected=expected):
+                openbao = FakeOpenBao()
+                backend = FakeBackend()
+
+                result = self.service(
+                    [netbox_device("fortios")],
+                    services=services,
+                    openbao=openbao,
+                    backend=backend,
+                ).collect_cpu(10)
+
+                self.assertEqual(result.error_code, expected)
+                self.assertEqual(openbao.calls, [])
+                self.assertEqual(backend.calls, [])
 
     def test_legacy_cpu_choice_remains_accepted_during_migration(self):
         device = netbox_device(

@@ -77,6 +77,7 @@ class AnsibleBackendTests(unittest.TestCase):
 
         result = self.backend(runner).execute(
             host="192.0.2.10",
+            port=22,
             profile=profile,
             check_id=CheckId.CPU_UTILIZATION,
             credentials={"username": "admin", "password": "secret"},
@@ -89,6 +90,10 @@ class AnsibleBackendTests(unittest.TestCase):
             ["atlas_target"],
         )
         self.assertNotIn("secret", repr(call["inventory"]))
+        self.assertEqual(
+            call["inventory"]["all"]["hosts"]["atlas_target"]["ansible_port"],
+            22,
+        )
         self.assertEqual(
             call["roles_path"],
             [str(ROOT / "automation" / "roles")],
@@ -114,6 +119,7 @@ class AnsibleBackendTests(unittest.TestCase):
 
         self.backend(runner).execute(
             host="192.0.2.20",
+            port=444,
             profile=profile,
             check_id=CheckId.CPU_UTILIZATION,
             credentials={"api_token": "token-value"},
@@ -123,6 +129,7 @@ class AnsibleBackendTests(unittest.TestCase):
         host = call["inventory"]["all"]["hosts"]["atlas_target"]
         self.assertEqual(host["ansible_connection"], "ansible.netcommon.httpapi")
         self.assertTrue(host["ansible_httpapi_validate_certs"])
+        self.assertEqual(host["ansible_httpapi_port"], 444)
         self.assertEqual(
             call["envvars"]["ATLAS_FORTIOS_API_TOKEN"],
             "token-value",

@@ -128,6 +128,16 @@ class NetBoxService:
             },
         )
 
+    def get_device_services(self, device_id: int, name: str) -> List[dict]:
+        """Return an exact named application service assigned to one device."""
+        return self.get_all(
+            "/api/ipam/services/",
+            params={
+                "device_id": device_id,
+                "name": name,
+            },
+        )
+
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> dict:
         token = self.openbao.get_netbox_api_token()
         return self._request_json(self._endpoint_url(endpoint), token, params=params)
