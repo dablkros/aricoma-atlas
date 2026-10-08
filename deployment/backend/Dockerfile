@@ -20,8 +20,13 @@ WORKDIR /app
 COPY requirements.txt /app/requirements.txt
 RUN python -m pip install --requirement /app/requirements.txt
 
+COPY automation/collections/requirements.yml /app/automation/collections/requirements.yml
+RUN ansible-galaxy collection install \
+        --requirements-file /app/automation/collections/requirements.yml \
+        --collections-path /usr/share/ansible/collections
 COPY --chown=atlas:atlas atlas /app/atlas
 COPY --chown=atlas:atlas catalog /app/catalog
+COPY --chown=atlas:atlas automation /app/automation
 
 USER 10001:10001
 

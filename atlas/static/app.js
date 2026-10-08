@@ -80,6 +80,12 @@ async function apiRequest(path, options = {}) {
 }
 
 function titleCase(value) {
+  const labels = {
+    ambiguous_service_port: "Ambiguous service port",
+    api_token_missing_or_invalid: "API token missing or invalid",
+    invalid_service_port: "Invalid service port",
+  };
+  if (labels[value]) return labels[value];
   return String(value || "unknown")
     .replaceAll("_", " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
@@ -238,7 +244,7 @@ function resultText(result) {
   if (result.status === "ok") {
     return `${Number(result.values.current_percent).toFixed(1)}% CPU`;
   }
-  return titleCase(result.error);
+  return titleCase(result.error_code);
 }
 
 function resultTime(result) {
@@ -283,7 +289,7 @@ function renderProphylaxisDevices() {
 
     const stored = latestResult(device.name);
     const result = document.createElement("td");
-    result.className = stored?.status === "error" ? "check-result check-error" : "check-result";
+    result.className = stored && stored.status !== "ok" ? "check-result check-error" : "check-result";
     result.textContent = resultText(stored);
     const collected = document.createElement("td");
     collected.className = "muted";
@@ -443,7 +449,7 @@ async function runCpuCheck(device) {
     toast(
       result.status === "ok"
         ? `${result.device}: ${Number(result.values.current_percent).toFixed(1)}% CPU.`
-        : `${result.device}: ${titleCase(result.error)}.`,
+        : `${result.device}: ${titleCase(result.error_code)}.`,
       result.status === "ok" ? "success" : "error",
     );
   } catch (error) {

@@ -3,7 +3,10 @@ choice_sets:
     description: "options for profylaxia"
     base_choices: null
     extra_choices:
-      - ["CPU utilization", "CPU utilization"]
+      - ["cpu_utilization", "CPU utilization"]
+      - ["os_version", "OS version"]
+      - ["cpu_temperature", "CPU temperature"]
+      - ["uptime", "Uptime"]
       - ["Memory utilization", "Memory utilization"]
       - ["Interface utilization", "Interface utilization"]
       - ["interface errors", "interface errors"]

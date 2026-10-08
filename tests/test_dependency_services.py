@@ -195,6 +195,49 @@ class OpenBaoServiceTests(unittest.TestCase):
                 self.assertEqual(raised.exception.category, "error")
                 self.assertNotIn("sensitive", str(raised.exception))
 
+    def test_fortios_api_token_reuses_admin_credential_namespace(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "username": "oxidized-user",
+            "password": "oxidized-password",
+            "api_token": "prophylaxis-token",
+        }
+        service = self.service(client)
+
+        credentials = service.get_device_credentials(
+            "fortinet",
+            "default",
+            authentication="api_token",
+        )
+
+        self.assertEqual(credentials, {"api_token": "prophylaxis-token"})
+        client.kv_read.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/fortinet/default/admin",
+            mount="atlas",
+        )
+
+    def test_fortios_missing_api_token_has_actionable_error(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "username": "oxidized-user",
+            "password": "oxidized-password",
+        }
+
+        with self.assertRaises(DeviceValidationError) as raised:
+            self.service(client).get_device_credentials(
+                "fortinet",
+                "default",
+                authentication="api_token",
+            )
+
+        self.assertEqual(
+            raised.exception.code,
+            "api_token_missing_or_invalid",
+        )
+
 
 class NetBoxServiceTests(unittest.TestCase):
     def service(self, requester, token="nbt_key.plaintext"):
@@ -340,6 +383,31 @@ class NetBoxServiceTests(unittest.TestCase):
                 "cf_profylaxia_enabled": "true",
                 "status": "active",
             },
+        )
+
+    def test_device_services_use_exact_device_and_name_filters(self):
+        requester = QueueRequester(
+            FakeResponse(
+                data={
+                    "next": None,
+                    "results": [
+                        {
+                            "id": 7,
+                            "name": "fortios-api",
+                            "port_mappings": ["tcp/444"],
+                        }
+                    ],
+                }
+            )
+        )
+        service, _openbao = self.service(requester)
+
+        result = service.get_device_services(10, "fortios-api")
+
+        self.assertEqual(result[0]["port_mappings"], ["tcp/444"])
+        self.assertEqual(
+            requester.calls[0][1]["params"],
+            {"device_id": 10, "name": "fortios-api"},
         )
 
 

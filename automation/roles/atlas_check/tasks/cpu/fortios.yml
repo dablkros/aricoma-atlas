@@ -1,0 +1,17 @@
+---
+- name: Collect FortiOS CPU utilization through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_resource_usage
+    vdom: root
+    params:
+      resource: cpu
+      scope: global
+      interval: 1-min
+  register: atlas_fortios_cpu
+  changed_when: false
+
+- name: Prepare FortiOS structured CPU data for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data: "{{ atlas_fortios_cpu.meta.results }}"

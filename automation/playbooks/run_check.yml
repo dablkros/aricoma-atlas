@@ -1,0 +1,12 @@
+---
+- name: Run one allow-listed Atlas prophylaxis check
+  hosts: atlas_target
+  gather_facts: false
+  vars:
+    ansible_user: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
+    ansible_password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
+    ansible_become_password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_ENABLE_PASSWORD') }}"
+    ansible_become: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_ENABLE_PASSWORD') | length > 0 }}"
+    ansible_become_method: enable
+  roles:
+    - atlas_check

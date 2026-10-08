@@ -1,0 +1,12 @@
+---
+- name: Collect Cisco IOS CPU utilization
+  cisco.ios.ios_command:
+    commands:
+      - show processes cpu
+  register: atlas_cisco_cpu
+  changed_when: false
+
+- name: Prepare Cisco IOS CPU output for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      raw_output: "{{ atlas_cisco_cpu.stdout[0] }}"

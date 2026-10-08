@@ -57,11 +57,13 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                 "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                 "ATLAS_PROPHYLAXIS_RESULT_RETENTION": "5000",
+                "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
+                "ATLAS_ANSIBLE_JOB_TIMEOUT": "90",
                 "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
                 "ATLAS_SSH_STRICT_HOST_KEYS": "false",
                 "ATLAS_SSH_CONNECT_TIMEOUT": "4",
-                "ATLAS_SSH_AUTH_TIMEOUT": "5",
                 "ATLAS_SSH_COMMAND_TIMEOUT": "30",
+                "ATLAS_FORTIOS_VALIDATE_CERTS": "true",
                 "ATLAS_HTTP_CONNECT_TIMEOUT": "2.5",
                 "ATLAS_HTTP_READ_TIMEOUT": "12",
             },
@@ -85,14 +87,16 @@ class SettingsTests(unittest.TestCase):
             Path("/run/atlas/prophylaxis/results.sqlite3"),
         )
         self.assertEqual(settings.prophylaxis_result_retention, 5000)
+        self.assertEqual(settings.ansible_project_dir, Path("/app/automation"))
+        self.assertEqual(settings.ansible_job_timeout, 90)
         self.assertEqual(
             settings.ssh_known_hosts_file,
             Path("/run/atlas/ssh/known_hosts"),
         )
         self.assertFalse(settings.ssh_strict_host_keys)
         self.assertEqual(settings.ssh_connect_timeout, 4.0)
-        self.assertEqual(settings.ssh_auth_timeout, 5.0)
         self.assertEqual(settings.ssh_command_timeout, 30.0)
+        self.assertTrue(settings.fortios_validate_certs)
         self.assertEqual(settings.http_connect_timeout, 2.5)
         self.assertEqual(settings.http_read_timeout, 12.0)
 
@@ -109,9 +113,10 @@ class SettingsTests(unittest.TestCase):
             {"oxidized_inventory_file": "../router.json"},
             {"prophylaxis_results_file": "../results.sqlite3"},
             {"prophylaxis_result_retention": 99},
+            {"ansible_project_dir": "../automation"},
+            {"ansible_job_timeout": 0},
             {"ssh_known_hosts_file": "../known_hosts"},
             {"ssh_connect_timeout": 0},
-            {"ssh_auth_timeout": 61},
             {"ssh_command_timeout": 301},
             {"http_connect_timeout": 0},
             {"http_read_timeout": 121},
@@ -190,8 +195,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261006-1", page.text)
-        self.assertIn("/static/styles.css?v=20261006-1", page.text)
+        self.assertIn("/static/app.js?v=20261007-1", page.text)
+        self.assertIn("/static/styles.css?v=20261007-1", page.text)
         self.assertIn("/api/prophylaxis/devices", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)

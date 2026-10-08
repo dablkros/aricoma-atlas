@@ -1,0 +1,12 @@
+---
+collections:
+  - name: ansible.netcommon
+    version: 8.6.2
+  - name: ansible.utils
+    version: 6.1.0
+  - name: cisco.ios
+    version: 11.5.1
+  - name: community.ciscosmb
+    version: 1.0.12
+  - name: fortinet.fortios
+    version: 2.6.0

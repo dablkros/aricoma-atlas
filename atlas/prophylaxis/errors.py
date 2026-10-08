@@ -48,16 +48,84 @@ class DeviceInactiveError(DeviceResolutionError):
     code = "device_inactive"
 
 
+class AmbiguousServicePortError(DeviceResolutionError):
+    code = "ambiguous_service_port"
+
+
+class InvalidServicePortError(DeviceResolutionError):
+    code = "invalid_service_port"
+
+
+class ProphylaxisExecutionError(RuntimeError):
+    code = "execution_failed"
+
+    def __init__(self) -> None:
+        super().__init__(self.code)
+
+
+class UnsupportedPlatformError(ProphylaxisExecutionError):
+    code = "unsupported_platform"
+
+
+class AnsibleExecutionError(ProphylaxisExecutionError):
+    code = "ansible_execution_failed"
+
+
+class AnsibleContentError(ProphylaxisExecutionError):
+    code = "ansible_content_error"
+
+
+class HostKeyUnknownError(ProphylaxisExecutionError):
+    code = "host_key_unknown"
+
+
+class HostKeyMismatchError(ProphylaxisExecutionError):
+    code = "host_key_mismatch"
+
+
+class ConnectionTimeoutError(ProphylaxisExecutionError):
+    code = "connection_timeout"
+
+
+class AuthenticationFailedError(ProphylaxisExecutionError):
+    code = "authentication_failed"
+
+
+class ConnectionFailedError(ProphylaxisExecutionError):
+    code = "connection_failed"
+
+
+class SSHNegotiationFailedError(ProphylaxisExecutionError):
+    code = "ssh_negotiation_failed"
+
+
+class ParseFailedError(ProphylaxisExecutionError):
+    code = "parse_failed"
+
+
 __all__ = [
+    "AmbiguousServicePortError",
+    "AnsibleContentError",
+    "AnsibleExecutionError",
+    "AuthenticationFailedError",
     "DeviceAmbiguousError",
     "DeviceInactiveError",
     "DeviceNotFoundError",
     "DeviceResolutionError",
     "CheckNotSelectedError",
+    "ConnectionFailedError",
+    "ConnectionTimeoutError",
+    "HostKeyMismatchError",
+    "HostKeyUnknownError",
+    "InvalidServicePortError",
     "MissingCredentialProfileError",
     "MissingDeviceNameError",
     "MissingManufacturerError",
     "MissingPlatformError",
     "MissingPrimaryIPError",
+    "ParseFailedError",
+    "ProphylaxisExecutionError",
     "ProphylaxisDisabledError",
+    "SSHNegotiationFailedError",
+    "UnsupportedPlatformError",
 ]

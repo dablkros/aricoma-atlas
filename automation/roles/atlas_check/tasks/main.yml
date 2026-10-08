@@ -1,0 +1,38 @@
+---
+- name: Validate the Atlas execution contract
+  ansible.builtin.assert:
+    that:
+      - atlas_schema_version | int == 1
+      - atlas_check == "cpu_utilization"
+      - atlas_platform in atlas_task_files
+    quiet: true
+  vars:
+    atlas_task_files:
+      cisco-ios: cpu/cisco_ios.yml
+      cisco-ios-xe: cpu/cisco_ios.yml
+      cisco-cbs: cpu/cisco_cbs.yml
+      fortios: cpu/fortios.yml
+
+- name: Resolve the allow-listed platform task
+  ansible.builtin.set_fact:
+    atlas_task_file: "{{ atlas_task_files[atlas_platform] }}"
+  vars:
+    atlas_task_files:
+      cisco-ios: cpu/cisco_ios.yml
+      cisco-ios-xe: cpu/cisco_ios.yml
+      cisco-cbs: cpu/cisco_cbs.yml
+      fortios: cpu/fortios.yml
+
+- name: Execute the platform-specific read-only collector
+  ansible.builtin.include_tasks: "{{ atlas_task_file }}"
+
+- name: ATLAS_RESULT
+  ansible.builtin.set_fact:
+    atlas_result:
+      schema_version: 1
+      check: "{{ atlas_check }}"
+      platform: "{{ atlas_platform }}"
+      status: ok
+      data: "{{ atlas_transport_result.data | default(none) }}"
+      raw_output: "{{ atlas_transport_result.raw_output | default(none) }}"
+      error_code: null

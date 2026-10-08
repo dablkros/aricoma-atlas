@@ -7,7 +7,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **OpenBao 2.7.0** ako centrálny secrets backend,
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
-- **Atlas FastAPI backend 0.2.0-beta** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.3.0-beta** zostavený a spustený v samostatnom kontajneri,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,
@@ -32,6 +32,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
+sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
 ```
@@ -42,7 +43,7 @@ Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, D
 
 # Aktuálny stav
 
-**Posledný vydaný release:** `v0.2.0-beta`
+**Posledný vydaný release:** `v0.3.0-beta`
 
 Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
@@ -69,7 +70,7 @@ Deklarovaná kombinácia pre tento deployment:
 - NetBox Docker `5.1.1`
 - NetBox image `docker.io/netboxcommunity/netbox:v4.7.1-5.1.1`
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
-- Atlas backend image `aricoma-atlas-backend:0.2.0-beta`
+- Atlas backend image `aricoma-atlas-backend:0.3.0-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -452,7 +453,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.2.0-beta","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.3.0-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -564,7 +565,7 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
 - samostatný zoznam aktívnych zariadení s `profylaxia_enabled=true` a zvolenou
-  kontrolou `CPU utilization`,
+  kontrolou `cpu_utilization` (label `CPU utilization`),
 - explicitné tlačidlo **Run CPU check** a posledný lokálne uložený výsledok.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -601,7 +602,7 @@ raw príkazový výstup.
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261006-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261007-1' \
   | grep -i '^cache-control:'
 ```
 
@@ -620,15 +621,21 @@ curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
   | python3 -m json.tool
 ```
 
-Počas testu možno sledovať bezpečné structured logy:
+Počas checku možno sledovať filtrované bezpečné structured logy:
 
 ```bash
-sudo atlasctl backend logs -f
+sudo atlasctl prophylaxis logs --tail=100 -f
 ```
 
-Vyradené zariadenie vytvorí event `prophylaxis_device_skipped` s bezpečným
-`reason_code`. Úspešný alebo neúspešný pokus vytvorí `cpu_collection_completed`
-alebo `cpu_collection_failed`; credentials a raw CLI output sa nelogujú.
+Príkaz zobrazuje eventy `ansible_execution_failed`, `ansible_runner_failed`,
+`prophylaxis_collection_completed` a `prophylaxis_collection_failed`. Pri
+Ansible chybe obsahuje bezpečnú kategóriu `reason_code`, stav a návratový kód
+Runnera a názov eventu/tasku. Credentials, exception text a raw CLI output sa
+nelogujú. Celý backend stream zostáva dostupný cez `sudo atlasctl backend logs`.
+
+NetBox multiselect custom field sa z REST API číta ako zoznam objektov
+`{value, label}`. Atlas používa presnú hodnotu `value`; prijíma aj raw string
+zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
 
 `GET /api/oxidized/status` zámerne nevykonáva credential resolution ani plný sync. `inventory_issues` je lacný stavový údaj: počet názvov prítomných iba v jednej z množín NetBox-enabled/runtime plus chýbajúce alebo duplicitné mená z NetBox odpovede. Zmena credentials alebo ostatných polí sa ukáže až vo výsledku explicitného syncu.
 
@@ -829,6 +836,7 @@ sudo atlasctl status
 sudo atlasctl openbao
 sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
+sudo atlasctl prophylaxis logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
 sudo atlasctl proxy logs [docker compose logs options]
 ```
@@ -842,6 +850,7 @@ Význam:
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |
 | `sudo atlasctl oxidized reconcile` | Overí runtime mounty a zosúladí/reloadne Oxidized inventory. |
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
+| `sudo atlasctl prophylaxis logs -f` | Sleduje iba bezpečné profylaxia/Ansible diagnostické eventy z backendu. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
 | `sudo atlasctl proxy logs -f` | Sleduje live logy Nginx HTTPS ingressu. |
 
@@ -1415,9 +1424,10 @@ Prvá reusable runtime collection vrstva pre CPU je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
 explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs` a `fortios`,
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Threshold evaluation a scheduler zatiaľ nie
-sú súčasťou tejto vrstvy. Manuálnu CPU kontrolu, lokálnu históriu a frontend
-tlačidlo poskytuje Atlas Operations UI.
+secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
+Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
+Threshold evaluation a scheduler zatiaľ nie sú súčasťou tejto vrstvy. Manuálnu
+CPU kontrolu, lokálnu históriu a frontend tlačidlo poskytuje Atlas Operations UI.
 
 Pre lokálny development a test je host-key verification dočasne vypnutá cez
 `ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
@@ -1425,18 +1435,20 @@ explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
 
 Aktuálne možnosti:
 
-- CPU utilization
+- `cpu_utilization` — CPU utilization
+- `os_version` — OS version
+- `cpu_temperature` — CPU temperature
+- `uptime` — Uptime
 - Memory utilization
 - Interface utilization
 - interface errors
 - Routing table
 - Routing protocol neighbors
 - HA status
-- Temperature
+- Temperature (legacy choice; nový interný check používa `cpu_temperature`)
 
-Hodnoty sa zámerne zachovávajú presne v deklarovanej forme.
-
-Bootstrap ich automaticky nenormalizuje ani neprepisuje.
+Nové execution flow používa stabilné interné ID. Počas migrácie backend naďalej
+akceptuje pôvodnú CPU hodnotu `CPU utilization` na už existujúcich zariadeniach.
 
 ## Custom Fields
 
@@ -2076,6 +2088,14 @@ Ak objekt existuje, ale jeho konfigurácia sa líši od Atlas deklarácie, boots
 
 Cieľom je zabrániť nechcenej modifikácii existujúcej zákazníckej konfigurácie.
 
+Jedinou úzkou výnimkou je verzovaná migrácia pôvodného Atlas choice setu
+`Profylaxia checks`: ak sa existujúci objekt presne zhoduje so starou Atlas
+schémou, `--apply` nahradí pôvodnú CPU hodnotu stabilnými check ID a pridá nové
+deklarované voľby. Ak sa líši ktorékoľvek ďalšie pole alebo zoznam obsahuje
+zákaznícku úpravu, objekt zostane chránený a bootstrap naďalej oznámi drift.
+Existujúce hodnoty zariadení sa hromadne neprepisujú; backend počas migrácie
+akceptuje aj pôvodnú hodnotu `CPU utilization`.
+
 ---
 
 # Rebuild Atlas Device Catalog
@@ -2285,7 +2305,7 @@ v0.1.0-beta
 Aktuálny tag:
 
 ```text
-v0.2.0-beta
+v0.3.0-beta
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -2315,8 +2335,8 @@ Odporúčaný release postup:
 ```bash
 git status
 python3 -m unittest discover -s tests -v
-git tag -a v0.2.0-beta -m "Aricoma Atlas v0.2.0-beta"
-git push origin v0.2.0-beta
+git tag -a v0.3.0-beta -m "Aricoma Atlas v0.3.0-beta"
+git push origin v0.3.0-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.
