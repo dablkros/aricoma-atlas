@@ -89,6 +89,9 @@ platforma sa prekladajú cez interné allow-listy v Pythone a v role.
 
 Credentials sa Ansible Runneru odovzdávajú iba ako environment konkrétneho
 procesu. `suppress_env_files=True` zabraňuje zápisu env/extravars súborov.
+Runner zároveň nastaví procesné `USER=atlas` a `LOGNAME=atlas`; nie sú to
+device credentials, ale stabilná lokálna identita pre Python/Ansible aj vtedy,
+keď hostiteľský runtime UID nemá v kontajnerovom `/etc/passwd` vlastný záznam.
 Runner používa adresár vytvorený cez `TemporaryDirectory`, práva `0700`, a celý
 adresár vrátane eventov/artifactov sa po jobe odstráni. Event handler uchová iba
 kontrakt tasku `ATLAS_RESULT` a posledný failure event; eventy neukladá.

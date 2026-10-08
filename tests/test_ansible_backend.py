@@ -11,6 +11,7 @@ from atlas.prophylaxis.ansible_backend import (
 from atlas.prophylaxis.errors import (
     AnsibleContentError,
     AuthenticationFailedError,
+    ConnectionFailedError,
     SSHNegotiationFailedError,
 )
 from atlas.prophylaxis.models import CheckId
@@ -92,6 +93,8 @@ class AnsibleBackendTests(unittest.TestCase):
             call["roles_path"],
             [str(ROOT / "automation" / "roles")],
         )
+        self.assertEqual(call["envvars"]["USER"], "atlas")
+        self.assertEqual(call["envvars"]["LOGNAME"], "atlas")
         self.assertTrue(call["suppress_env_files"])
         self.assertFalse(Path(call["private_data_dir"]).exists())
 
@@ -139,6 +142,11 @@ class AnsibleBackendTests(unittest.TestCase):
             (
                 "the role 'atlas_check' was not found",
                 AnsibleContentError,
+            ),
+            (
+                "Could not connect to https://192.0.2.20:443: "
+                "[Errno 104] Connection reset by peer",
+                ConnectionFailedError,
             ),
         )
         for message, expected in cases:

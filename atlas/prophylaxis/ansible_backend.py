@@ -104,7 +104,9 @@ def _failure_from_event(event: dict | None):
     ) or any(
         phrase in message
         for phrase in (
+            "connection reset by peer",
             "connection refused",
+            "could not connect to",
             "network is unreachable",
             "no route to host",
             "name or service not known",
@@ -287,6 +289,11 @@ class AnsibleBackend:
             local_tmp.mkdir(mode=0o700)
             environment = {
                 "HOME": str(home),
+                # The Compose runtime uses the host Atlas UID, which may not
+                # have a passwd entry inside the image. Python 3.13 then makes
+                # getpass.getuser() fail unless a process identity is present.
+                "USER": "atlas",
+                "LOGNAME": "atlas",
                 "TMPDIR": str(private_dir),
                 "ANSIBLE_CONFIG": str(self.project_dir / "ansible.cfg"),
                 "ANSIBLE_LOCAL_TEMP": str(local_tmp),
