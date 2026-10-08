@@ -1,5 +1,6 @@
 """Thin, secret-conscious Ansible Runner execution boundary."""
 
+import logging
 import os
 from pathlib import Path
 import shutil
@@ -7,18 +8,21 @@ import tempfile
 from typing import Callable
 
 from atlas.prophylaxis.errors import (
+    AnsibleContentError,
     AnsibleExecutionError,
     AuthenticationFailedError,
     ConnectionFailedError,
     ConnectionTimeoutError,
     HostKeyMismatchError,
     HostKeyUnknownError,
+    SSHNegotiationFailedError,
 )
 from atlas.prophylaxis.models import CheckId, RawCheckResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
 RESULT_TASK_SUFFIX = "ATLAS_RESULT"
+logger = logging.getLogger("atlas.prophylaxis.ansible")
 
 
 def _ansible_run(**kwargs):
@@ -33,21 +37,84 @@ def _failure_from_event(event: dict | None):
     message = " ".join(
         str(result.get(key, "")) for key in ("msg", "exception", "stderr")
     ).lower()
+    if any(
+        phrase in message
+        for phrase in (
+            "couldn't resolve module/action",
+            "could not resolve module/action",
+            "the role 'atlas_check' was not found",
+            "unable to retrieve file contents",
+        )
+    ):
+        return AnsibleContentError()
     if (
         "remote host identification has changed" in message
         or ("host key for" in message and "has changed" in message)
         or "bad host key" in message
     ):
         return HostKeyMismatchError()
-    if "host key verification failed" in message or "not found in known_hosts" in message:
+    if any(
+        phrase in message
+        for phrase in (
+            "host key verification failed",
+            "host key is unknown",
+            "hostkeynotverifiable",
+            "not found in known_hosts",
+        )
+    ):
         return HostKeyUnknownError()
-    if "authentication failed" in message or "permission denied" in message or "unauthorized" in message:
+    if any(
+        phrase in message
+        for phrase in (
+            "authentication failed",
+            "failed to authenticate",
+            "access denied",
+            "permission denied",
+            "unauthorized",
+        )
+    ):
         return AuthenticationFailedError()
+    if any(
+        phrase in message
+        for phrase in (
+            "kex error",
+            "key exchange failed",
+            "no match for method",
+            "no matching cipher",
+            "no matching host key",
+        )
+    ):
+        return SSHNegotiationFailedError()
     if "timed out" in message or "timeout" in message:
         return ConnectionTimeoutError()
-    if event and event.get("event") == "runner_on_unreachable":
+    if (
+        event
+        and event.get("event") == "runner_on_unreachable"
+    ) or any(
+        phrase in message
+        for phrase in (
+            "connection refused",
+            "network is unreachable",
+            "no route to host",
+            "name or service not known",
+        )
+    ):
         return ConnectionFailedError()
     return AnsibleExecutionError()
+
+
+def _failure_context(event: dict | None) -> dict[str, str]:
+    if not isinstance(event, dict):
+        return {
+            "ansible_event": "not_captured",
+            "ansible_task": "unknown",
+        }
+    event_data = event.get("event_data", {})
+    event_data = event_data if isinstance(event_data, dict) else {}
+    return {
+        "ansible_event": str(event.get("event") or "unknown")[:64],
+        "ansible_task": str(event_data.get("task") or "unknown")[:160],
+    }
 
 
 class AnsibleBackend:
@@ -200,11 +267,36 @@ class AnsibleBackend:
                     rotate_artifacts=0,
                     timeout=self.job_timeout,
                 )
-            except Exception:
+            except Exception as exc:
+                logger.warning(
+                    "ansible_runner_failed",
+                    extra={
+                        "event": "ansible_runner_failed",
+                        "platform": profile.slug,
+                        "check": check_id.value,
+                        "reason_code": "ansible_execution_failed",
+                        "exception_type": type(exc).__name__,
+                    },
+                )
                 raise AnsibleExecutionError() from None
 
             if getattr(result, "status", None) != "successful" or getattr(result, "rc", 1) != 0:
-                raise _failure_from_event(captured_failure)
+                failure = _failure_from_event(captured_failure)
+                logger.warning(
+                    "ansible_execution_failed",
+                    extra={
+                        "event": "ansible_execution_failed",
+                        "platform": profile.slug,
+                        "check": check_id.value,
+                        "reason_code": failure.code,
+                        "runner_status": str(
+                            getattr(result, "status", "unknown")
+                        )[:32],
+                        "runner_rc": getattr(result, "rc", None),
+                        **_failure_context(captured_failure),
+                    },
+                )
+                raise failure
             if captured_result is None:
                 raise AnsibleExecutionError()
             try:

@@ -63,6 +63,10 @@ class AnsibleExecutionError(ProphylaxisExecutionError):
     code = "ansible_execution_failed"
 
 
+class AnsibleContentError(ProphylaxisExecutionError):
+    code = "ansible_content_error"
+
+
 class HostKeyUnknownError(ProphylaxisExecutionError):
     code = "host_key_unknown"
 
@@ -83,11 +87,16 @@ class ConnectionFailedError(ProphylaxisExecutionError):
     code = "connection_failed"
 
 
+class SSHNegotiationFailedError(ProphylaxisExecutionError):
+    code = "ssh_negotiation_failed"
+
+
 class ParseFailedError(ProphylaxisExecutionError):
     code = "parse_failed"
 
 
 __all__ = [
+    "AnsibleContentError",
     "AnsibleExecutionError",
     "AuthenticationFailedError",
     "DeviceAmbiguousError",
@@ -107,5 +116,6 @@ __all__ = [
     "ParseFailedError",
     "ProphylaxisExecutionError",
     "ProphylaxisDisabledError",
+    "SSHNegotiationFailedError",
     "UnsupportedPlatformError",
 ]

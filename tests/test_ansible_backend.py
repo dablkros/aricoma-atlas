@@ -3,7 +3,12 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
-from atlas.prophylaxis.ansible_backend import AnsibleBackend
+from atlas.prophylaxis.ansible_backend import AnsibleBackend, _failure_from_event
+from atlas.prophylaxis.errors import (
+    AnsibleContentError,
+    AuthenticationFailedError,
+    SSHNegotiationFailedError,
+)
 from atlas.prophylaxis.models import CheckId
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 
@@ -116,6 +121,31 @@ class AnsibleBackendTests(unittest.TestCase):
             "token-value",
         )
         self.assertNotIn("token-value", repr(call["extravars"]))
+
+    def test_failure_classification_covers_safe_network_categories(self):
+        cases = (
+            (
+                "Failed to authenticate password: Access denied",
+                AuthenticationFailedError,
+            ),
+            (
+                "kex error: no match for method kex algos",
+                SSHNegotiationFailedError,
+            ),
+            (
+                "the role 'atlas_check' was not found",
+                AnsibleContentError,
+            ),
+        )
+        for message, expected in cases:
+            with self.subTest(message=message):
+                failure = _failure_from_event(
+                    {
+                        "event": "runner_on_failed",
+                        "event_data": {"res": {"msg": message}},
+                    }
+                )
+                self.assertIsInstance(failure, expected)
 
 
 if __name__ == "__main__":
