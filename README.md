@@ -35,6 +35,7 @@ sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs -f
 sudo atlasctl zabbix status
 sudo atlasctl zabbix sync
+sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
@@ -802,6 +803,7 @@ config["tls"]["ca_certificate"] = str(
 for service, hostname in (
     ("netbox", os.environ["NETBOX_HOSTNAME"]),
     ("oxidized", os.environ["OXIDIZED_HOSTNAME"]),
+    ("zabbix", os.environ["ZABBIX_HOSTNAME"]),
 ):
     config["services"][service]["hostname"] = hostname
     config["services"][service]["certificate"] = str(
@@ -858,6 +860,7 @@ sudo atlasctl oxidized reconcile
 sudo atlasctl oxidized logs [docker compose logs options]
 sudo atlasctl zabbix status
 sudo atlasctl zabbix sync
+sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs [docker compose logs options]
 sudo atlasctl prophylaxis logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
@@ -875,6 +878,7 @@ Význam:
 | `sudo atlasctl oxidized logs -f` | Sleduje live logy Oxidized. |
 | `sudo atlasctl zabbix status` | Overí Zabbix JSON-RPC API a počet Atlas-managed hostov. |
 | `sudo atlasctl zabbix sync` | Zosúladí `monitoring_enabled=true` zariadenia z NetBoxu do Zabbixu. |
+| `sudo atlasctl zabbix credentials` | Zobrazí HTTPS URL a administrátorské prihlasovacie údaje z OpenBao iba v lokálnej sudo session. |
 | `sudo atlasctl zabbix logs -f` | Sleduje Zabbix server, web a databázové logy. |
 | `sudo atlasctl prophylaxis logs -f` | Sleduje iba bezpečné profylaxia/Ansible diagnostické eventy z backendu. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
@@ -1032,6 +1036,7 @@ Prevádzkové a aplikačné rozhrania:
 ```text
 sudo atlasctl zabbix status
 sudo atlasctl zabbix sync
+sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
 
 POST /api/zabbix/sync
@@ -1041,6 +1046,12 @@ GET  /api/zabbix/problems
 GET  /api/devices/{device_id}/monitoring
 GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d
 ```
+
+`sudo atlasctl zabbix credentials` je explicitná privilegovaná operácia: cez
+deployer AppRole načíta iba `atlas/zabbix/admin`, krátkodobý OpenBao token vždy
+revokuje a zobrazí heslo v aktuálnom termináli. Výstup neposielaj do CI logov ani
+ticketov. Operations UI preberá validované HTTPS originy z `.runtime/proxy.yaml`
+a pri kartách NetBox, Oxidized a Zabbix zobrazí odkaz **Open** do novej karty.
 
 Metrika sa hľadá podľa centralizovaného item-key prefixu, nie podľa nestabilného
 `itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` používa

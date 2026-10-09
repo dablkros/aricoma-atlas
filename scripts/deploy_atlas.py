@@ -44,6 +44,11 @@ OPENBAO_IDENTITY_FILE = (
     / ".runtime"
     / "openbao-approle.json"
 )
+OPENBAO_BACKEND_IDENTITY_FILE = (
+    ROOT
+    / ".runtime"
+    / "openbao-backend.json"
+)
 
 OPENBAO_URL = os.environ.get(
     "OPENBAO_URL",
@@ -239,9 +244,36 @@ def verify_openbao_ready():
             f"{exc}"
         ) from exc
 
+    if not OPENBAO_BACKEND_IDENTITY_FILE.exists():
+        raise RuntimeError(
+            "Atlas backend OpenBao identity is missing. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile atlas-backend policy', then deploy again."
+        )
+
+    backend_token = None
+    try:
+        backend_token = client.login_from_identity(
+            OPENBAO_BACKEND_IDENTITY_FILE
+        )
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas backend cannot authenticate to OpenBao. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile atlas-backend policy', then deploy again."
+        ) from exc
+
+    try:
+        client.revoke_self(backend_token)
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas backend OpenBao authentication succeeded, but its "
+            "readiness token could not be revoked"
+        ) from exc
+
     ok(
         "OpenBao is initialized, unsealed "
-        "and Atlas AppRole authentication works"
+        "and Atlas deployer/backend AppRole authentication works"
     )
 
 

@@ -22,7 +22,7 @@ from atlas.services.zabbix_sync import (
     ZabbixSyncSummary,
 )
 from atlas.services.zabbix_sync import ZabbixSyncService
-from scripts import deploy_zabbix, zabbix_cli
+from scripts import deploy_zabbix, zabbix_admin, zabbix_cli
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -465,6 +465,38 @@ class ZabbixDeploymentTests(unittest.TestCase):
                 exit_code = zabbix_cli.print_sync()
 
         self.assertEqual(exit_code, 1)
+
+    def test_admin_credentials_command_revokes_openbao_token(self):
+        client = Mock()
+        client.kv_read.return_value = {
+            "username": "Admin",
+            "password": "test-password-that-is-long-enough-123456",
+        }
+        with (
+            patch.object(
+                zabbix_admin,
+                "connect_openbao",
+                return_value=(client, "temporary-token"),
+            ),
+            patch.object(
+                zabbix_admin,
+                "load_config",
+                return_value={
+                    "proxy": {"https_port": 443},
+                    "services": {
+                        "zabbix": {"hostname": "zabbix.example.test"},
+                    },
+                },
+            ),
+            contextlib.redirect_stdout(io.StringIO()) as output,
+        ):
+            zabbix_admin.main()
+
+        self.assertIn("URL: https://zabbix.example.test/", output.getvalue())
+        self.assertIn("Username: Admin", output.getvalue())
+        self.assertIn("Password: test-password", output.getvalue())
+        client.kv_read.assert_called_once_with("temporary-token", "zabbix/admin")
+        client.revoke_self.assert_called_once_with("temporary-token")
 
     def test_bootstrap_always_closes_admin_session(self):
         admin = Mock()

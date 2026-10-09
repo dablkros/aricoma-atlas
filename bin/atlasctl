@@ -30,6 +30,7 @@ Usage:
   sudo atlasctl oxidized logs [docker compose logs options]
   sudo atlasctl zabbix status
   sudo atlasctl zabbix sync
+  sudo atlasctl zabbix credentials
   sudo atlasctl zabbix logs [docker compose logs options]
   sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
@@ -44,6 +45,7 @@ Commands:
   oxidized logs         Show Oxidized container logs.
   zabbix status         Show Zabbix API and managed-host state.
   zabbix sync           Reconcile NetBox desired state into Zabbix.
+  zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
@@ -297,6 +299,12 @@ main() {
                     [[ $# -eq 0 ]] || die "zabbix ${action} accepts no options"
                     run_python_as_atlas \
                         "${ATLAS_ROOT}/scripts/zabbix_cli.py" "$action"
+                    ;;
+                credentials)
+                    shift
+                    [[ $# -eq 0 ]] || die "zabbix credentials accepts no options"
+                    run_python_as_atlas \
+                        "${ATLAS_ROOT}/scripts/zabbix_admin.py"
                     ;;
                 logs)
                     shift

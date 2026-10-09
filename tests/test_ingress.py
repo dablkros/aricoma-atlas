@@ -20,7 +20,7 @@ def customer_config():
         "services": {
             name: {"hostname": f"{name}.example.test", "certificate": f"/etc/atlas/{name}.crt",
                    "private_key": f"/etc/atlas/{name}.key"}
-            for name in ("netbox", "oxidized")
+            for name in ("netbox", "oxidized", "zabbix")
         },
     }
 
@@ -58,6 +58,22 @@ class IngressTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.load(config)
 
+    def test_all_three_ui_services_are_required(self):
+        config = customer_config()
+        del config["services"]["zabbix"]
+
+        with self.assertRaisesRegex(ValueError, "missing: zabbix"):
+            self.load(config)
+
+    def test_public_service_urls_include_nonstandard_https_port(self):
+        config = self.load(customer_config())
+        config["proxy"]["https_port"] = 8443
+
+        self.assertEqual(
+            proxy.public_service_urls(config)["zabbix"],
+            "https://zabbix.example.test:8443/",
+        )
+
     def test_nginx_hostname_injection_rejected(self):
         for name in ("oxidized.example.test; auth_basic off; #", "*.example.test", ""):
             config = customer_config()
@@ -94,12 +110,6 @@ class IngressTests(unittest.TestCase):
 
     def test_zabbix_ui_uses_the_existing_tls_proxy_model(self):
         config = customer_config()
-        config["services"]["zabbix"] = {
-            "hostname": "zabbix.example.test",
-            "certificate": "/etc/atlas/zabbix.crt",
-            "private_key": "/etc/atlas/zabbix.key",
-        }
-
         text = proxy.render_nginx(config)
 
         zabbix = text.split("server_name zabbix.example.test;", 1)[1]

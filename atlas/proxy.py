@@ -41,11 +41,14 @@ def load_config(path=None, validate_tls=True):
     if not isinstance(image, str) or not re.fullmatch(r"[a-zA-Z0-9./_-]+:[0-9][a-zA-Z0-9._-]*", image):
         raise ValueError("Proxy docker_image must use an explicit version tag")
     service_names = set(config["services"])
-    if service_names not in (
-        {"netbox", "oxidized"},
-        {"netbox", "oxidized", "zabbix"},
-    ):
-        raise ValueError("Configure netbox and oxidized, with optional zabbix ingress")
+    required_services = {"netbox", "oxidized", "zabbix"}
+    if service_names != required_services:
+        missing = ", ".join(sorted(required_services - service_names)) or "none"
+        unexpected = ", ".join(sorted(service_names - required_services)) or "none"
+        raise ValueError(
+            "Configure exactly netbox, oxidized and zabbix ingress services "
+            f"(missing: {missing}; unexpected: {unexpected})"
+        )
     hostnames = []
     for name, service in config["services"].items():
         hostname = service["hostname"]
@@ -67,6 +70,16 @@ def load_config(path=None, validate_tls=True):
         for name, service in config["services"].items():
             validate_certificate(name, service, ca)
     return config
+
+
+def public_service_urls(config):
+    """Return validated browser origins for services published by the proxy."""
+    port = config["proxy"]["https_port"]
+    suffix = "" if port == 443 else f":{port}"
+    return {
+        name: f"https://{service['hostname']}{suffix}/"
+        for name, service in config["services"].items()
+    }
 
 
 def validate_certificate(name, service, ca):

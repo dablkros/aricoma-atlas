@@ -55,6 +55,9 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_NETBOX_URL": "https://netbox.example.test",
                 "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                 "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+                "ATLAS_NETBOX_UI_URL": "https://netbox.example.test",
+                "ATLAS_OXIDIZED_UI_URL": "https://oxidized.example.test",
+                "ATLAS_ZABBIX_UI_URL": "https://zabbix.example.test",
                 "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                 "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                 "ATLAS_PROPHYLAXIS_RESULT_RETENTION": "5000",
@@ -82,6 +85,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(
             str(settings.zabbix_url),
             "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+        )
+        self.assertEqual(
+            str(settings.zabbix_ui_url),
+            "https://zabbix.example.test/",
         )
         self.assertEqual(
             settings.oxidized_inventory_file,
@@ -113,6 +120,9 @@ class SettingsTests(unittest.TestCase):
         invalid = (
             {"openbao_url": "ftp://bao.example.test"},
             {"netbox_url": "https://user:password@netbox.example.test"},
+            {"zabbix_ui_url": "http://zabbix.example.test"},
+            {"zabbix_ui_url": "https://user@zabbix.example.test"},
+            {"zabbix_ui_url": "https://zabbix.example.test/login"},
             {"openbao_identity_file": ""},
             {"openbao_identity_file": "../backend-identity.json"},
             {"oxidized_inventory_file": "../router.json"},
@@ -137,6 +147,7 @@ class SettingsTests(unittest.TestCase):
 
         self.assertIn("ATLAS_OPENBAO_IDENTITY_FILE=", content)
         self.assertIn("ATLAS_NETBOX_URL=", content)
+        self.assertIn("ATLAS_ZABBIX_UI_URL=", content)
         for forbidden in (
             "ATLAS_OPENBAO_TOKEN=",
             "ATLAS_NETBOX_TOKEN=",
@@ -200,9 +211,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261008-1", page.text)
-        self.assertIn("/static/styles.css?v=20261008-1", page.text)
+        self.assertIn("/static/app.js?v=20261009-1", page.text)
+        self.assertIn("/static/styles.css?v=20261009-1", page.text)
         self.assertIn('data-component="zabbix"', page.text)
+        self.assertIn('data-component-link="zabbix"', page.text)
         self.assertIn("/api/prophylaxis/devices", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)
@@ -509,7 +521,7 @@ class FakeOperations:
 
 
 class OperationsApiTests(unittest.TestCase):
-    def client(self, operations=None, dependency_error=None):
+    def client(self, operations=None, dependency_error=None, settings=None):
         openbao = FakeDependency()
         netbox = FakeDependency(dependency_error)
         oxidized = FakeDependency()
@@ -528,7 +540,7 @@ class OperationsApiTests(unittest.TestCase):
             oxidized_operations=operations or FakeOperations(),
         )
         return TestClient(
-            create_app(test_settings(), dependencies=dependencies),
+            create_app(settings or test_settings(), dependencies=dependencies),
             raise_server_exceptions=False,
         )
 
@@ -540,8 +552,24 @@ class OperationsApiTests(unittest.TestCase):
 
         self.assertEqual(platform.status_code, 200)
         self.assertEqual(platform.json()["status"], "healthy")
+        self.assertIsNone(platform.json()["components"]["zabbix"]["url"])
         self.assertEqual(oxidized.status_code, 200)
         self.assertEqual(oxidized.json()["runtime_inventory_devices"], 2)
+
+    def test_platform_status_exposes_validated_ui_origins(self):
+        settings = test_settings(
+            netbox_ui_url="https://netbox.example.test/",
+            oxidized_ui_url="https://oxidized.example.test/",
+            zabbix_ui_url="https://zabbix.example.test/",
+        )
+
+        response = self.client(settings=settings).get("/api/status")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json()["components"]["zabbix"]["url"],
+            "https://zabbix.example.test/",
+        )
 
     def test_platform_status_is_degraded_without_raw_dependency_detail(self):
         secret = "password=sensitive-token"
