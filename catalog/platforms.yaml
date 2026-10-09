@@ -10,6 +10,9 @@ platforms:
   fortiap: {name: FortiAP, manufacturer: Fortinet}
   fortianalyzer: {name: FortiAnalyzer, manufacturer: Fortinet}
   junos: {name: Juniper Junos, manufacturer: Juniper}
+  sophos-sfos: {name: Sophos Firewall OS, manufacturer: Sophos}
+  sophos-ap: {name: Sophos Access Point, manufacturer: Sophos}
+  sophos-red: {name: Sophos SD-RED, manufacturer: Sophos}
 
 # Explicit fields avoid confusing filenames, display models and slugs.
 # Multiple matches to different platforms are an error, not first-match-wins.
@@ -78,6 +81,13 @@ platform_mappings:
       platform: junos
     # ACX/PTX, newer QFX (Junos OS Evolved), AP, NFX, NetScreen and SRX
     # intentionally await a separate reviewed rule. No vendor-wide fallback.
+  Sophos:
+    - slugs: ['sophos-xg-*', 'sophos-xgs-*']
+      platform: sophos-sfos
+    - slugs: ['sophos-ap6-*', 'sophos-apx*']
+      platform: sophos-ap
+    - slugs: ['sophos-sd-red-*']
+      platform: sophos-red
 
 oxidized:
   image: docker.io/oxidized/oxidized:0.37.0
@@ -90,3 +100,5 @@ oxidized_platform_mapping:
   junos: {model: junos}
 # CBS, FortiAP and hardware FortiAnalyzer are deliberately unmapped pending
 # driver/hardware validation. Presence of ciscosmb/fortios.rb is not that proof.
+# Sophos platforms are inventory/monitoring identities only; no unverified
+# Oxidized model is assigned.

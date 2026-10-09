@@ -45,12 +45,18 @@
       "patterns": [
         "*.yaml"
       ]
+    },
+    "Sophos": {
+      "count": 21,
+      "patterns": [
+        "*.yaml"
+      ]
     }
   },
-  "total": 690,
-  "platform_mapping_sha256": "666bb95cf71e352148f2468c319d1fb99b259984c226d335fa2b87abf3b99fde",
+  "total": 711,
+  "platform_mapping_sha256": "055747e535ef3064a885a07bc8dfdafe7b1ac44994e1ebd5fbf6382c92b417b3",
   "platforms": {
-    "mapped": 495,
+    "mapped": 516,
     "unmapped": 195,
     "by_platform": {
       "cisco-cbs": 21,
@@ -59,7 +65,10 @@
       "fortianalyzer": 3,
       "fortiap": 21,
       "fortios": 91,
-      "junos": 184
+      "junos": 184,
+      "sophos-ap": 3,
+      "sophos-red": 2,
+      "sophos-sfos": 16
     },
     "unmapped_device_types": [
       {

@@ -177,7 +177,10 @@ class FakeNetBox:
 
 class FakeOpenBao:
     def get_snmp_credentials(self, vendor, profile):
-        if (vendor, profile) != ("cisco", "default"):
+        if (vendor, profile) not in {
+            ("cisco", "default"),
+            ("sophos", "default"),
+        }:
             raise AssertionError("unexpected credential lookup")
         return {"version": "2c", "community": COMMUNITY}, 7
 
@@ -298,6 +301,49 @@ class ZabbixSyncTests(unittest.TestCase):
         self.assertIn({"tag": "netbox_id", "value": "123"}, payload["tags"])
         self.assertEqual(client.host_queries[0]["tags"][0]["operator"], 1)
         self.assertNotIn(COMMUNITY, repr(result))
+
+    def test_sophos_firewall_and_access_point_use_generic_snmp_template(self):
+        devices = [
+            netbox_device(
+                id=201,
+                name="XGS-01",
+                platform={"slug": "sophos-sfos"},
+                device_type={"manufacturer": {"slug": "sophos"}},
+            ),
+            netbox_device(
+                id=202,
+                name="AP6-01",
+                platform={"slug": "sophos-ap"},
+                device_type={"manufacturer": {"slug": "sophos"}},
+            ),
+        ]
+
+        result, client = self.sync(devices)
+
+        self.assertEqual(result.summary.created, 2)
+        self.assertEqual(
+            {payload["host"] for payload in client.created},
+            {"XGS-01", "AP6-01"},
+        )
+        self.assertTrue(
+            all(
+                payload["templates"] == [{"templateid": "23"}]
+                for payload in client.created
+            )
+        )
+
+    def test_sophos_red_is_not_silently_treated_as_snmp_firewall(self):
+        device = netbox_device(
+            name="RED-01",
+            platform={"slug": "sophos-red"},
+            device_type={"manufacturer": {"slug": "sophos"}},
+        )
+
+        result, client = self.sync([device])
+
+        self.assertEqual(result.status, "partial_success")
+        self.assertEqual(result.issues[0].code, "unsupported_platform")
+        self.assertEqual(client.created, [])
 
     def test_unchanged_host_is_noop(self):
         result, client = self.sync([netbox_device()], [managed_host()])

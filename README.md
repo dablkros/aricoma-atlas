@@ -91,22 +91,23 @@ Deklarovaná kombinácia pre tento deployment:
 | Cisco | 238 |
 | Fortinet | 162 |
 | Juniper | 290 |
-| **Spolu** | **690** |
+| Sophos | 21 |
+| **Spolu** | **711** |
 
 ## Component templates
 
 | Typ komponentu | Počet |
 |---|---:|
-| Console ports | 860 |
-| Console server ports | 0 |
-| Power ports | 331 |
-| Interfaces | 23 456 |
+| Console ports | 900 |
+| Console server ports | 5 |
+| Power ports | 360 |
+| Interfaces | 23 637 |
 | Rear ports | 2 |
 | Front ports | 0 |
-| Module bays | 1 687 |
+| Module bays | 1 712 |
 | Device bays | 2 |
 | Power outlets | 4 |
-| **Spolu** | **26 342** |
+| **Spolu** | **26 622** |
 
 ---
 
@@ -1059,20 +1060,37 @@ Centralizované mapovanie pre Zabbix 7.0 je:
 | `cisco-cbs` | `Network Generic Device by SNMP` |
 | `fortios` | `FortiGate by SNMP` |
 | `junos` | `Juniper by SNMP` |
+| `sophos-sfos` | `Network Generic Device by SNMP` |
+| `sophos-ap` | `Network Generic Device by SNMP` |
 
-Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business template;
-`cisco-cbs` preto používa generic SNMP template. To poskytuje základné SNMP
-dáta, ale negarantuje vendor-specific CPU item. Chýbajúci template alebo CPU
-item je explicitný stav, nie silent fallback. Názvy sú viazané na oficiálny
-[Zabbix integrations katalóg](https://www.zabbix.com/integrations/snmp) a
-[FortiGate 7.0 template source](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/fortinet/fortigate_snmp?at=release%2F7.0).
+Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business ani Sophos
+template. `cisco-cbs`, `sophos-sfos` a `sophos-ap` preto používajú oficiálny
+generic SNMP template. To poskytuje základné dostupnostné a interface dáta, ale
+negarantuje vendor-specific Sophos CPU, HA alebo VPN itemy. Komunitné Sophos
+template nie sú automaticky importované ani deklarované ako podporované.
+`sophos-red` je inventárna platforma bez priameho Zabbix mappingu, pretože
+SD-RED sa spravuje cez nadradený Sophos Firewall a samostatný SNMP agent nebol
+pre tento release overený. Chýbajúci template alebo CPU item je explicitný
+stav, nie silent fallback. Názvy sú viazané na oficiálny
+[Zabbix integrations katalóg](https://www.zabbix.com/integrations/snmp),
+[Zabbix 7.0 template source](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net?at=release%2F7.0),
+[Sophos Firewall SNMP dokumentáciu](https://docs.sophos.com/nsg/sophos-firewall/21.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/SNMP/index.html)
+a [Sophos AP6/APX SNMP dokumentáciu](https://docs.sophos.com/central/customer/help/en-us/ManageYourProducts/Wireless/AccessPoints/index.html).
 
 SNMPv2c community sa číta z
 `atlas/devices/credentials/<manufacturer>/<credential_profile>/snmp`, vloží sa
 do Zabbix secret macro `{$SNMP_COMMUNITY}` a nikdy sa nevracia cez Atlas API.
+Napríklad profil `sophos-default` používa cestu
+`atlas/devices/credentials/sophos/sophos-default/snmp`. Zariadenie musí mať v
+NetBoxe stav `active`, Primary IP, príslušnú Sophos platformu,
+`credential_profile=sophos-default` a `monitoring_enabled=true`.
 Schéma už rozpoznáva SNMPv3 credentials, ale prvá Zabbix verzia ich zámerne
 odmietne ako `unsupported_snmp_version`, kým nebude implementované presné
-mapovanie authPriv/authNoPriv.
+mapovanie security level, authPriv/authNoPriv, algoritmov a Zabbix interface
+detail polí. Sophos Firewall aj AP6/APX podporujú SNMPv3; obmedzenie je v
+aktuálnom Atlas reconciliation payload-e, nie v Sophose ani Zabbixe.
+Požadované Zabbix polia a ich číselné hodnoty sú zdokumentované v
+[Zabbix 7.0 Host interface API](https://www.zabbix.com/documentation/7.0/en/manual/api/reference/hostinterface/object).
 
 Atlas backend sa autentifikuje Zabbix API tokenom z `atlas/zabbix/api`.
 Administrátorské heslo používa iba idempotentný deployment bootstrap a je v
@@ -1669,8 +1687,9 @@ Aktuálny katalóg:
 Cisco       238
 Fortinet    162
 Juniper     290
+Sophos       21
 ----------------
-Spolu       690
+Spolu       711
 ```
 
 ---
@@ -1712,7 +1731,7 @@ C8200-*
 C8300-*
 ```
 
-Fortinet a Juniper sa v aktuálnej beta verzii vyberajú celé.
+Fortinet, Juniper a Sophos sa v aktuálnej beta verzii vyberajú celé.
 
 ---
 
@@ -1782,7 +1801,7 @@ NetBox Community Device Type Library
                 │
                 ▼
        Atlas Device Catalog
-          690 Device Types
+          711 Device Types
                 │
          ┌──────┴──────┐
          │             │
@@ -2207,7 +2226,7 @@ Príklad katalógu:
 
 ```text
 Device Types
-Existing: 690
+Existing: 711
 Missing:  0
 ```
 
@@ -2215,8 +2234,8 @@ Component templates:
 
 ```text
 TOTAL COMPONENTS
-catalog=26342
-existing=26342
+catalog=26622
+existing=26622
 missing=0
 ```
 
@@ -2305,17 +2324,18 @@ Kontroluje napríklad:
 Aktuálne overený stav:
 
 ```text
-Device Types: 690
+Device Types: 711
 ```
 
 Component coverage:
 
 ```text
-console-ports          860
-power-ports            331
-interfaces           23456
+console-ports          900
+console-server-ports     5
+power-ports            360
+interfaces           23637
 rear-ports               2
-module-bays            1687
+module-bays            1712
 device-bays               2
 power-outlets             4
 ```

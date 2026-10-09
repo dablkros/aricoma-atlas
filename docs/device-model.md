@@ -35,7 +35,7 @@ Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **
 
 The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` and the exceptional `CATALYST 3850 48PT 12 MGIG+36 GIG UPOE`; filename-only examples such as `C9500*` are insufficient. Slug patterns cover those verified aliases.
 
-**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet and 290 Juniper types: 690 total, **495 mapped / 195 unmapped**. See [complete audit including every unmapped model](platform-audit.json).
+**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet, 290 Juniper and 21 Sophos types: 711 total, **516 mapped / 195 unmapped**. See [complete audit including every unmapped model](platform-audit.json).
 
 | Platform name | Slug | Mapped Device Types | Oxidized model |
 |---|---|---:|---|
@@ -47,8 +47,19 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
 | Juniper Junos | `junos` | 184 | `junos` |
+| Sophos Firewall OS | `sophos-sfos` | 16 | unsupported/unmapped |
+| Sophos Access Point | `sophos-ap` | 3 | unsupported/unmapped |
+| Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
 
-Eight platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+Eleven platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+
+All pinned Sophos Device Types are cataloged. XG/XGS are assigned
+`sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
+`sophos-red`. Zabbix uses its official generic SNMP template for the firewall
+and access-point platforms. SD-RED remains inventory-only because the reviewed
+Sophos documentation describes it as centrally configured through SG UTM or
+Sophos Firewall; no direct SD-RED SNMP agent was established. None of the
+Sophos platforms receives an unverified Oxidized mapping.
 
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 
@@ -83,6 +94,7 @@ Examples:
 devices/credentials/cisco/cisco-default/admin
 devices/credentials/cisco/cisco-default/snmp
 devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/sophos/sophos-default/snmp
 devices/credentials/cisco/SW-CORE-01/admin
 ```
 
