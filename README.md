@@ -727,7 +727,56 @@ Vyplň všetky povinné hodnoty v `.runtime/proxy.yaml`:
 | `services.*.certificate` | Absolútna cesta k PEM server certifikátu vrátane intermediate chain. |
 | `services.*.private_key` | Absolútna cesta k príslušnému nešifrovanému PEM private key. |
 
-Certifikát musí pokrývať príslušný DNS názov. Jeden SAN certifikát môže pokrývať oba názvy. Deploy overuje zhodu certifikátu s kľúčom, platnosť, DNS meno a reťazec voči nastavenej CA; nevydáva certifikáty ani nemení DNS.
+Certifikát musí pokrývať príslušný DNS názov. Jeden SAN certifikát môže pokrývať
+všetky tri názvy. Deploy overuje zhodu certifikátu s kľúčom, platnosť, DNS meno
+a reťazec voči nastavenej CA; nevydáva certifikáty ani nemení DNS.
+
+### Doplnenie Zabbix webu na existujúcej inštalácii
+
+Atlas nevytvára DNS záznamy ani nevydáva certifikáty. Pred deploymentom vytvor
+v internom DNS samostatný Zabbix hostname smerujúci na hodnotu
+`proxy.listen_address`. Pre izolovaný LAB môže byť rovnaké mapovanie dočasne v
+`/etc/hosts` na správcovskej stanici.
+
+Najprv over, či existujúci server certifikát už obsahuje Zabbix hostname:
+
+```bash
+sudo openssl x509 \
+  -in /opt/aricoma-atlas/.runtime/tls/netbox.crt \
+  -noout -ext subjectAltName
+```
+
+Ak požadovaný `DNS:zabbix.example.internal` v SAN chýba, certifikát musí interná
+CA znovu vydať. Existujúci certifikát a private key možno použiť pre všetky tri
+služby iba vtedy, keď certifikát pokrýva všetky tri hostname.
+
+Do zdrojového `.runtime/proxy.yaml` doplň tretiu službu; konkrétne DNS meno a
+cesty nahraď hodnotami zákazníckeho prostredia:
+
+```yaml
+services:
+  netbox:
+    # existujúca konfigurácia
+  oxidized:
+    # existujúca konfigurácia
+  zabbix:
+    hostname: zabbix.example.internal
+    certificate: /absolute/path/to/server-fullchain.pem
+    private_key: /absolute/path/to/server.key
+```
+
+Potom nainštaluj commit, importuj site konfiguráciu a vykonaj celý reconcile:
+
+```bash
+sudo ./install.sh
+sudo atlasctl deploy
+sudo atlasctl zabbix status
+sudo atlasctl zabbix credentials
+```
+
+Posledný príkaz zobrazí cieľovú HTTPS URL a administrátorské údaje iba v
+aktuálnej sudo session. V Operations UI sa po úspešnom deploymente pri Zabbix
+karte zobrazí odkaz **Open**.
 
 ### LAB-only CA a SAN certifikát
 
