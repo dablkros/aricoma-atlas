@@ -901,11 +901,12 @@ def migrate_monitoring_enabled(client, existing_by_name, apply_changes):
         device_id = device.get("id")
         if isinstance(device_id, bool) or not isinstance(device_id, int):
             raise RuntimeError("NetBox returned a Device without a valid id")
-        custom_fields = dict(device["custom_fields"])
-        custom_fields["monitoring_enabled"] = desired_value
+        # NetBox 4.7 represents selection values as {value, label} on read,
+        # while writes still require raw values. Patch only the migrated field;
+        # NetBox merges it into the existing custom_field_data.
         client.patch(
             f"/api/dcim/devices/{device_id}/",
-            {"custom_fields": custom_fields},
+            {"custom_fields": {"monitoring_enabled": desired_value}},
         )
         result["devices_updated"] += 1
 

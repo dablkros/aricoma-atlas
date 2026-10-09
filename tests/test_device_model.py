@@ -63,7 +63,11 @@ class MemoryNetBox:
     def patch(self, endpoint, payload):
         prefix, pk, _ = endpoint.rsplit("/", 2)
         obj = next(o for o in self.tables[prefix + "/"] if o["id"] == int(pk))
-        obj.update(copy.deepcopy(payload))
+        update = copy.deepcopy(payload)
+        custom_fields = update.pop("custom_fields", None)
+        obj.update(update)
+        if custom_fields is not None:
+            obj.setdefault("custom_fields", {}).update(custom_fields)
         self.writes.append(("PATCH", endpoint, payload))
         return copy.deepcopy(obj)
 
@@ -190,6 +194,12 @@ class PlatformTests(unittest.TestCase):
                     "checkmk_enabled": True,
                     "monitoring_enabled": False,
                     "credential_profile": "default",
+                    "profylaxia_checks": [
+                        {
+                            "value": "cpu_utilization",
+                            "label": "CPU utilization",
+                        },
+                    ],
                 },
             },
             {
@@ -229,6 +239,24 @@ class PlatformTests(unittest.TestCase):
                 for device in client.tables["/api/dcim/devices/"]
             ],
             [True, False],
+        )
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            [
+                {
+                    "value": "cpu_utilization",
+                    "label": "CPU utilization",
+                },
+            ],
+        )
+        self.assertEqual(
+            [write[2] for write in writes if "/api/dcim/devices/" in write[1]],
+            [
+                {"custom_fields": {"monitoring_enabled": True}},
+                {"custom_fields": {"monitoring_enabled": False}},
+            ],
         )
         self.assertNotIn(
             legacy,
