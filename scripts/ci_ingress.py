@@ -34,10 +34,13 @@ def fixtures(seed_inventory=True):
     run(["openssl", "req", "-newkey", "rsa:2048", "-nodes", "-subj", "/CN=netbox.atlas.test",
          "-keyout", str(key), "-out", str(csr)])
     extension = runtime / "extensions.cnf"
-    extension.write_text("subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test\n"
-                         "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n"
-                         "keyUsage=critical,digitalSignature,keyEncipherment\n"
-                         "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n")
+    extension.write_text(
+        "subjectAltName=DNS:netbox.atlas.test,DNS:oxidized.atlas.test,"
+        "DNS:zabbix.atlas.test\n"
+        "extendedKeyUsage=serverAuth\nbasicConstraints=critical,CA:FALSE\n"
+        "keyUsage=critical,digitalSignature,keyEncipherment\n"
+        "subjectKeyIdentifier=hash\nauthorityKeyIdentifier=keyid,issuer\n"
+    )
     run(["openssl", "x509", "-req", "-in", str(csr), "-CA", str(ca), "-CAkey", str(ca_key),
          "-CAcreateserial", "-days", "2", "-out", str(certificate), "-extfile", str(extension)])
     for private in (key, ca_key):
@@ -119,6 +122,10 @@ def verify(snapshot=False, compare=False, oxidized_only=False):
         }, headers={"Referer": netbox + "/login/", "Origin": netbox}, timeout=15, allow_redirects=False)
         if response.status_code != 302 or "sessionid" not in session.cookies:
             raise RuntimeError("NetBox HTTPS login POST failed")
+        zabbix = f"https://{config['services']['zabbix']['hostname']}:{port}"
+        response = session.get(zabbix + "/", timeout=15, allow_redirects=True)
+        if response.status_code != 200 or "Zabbix" not in response.text:
+            raise RuntimeError("Zabbix HTTPS login page is unavailable")
     file = ROOT / ".runtime/oxidized/docker-compose.yml"
     container = compose(file, "atlas-oxidized", "ps", "-q", "oxidized")
     inspected = json.loads(run(["docker", "inspect", container]))[0]
@@ -140,7 +147,7 @@ def verify(snapshot=False, compare=False, oxidized_only=False):
         previous = json.loads((ROOT / ".runtime/ci-ingress-snapshot.json").read_text())
         if previous["secret"] != secret or git("rev-parse", "refs/heads/atlas-ci") != previous["commit"]:
             raise RuntimeError("Oxidized credentials or Git history changed during redeployment")
-    print("[OK] Trusted HTTPS, Oxidized authentication and port isolation verified")
+    print("[OK] Trusted HTTPS, service ingress and port isolation verified")
     if compare:
         print("[OK] Credentials and Oxidized Git history survived redeployment")
 

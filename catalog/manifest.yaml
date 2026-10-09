@@ -60,3 +60,8 @@ vendors:
     mode: all
     include:
       - "*.yaml"
+
+  Sophos:
+    mode: all
+    include:
+      - "*.yaml"

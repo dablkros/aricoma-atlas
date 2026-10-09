@@ -115,20 +115,32 @@ function setPill(element, status, text = titleCase(status)) {
 }
 
 function renderPlatformStatus(payload) {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const card = document.querySelector(`[data-component="${name}"]`);
     const target = card.querySelector(".component-status");
     const componentStatus = payload.components?.[name]?.status || "unknown";
+    const componentUrl = payload.components?.[name]?.url;
     const dot = document.createElement("span");
     dot.className = `status-dot status-${statusClass(componentStatus)}`;
     dot.setAttribute("aria-hidden", "true");
     target.replaceChildren(dot, document.createTextNode(titleCase(componentStatus)));
+    const link = card.querySelector(".component-link");
+    if (link) {
+      if (componentUrl) {
+        link.href = componentUrl;
+        link.hidden = false;
+        link.setAttribute("aria-label", `Open ${card.querySelector("h3").textContent} in a new tab`);
+      } else {
+        link.removeAttribute("href");
+        link.hidden = true;
+      }
+    }
   }
   setConnection(payload.status, titleCase(payload.status));
 }
 
 function renderPlatformUnavailable() {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const target = document.querySelector(
       `[data-component="${name}"] .component-status`,
     );

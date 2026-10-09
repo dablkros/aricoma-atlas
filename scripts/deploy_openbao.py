@@ -93,23 +93,6 @@ RUNTIME_ROLES = {
             "device-credentials-read",
         ],
     },
-    "checkmk-runtime": {
-        "policy_file": (
-            ROOT
-            / "deployment"
-            / "openbao"
-            / "policies"
-            / "checkmk-runtime.hcl"
-        ),
-        "identity_file": (
-            ROOT
-            / ".runtime"
-            / "openbao-checkmk.json"
-        ),
-        "additional_policies": [
-            "device-credentials-read",
-        ],
-    },
     "oxidized-runtime": {
         "policy_file": (
             ROOT

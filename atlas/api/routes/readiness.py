@@ -20,7 +20,7 @@ router = APIRouter(tags=["health"])
 )
 def readiness(request: Request, response: Response) -> ReadinessResponse:
     result = request.app.state.dependencies.platform_status.check()
-    dependency_names = ("openbao", "netbox", "oxidized")
+    dependency_names = ("openbao", "netbox", "oxidized", "zabbix")
     states = {
         name: "ok" if result.components[name].status == "healthy" else "error"
         for name in dependency_names

@@ -20,9 +20,14 @@ from atlas.deployment import (  # noqa: E402
     NETBOX_NETWORK,
     OPENBAO_NETWORK,
     OXIDIZED_NETWORK,
+    ZABBIX_NETWORK,
     compose,
     wait_healthy,
     write_yaml,
+)
+from atlas.proxy import (  # noqa: E402
+    load_config as load_proxy_config,
+    public_service_urls,
 )
 
 
@@ -144,9 +149,19 @@ def runtime_path(config, root=ROOT):
     return Path(root) / config["runtime"]["directory"]
 
 
-def prepare_runtime(config, root=ROOT):
+def prepare_runtime(config, root=ROOT, ui_urls=None):
     root = Path(root).resolve()
     backend = config["backend"]
+    required_ui_urls = {"netbox", "oxidized", "zabbix"}
+    if not isinstance(ui_urls, dict) or set(ui_urls) != required_ui_urls:
+        raise RuntimeError(
+            "Atlas backend requires NetBox, Oxidized and Zabbix HTTPS UI URLs"
+        )
+    if any(
+        not isinstance(value, str) or not value.startswith("https://")
+        for value in ui_urls.values()
+    ):
+        raise RuntimeError("Atlas backend UI URLs must use HTTPS")
     runtime_base = root / ".runtime"
     if runtime_base.is_symlink():
         raise RuntimeError(f"Atlas runtime cannot be a symlink: {runtime_base}")
@@ -241,6 +256,10 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+                        "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+                        "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
+                        "ATLAS_OXIDIZED_UI_URL": ui_urls["oxidized"],
+                        "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
@@ -264,6 +283,7 @@ def prepare_runtime(config, root=ROOT):
                         "openbao": {},
                         "netbox": {},
                         "oxidized": {},
+                        "zabbix": {},
                     },
                     "ports": [
                         f"{network['listen_address']}:{network['host_port']}:{network['container_port']}"
@@ -286,6 +306,7 @@ def prepare_runtime(config, root=ROOT):
                 "openbao": {"external": True, "name": OPENBAO_NETWORK},
                 "netbox": {"external": True, "name": NETBOX_NETWORK},
                 "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
+                "zabbix": {"external": True, "name": ZABBIX_NETWORK},
             },
         },
     )
@@ -319,7 +340,11 @@ def parse_args():
 def main():
     args = parse_args()
     config = load_config()
-    compose_file = prepare_runtime(config)
+    proxy_config = load_proxy_config()
+    compose_file = prepare_runtime(
+        config,
+        ui_urls=public_service_urls(proxy_config),
+    )
 
     if args.prepare_only:
         print("[OK] Atlas backend runtime prepared; image not built and container not started")

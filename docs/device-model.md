@@ -1,7 +1,8 @@
 # Atlas device platform and credential contract
 
-Status: data model/bootstrap plus reusable Python resolver, reviewed 2026-10-02.
-NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
+Status: implemented data model, Oxidized reconciliation and Zabbix monitoring
+integration; reviewed 2026-10-08. NetBox 4.7.1 (NetBox Docker 5.1.1),
+Oxidized 0.37.0 and Zabbix 7.0.31 LTS.
 
 ## Ownership and deployment
 
@@ -9,8 +10,9 @@ NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
 |---|---|
 | NetBox | Device identity, manufacturer, Device Type, platform, primary IP, enable flags, explicit `credential_profile` |
 | OpenBao | Usernames, passwords, enable passwords, SNMP secrets, KV v2 mount `atlas` |
-| Atlas | Declarative catalog enrichment, service mappings, credential reference resolution and validation; future orchestration |
+| Atlas | Declarative catalog enrichment, service mappings, credential resolution and reconciliation orchestration |
 | Oxidized | Configuration collection and its independent Git history |
+| Zabbix | Current monitoring state, problems and metric history for Atlas-managed hosts |
 
 `sudo atlasctl deploy` retains the existing `bootstrap_netbox.py` flow:
 
@@ -33,7 +35,7 @@ Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **
 
 The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` and the exceptional `CATALYST 3850 48PT 12 MGIG+36 GIG UPOE`; filename-only examples such as `C9500*` are insufficient. Slug patterns cover those verified aliases.
 
-**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet and 290 Juniper types: 690 total, **495 mapped / 195 unmapped**. See [complete audit including every unmapped model](platform-audit.json).
+**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet, 290 Juniper and 21 Sophos types: 711 total, **516 mapped / 195 unmapped**. See [complete audit including every unmapped model](platform-audit.json).
 
 | Platform name | Slug | Mapped Device Types | Oxidized model |
 |---|---|---:|---|
@@ -45,8 +47,19 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
 | Juniper Junos | `junos` | 184 | `junos` |
+| Sophos Firewall OS | `sophos-sfos` | 16 | unsupported/unmapped |
+| Sophos Access Point | `sophos-ap` | 3 | unsupported/unmapped |
+| Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
 
-Eight platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+Eleven platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+
+All pinned Sophos Device Types are cataloged. XG/XGS are assigned
+`sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
+`sophos-red`. Zabbix uses its official generic SNMP template for the firewall
+and access-point platforms. SD-RED remains inventory-only because the reviewed
+Sophos documentation describes it as centrally configured through SG UTM or
+Sophos Firewall; no direct SD-RED SNMP agent was established. None of the
+Sophos platforms receives an unverified Oxidized mapping.
 
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 
@@ -81,6 +94,7 @@ Examples:
 devices/credentials/cisco/cisco-default/admin
 devices/credentials/cisco/cisco-default/snmp
 devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/sophos/sophos-default/snmp
 devices/credentials/cisco/SW-CORE-01/admin
 ```
 
@@ -131,11 +145,15 @@ SNMPv3 (authPriv shape):
 }
 ```
 
-The shape validator checks required nonempty strings. Protocol labels are stored as data; this does not assert Checkmk/driver support for every algorithm. Other SNMPv3 security levels need an explicit future schema extension.
+The shape validator checks required nonempty strings. Protocol labels are stored
+as data; this does not assert collector support for every algorithm. Zabbix
+reconciliation currently accepts SNMPv2c and explicitly reports
+`unsupported_snmp_version` for SNMPv3. Enabling authPriv/authNoPriv requires an
+explicit interface-details mapping and tests; no protocol fallback is used.
 
 ## Runtime contract and limits
 
-`atlas/device_credentials.py` is reusable by the future FastAPI layer:
+`atlas/device_credentials.py` is shared by the FastAPI and deployment layers:
 
 - `oxidized_reference(device)` ignores devices whose flag is not the boolean `true`; validates an enabled Device's platform, service mapping, explicit profile, vendor slug, name and IP.
 - `resolve_oxidized_device(device, client, token)` reads the exact `admin` path from OpenBao and validates username/password. The return object's representation hides credentials. Callers must not serialize or log its credential dictionary.
@@ -150,10 +168,14 @@ NetBox: manufacturer.slug=cisco, platform.slug=cisco-ios-xe
         credential_profile=cisco-default, oxidized_enabled=true
 Atlas:  cisco-ios-xe -> ios
 Bao:    atlas / devices/credentials/cisco/cisco-default/admin
-Future inventory consumer: name=SW-CORE-01, model=ios, credentials from Bao
+Consumers: Oxidized model=ios; Zabbix template=Cisco IOS by SNMP
 ```
 
-This change **does not implement FastAPI or automatic Oxidized inventory reconciliation**. The current `atlasctl oxidized reconcile` still reconciles its existing manually maintained private runtime inventory; it does not query NetBox. No generated secret file or NetBox-to-Oxidized writer is introduced. The runtime CSV remains a legacy beta manual workflow, not a second authoritative credential store. A future orchestrator must consume the resolver and handle inventory serialization, reloads and secret lifetimes explicitly.
+`atlasctl oxidized reconcile` and `atlasctl zabbix sync` both query NetBox as
+the source of truth and resolve only the referenced credentials from OpenBao.
+Oxidized receives an ephemeral JSON inventory; Zabbix receives a secret macro
+through its official API. Neither consumer becomes an authoritative inventory
+or credential store.
 
 ## Operator steps
 
@@ -162,7 +184,9 @@ This change **does not implement FastAPI or automatic Oxidized inventory reconci
 3. In the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel), create the real `admin` and optionally `snmp` secrets at the exact profile paths. Do not paste real secrets into Git, command history, reports or NetBox.
 4. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
 5. If legacy secrets exist at old `devices/credentials/default`, `devices/credentials/cisco` or `devices/snmp/...` paths, copy them through the authenticated OpenBao UI to the new hierarchy and verify consumers before retiring old keys. Deployment neither migrates nor overwrites secrets. The narrowed read policy only permits the new credential hierarchy.
-6. For an actual backup today, continue the documented beta manual onboarding; automatic use of the new NetBox/OpenBao reference awaits the orchestrator. Perform physical-device acceptance tests before enabling any newly verified driver family.
+6. Run `sudo atlasctl oxidized reconcile` and `sudo atlasctl zabbix sync`, then
+   perform physical-device acceptance tests before enabling any newly verified
+   driver family.
 
 ## Verification and evidence
 

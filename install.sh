@@ -60,8 +60,12 @@ validate_source_repo() {
         die "Missing scripts/deploy_netbox.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/deploy_backend.py" ]] || \
         die "Missing scripts/deploy_backend.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/deploy_zabbix.py" ]] || \
+        die "Missing scripts/deploy_zabbix.py in ${source_dir}"
     [[ -f "${source_dir}/deployment/backend.yaml" ]] || \
         die "Missing deployment/backend.yaml in ${source_dir}"
+    [[ -f "${source_dir}/deployment/zabbix.yaml" ]] || \
+        die "Missing deployment/zabbix.yaml in ${source_dir}"
     [[ -f "${source_dir}/deployment/backend/Dockerfile" ]] || \
         die "Missing deployment/backend/Dockerfile in ${source_dir}"
     [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \

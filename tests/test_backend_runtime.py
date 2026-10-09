@@ -3,11 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import yaml
 
 from atlas import __version__
+from atlas.openbao_client import OpenBaoAuthenticationError
 from scripts import deploy_atlas, deploy_backend
 
 
@@ -122,13 +123,22 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.environment.start()
         self.config = deploy_backend.validate_config(backend_config())
+        self.ui_urls = {
+            "netbox": "https://netbox.example.test/",
+            "oxidized": "https://oxidized.example.test/",
+            "zabbix": "https://zabbix.example.test/",
+        }
 
     def tearDown(self):
         self.environment.stop()
         self.temporary.cleanup()
 
     def test_prepare_runtime_writes_hardened_loopback_only_compose(self):
-        compose_file = deploy_backend.prepare_runtime(self.config, self.root)
+        compose_file = deploy_backend.prepare_runtime(
+            self.config,
+            self.root,
+            self.ui_urls,
+        )
         data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         service = data["services"]["backend"]
 
@@ -154,6 +164,14 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(
             service["environment"]["ATLAS_OXIDIZED_URL"],
             "http://atlas-oxidized:8888",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ZABBIX_URL"],
+            "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ZABBIX_UI_URL"],
+            "https://zabbix.example.test/",
         )
         self.assertEqual(
             service["environment"]["ATLAS_OXIDIZED_INVENTORY_FILE"],
@@ -190,7 +208,7 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(service["user"], f"{os.geteuid()}:{os.getegid()}")
         self.assertNotEqual(service["user"].split(":", 1)[0], "0")
         self.assertIn(
-            f"{self.root / '.runtime/openbao-backend.json'}:"
+            f"{(self.root / '.runtime/openbao-backend.json').resolve()}:"
             "/run/secrets/atlas-backend.json:ro",
             service["volumes"],
         )
@@ -199,7 +217,7 @@ class BackendRuntimeTests(unittest.TestCase):
             service["volumes"],
         )
         self.assertIn(
-            f"{self.root / '.runtime/prophylaxis'}:"
+            f"{(self.root / '.runtime/prophylaxis').resolve()}:"
             "/run/atlas/prophylaxis:rw",
             service["volumes"],
         )
@@ -208,7 +226,7 @@ class BackendRuntimeTests(unittest.TestCase):
             0o700,
         )
         self.assertIn(
-            f"{self.root / '.runtime/oxidized/ssh/known_hosts'}:"
+            f"{(self.root / '.runtime/oxidized/ssh/known_hosts').resolve()}:"
             "/run/atlas/ssh/known_hosts:ro",
             service["volumes"],
         )
@@ -220,7 +238,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             set(service["networks"]),
-            {"openbao", "netbox", "oxidized"},
+            {"openbao", "netbox", "oxidized", "zabbix"},
         )
         self.assertEqual(
             data["networks"],
@@ -236,6 +254,10 @@ class BackendRuntimeTests(unittest.TestCase):
                 "oxidized": {
                     "external": True,
                     "name": "atlas-oxidized-web",
+                },
+                "zabbix": {
+                    "external": True,
+                    "name": "atlas-zabbix-api",
                 },
             },
         )
@@ -254,7 +276,7 @@ class BackendRuntimeTests(unittest.TestCase):
         (self.root / ".runtime").symlink_to(target, target_is_directory=True)
 
         with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
-            deploy_backend.prepare_runtime(self.config, self.root)
+            deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
 
     def test_development_mode_does_not_require_or_mount_known_hosts(self):
         known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
@@ -268,7 +290,11 @@ class BackendRuntimeTests(unittest.TestCase):
             )
         )
 
-        compose_file = deploy_backend.prepare_runtime(config, self.root)
+        compose_file = deploy_backend.prepare_runtime(
+            config,
+            self.root,
+            self.ui_urls,
+        )
         service = yaml.safe_load(compose_file.read_text(encoding="utf-8"))[
             "services"
         ]["backend"]
@@ -291,7 +317,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "escaped"):
-            deploy_backend.prepare_runtime(config, self.root)
+            deploy_backend.prepare_runtime(config, self.root, self.ui_urls)
 
     @patch("scripts.deploy_backend.wait_healthy")
     @patch("scripts.deploy_backend.compose")
@@ -324,6 +350,76 @@ class BackendRuntimeTests(unittest.TestCase):
 
 
 class AtlasDeploymentOrderTests(unittest.TestCase):
+    def test_openbao_gate_validates_deployer_and_backend_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deployer = root / "deployer.json"
+            backend = root / "backend.json"
+            deployer.write_text("{}\n", encoding="utf-8")
+            backend.write_text("{}\n", encoding="utf-8")
+            client = Mock()
+            client.seal_status.return_value = {
+                "initialized": True,
+                "sealed": False,
+            }
+            client.login_from_identity.side_effect = [
+                "deployer-token",
+                "backend-token",
+            ]
+            with (
+                patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_BACKEND_IDENTITY_FILE",
+                    backend,
+                ),
+                patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
+                patch.object(deploy_atlas, "header"),
+                patch.object(deploy_atlas, "ok"),
+            ):
+                deploy_atlas.verify_openbao_ready()
+
+            self.assertEqual(
+                client.login_from_identity.call_args_list,
+                [call(deployer), call(backend)],
+            )
+            self.assertEqual(
+                client.revoke_self.call_args_list,
+                [call("deployer-token"), call("backend-token")],
+            )
+
+    def test_openbao_gate_has_actionable_backend_reconcile_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deployer = root / "deployer.json"
+            backend = root / "backend.json"
+            deployer.write_text("{}\n", encoding="utf-8")
+            backend.write_text("{}\n", encoding="utf-8")
+            client = Mock()
+            client.seal_status.return_value = {
+                "initialized": True,
+                "sealed": False,
+            }
+            client.login_from_identity.side_effect = [
+                "deployer-token",
+                OpenBaoAuthenticationError("HTTP 400"),
+            ]
+            with (
+                patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_BACKEND_IDENTITY_FILE",
+                    backend,
+                ),
+                patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
+                patch.object(deploy_atlas, "header"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Reconcile atlas-backend policy",
+                ):
+                    deploy_atlas.verify_openbao_ready()
+
     def test_backend_runs_after_oxidized_and_before_proxy(self):
         order = []
         args = SimpleNamespace(prepare_only=False, verbose=False)
@@ -344,6 +440,10 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                 side_effect=lambda _: order.append("oxidized"),
             ),
             patch(
+                "scripts.deploy_atlas.deploy_zabbix",
+                side_effect=lambda _: order.append("zabbix"),
+            ),
+            patch(
                 "scripts.deploy_atlas.deploy_backend",
                 side_effect=lambda _: order.append("backend"),
             ),
@@ -358,7 +458,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
 
         self.assertEqual(
             order,
-            ["openbao", "netbox", "oxidized", "backend", "proxy"],
+            ["openbao", "netbox", "oxidized", "zabbix", "backend", "proxy"],
         )
 
 

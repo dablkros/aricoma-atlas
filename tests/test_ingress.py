@@ -20,7 +20,7 @@ def customer_config():
         "services": {
             name: {"hostname": f"{name}.example.test", "certificate": f"/etc/atlas/{name}.crt",
                    "private_key": f"/etc/atlas/{name}.key"}
-            for name in ("netbox", "oxidized")
+            for name in ("netbox", "oxidized", "zabbix")
         },
     }
 
@@ -58,6 +58,22 @@ class IngressTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.load(config)
 
+    def test_all_three_ui_services_are_required(self):
+        config = customer_config()
+        del config["services"]["zabbix"]
+
+        with self.assertRaisesRegex(ValueError, "missing: zabbix"):
+            self.load(config)
+
+    def test_public_service_urls_include_nonstandard_https_port(self):
+        config = self.load(customer_config())
+        config["proxy"]["https_port"] = 8443
+
+        self.assertEqual(
+            proxy.public_service_urls(config)["zabbix"],
+            "https://zabbix.example.test:8443/",
+        )
+
     def test_nginx_hostname_injection_rejected(self):
         for name in ("oxidized.example.test; auth_basic off; #", "*.example.test", ""):
             config = customer_config()
@@ -91,6 +107,15 @@ class IngressTests(unittest.TestCase):
         self.assertIn("satisfy all;", oxidized)
         self.assertIn("ssl_reject_handshake on;", text)
         self.assertIn('proxy_set_header Authorization "";', oxidized)
+
+    def test_zabbix_ui_uses_the_existing_tls_proxy_model(self):
+        config = customer_config()
+        text = proxy.render_nginx(config)
+
+        zabbix = text.split("server_name zabbix.example.test;", 1)[1]
+        self.assertIn("http://atlas-zabbix-web:8080", zabbix)
+        self.assertNotIn("auth_basic", zabbix.split("    }", 1)[0])
+        self.assertIn("deny all;", zabbix)
 
     def test_generated_proxy_has_hash_only_and_restricted_private_keys(self):
         with tempfile.TemporaryDirectory() as directory:

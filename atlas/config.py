@@ -3,7 +3,7 @@
 import re
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import AnyHttpUrl, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -27,6 +27,10 @@ class Settings(BaseSettings):
     openbao_identity_file: Path = Path(".runtime/openbao-backend.json")
     netbox_url: AnyHttpUrl = "http://127.0.0.1:8000"
     oxidized_url: AnyHttpUrl = "http://127.0.0.1:8888"
+    zabbix_url: AnyHttpUrl = "http://127.0.0.1:8082/api_jsonrpc.php"
+    netbox_ui_url: Optional[AnyHttpUrl] = None
+    oxidized_ui_url: Optional[AnyHttpUrl] = None
+    zabbix_ui_url: Optional[AnyHttpUrl] = None
     oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
     prophylaxis_results_file: Path = Path(
         "/run/atlas/prophylaxis/results.sqlite3"
@@ -70,13 +74,24 @@ class Settings(BaseSettings):
     def normalize_log_level(cls, value: object) -> object:
         return value.upper() if isinstance(value, str) else value
 
-    @field_validator("openbao_url", "netbox_url", "oxidized_url")
+    @field_validator("openbao_url", "netbox_url", "oxidized_url", "zabbix_url")
     @classmethod
     def validate_dependency_url(cls, value: AnyHttpUrl) -> AnyHttpUrl:
         if value.username or value.password or value.query or value.fragment:
             raise ValueError(
                 "dependency URLs must not contain credentials, query, or fragment"
             )
+        return value
+
+    @field_validator("netbox_ui_url", "oxidized_ui_url", "zabbix_ui_url")
+    @classmethod
+    def validate_ui_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
+        if value is None:
+            return value
+        if value.scheme != "https" or value.username or value.password:
+            raise ValueError("UI URLs must use HTTPS without credentials")
+        if value.query or value.fragment or value.path not in {"", "/"}:
+            raise ValueError("UI URLs must identify an HTTPS origin")
         return value
 
     @field_validator(

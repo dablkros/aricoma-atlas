@@ -13,6 +13,7 @@ class DependencyStatuses(BaseModel):
     openbao: Literal["ok", "error"]
     netbox: Literal["ok", "error"]
     oxidized: Literal["ok", "error"]
+    zabbix: Literal["ok", "error"]
 
 
 class ReadinessResponse(BaseModel):

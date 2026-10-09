@@ -37,6 +37,7 @@ class MemoryNetBox:
     def __init__(self):
         self.tables = {endpoint: [] for endpoint in (
             "/api/dcim/platforms/", "/api/dcim/manufacturers/", "/api/dcim/device-types/",
+            "/api/dcim/devices/",
             "/api/extras/custom-fields/", "/api/extras/custom-field-choice-sets/",
             *(spec["endpoint"] for spec in provision_netbox.COMPONENT_SPECS.values()))}
         self.writes = []
@@ -62,9 +63,19 @@ class MemoryNetBox:
     def patch(self, endpoint, payload):
         prefix, pk, _ = endpoint.rsplit("/", 2)
         obj = next(o for o in self.tables[prefix + "/"] if o["id"] == int(pk))
-        obj.update(copy.deepcopy(payload))
+        update = copy.deepcopy(payload)
+        custom_fields = update.pop("custom_fields", None)
+        obj.update(update)
+        if custom_fields is not None:
+            obj.setdefault("custom_fields", {}).update(custom_fields)
         self.writes.append(("PATCH", endpoint, payload))
         return copy.deepcopy(obj)
+
+    def delete(self, endpoint):
+        prefix, pk, _ = endpoint.rsplit("/", 2)
+        table = self.tables[prefix + "/"]
+        table[:] = [obj for obj in table if obj["id"] != int(pk)]
+        self.writes.append(("DELETE", endpoint, None))
 
 
 def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C"):
@@ -89,6 +100,11 @@ class PlatformTests(unittest.TestCase):
             ("Juniper", "juniper-qfx5120-48y", "QFX5120-48Y", "junos"),
             ("Juniper", "juniper-mx204", "MX204", "junos"),
             ("Juniper", "juniper-qfx5130-48c", "QFX5130-48C", None),
+            ("Sophos", "sophos-xg-135w", "XG 135w", "sophos-sfos"),
+            ("Sophos", "sophos-xgs-4300", "XGS 4300", "sophos-sfos"),
+            ("Sophos", "sophos-ap6-420e", "AP6 420E", "sophos-ap"),
+            ("Sophos", "sophos-apx530", "APX530", "sophos-ap"),
+            ("Sophos", "sophos-sd-red-60", "SD-RED 60", "sophos-red"),
             ("Fortinet", "fortinet-fpm-7620f", "FortiGate Module 7620F", None),
             ("Cisco", "cisco-n9k-unknown", "N9K-unknown", None),
             ("Cisco", "unknown", "unknown", None),
@@ -162,6 +178,95 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(first["created"], 1)
         self.assertEqual(second["created"], 0)
         self.assertEqual(second["drift"], 0)
+
+    def test_clean_install_uses_only_vendor_neutral_monitoring_field(self):
+        _choice_sets, fields = provision_baseline.load_baseline()
+        names = {field["name"] for field in fields}
+
+        self.assertIn("monitoring_enabled", names)
+        self.assertNotIn("checkmk_enabled", names)
+
+    def test_legacy_monitoring_values_migrate_and_rerun_is_idempotent(self):
+        client = MemoryNetBox()
+        legacy = client.post(
+            "/api/extras/custom-fields/",
+            {"name": "checkmk_enabled"},
+        )
+        client.tables["/api/dcim/devices/"] = [
+            {
+                "id": 100,
+                "custom_fields": {
+                    "checkmk_enabled": True,
+                    "monitoring_enabled": False,
+                    "credential_profile": "default",
+                    "profylaxia_checks": [
+                        {
+                            "value": "cpu_utilization",
+                            "label": "CPU utilization",
+                        },
+                    ],
+                },
+            },
+            {
+                "id": 101,
+                "custom_fields": {
+                    "checkmk_enabled": False,
+                    "monitoring_enabled": True,
+                },
+            },
+        ]
+        _choice_sets, fields = provision_baseline.load_baseline()
+        monitoring = [field for field in fields if field["name"] == "monitoring_enabled"]
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_custom_fields(
+                client,
+                monitoring,
+                {},
+                True,
+            )
+            writes = copy.deepcopy(client.writes)
+            second = provision_baseline.provision_custom_fields(
+                client,
+                monitoring,
+                {},
+                True,
+            )
+
+        self.assertTrue(first["monitoring_migration"]["legacy_removed"])
+        self.assertEqual(first["monitoring_migration"]["devices_updated"], 2)
+        self.assertFalse(second["monitoring_migration"]["legacy_found"])
+        self.assertEqual(client.writes, writes)
+        self.assertEqual(
+            [
+                device["custom_fields"]["monitoring_enabled"]
+                for device in client.tables["/api/dcim/devices/"]
+            ],
+            [True, False],
+        )
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            [
+                {
+                    "value": "cpu_utilization",
+                    "label": "CPU utilization",
+                },
+            ],
+        )
+        self.assertEqual(
+            [write[2] for write in writes if "/api/dcim/devices/" in write[1]],
+            [
+                {"custom_fields": {"monitoring_enabled": True}},
+                {"custom_fields": {"monitoring_enabled": False}},
+            ],
+        )
+        self.assertNotIn(
+            legacy,
+            client.tables["/api/extras/custom-fields/"],
+        )
 
     def test_exact_legacy_prophylaxis_choices_are_migrated_idempotently(self):
         client = MemoryNetBox()

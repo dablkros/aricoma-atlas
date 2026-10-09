@@ -35,6 +35,9 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 '}\n\n'
                 'path "atlas/data/devices/credentials/*" {\n'
                 '  capabilities = ["read"]\n'
+                '}\n\n'
+                'path "atlas/data/zabbix/api" {\n'
+                '  capabilities = ["read"]\n'
                 '}'
             ),
         )
@@ -142,7 +145,6 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             {
                 "atlas-backend",
                 "netbox-runtime",
-                "checkmk-runtime",
                 "oxidized-runtime",
             },
         )
@@ -263,7 +265,6 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         identities = {
             "atlas-backend": None,
             "netbox-runtime": {"role_id": "netbox", "secret_id": "secret"},
-            "checkmk-runtime": {"role_id": "checkmk", "secret_id": "secret"},
             "oxidized-runtime": {"role_id": "oxidized", "secret_id": "secret"},
         }
 
@@ -276,7 +277,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 optional_roles={"atlas-backend"},
             )
 
-        self.assertEqual(login_approle.call_count, 3)
+        self.assertEqual(login_approle.call_count, 2)
 
 
 if __name__ == "__main__":
