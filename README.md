@@ -1060,14 +1060,27 @@ Centralizované mapovanie pre Zabbix 7.0 je:
 | `cisco-cbs` | `Network Generic Device by SNMP` |
 | `fortios` | `FortiGate by SNMP` |
 | `junos` | `Juniper by SNMP` |
-| `sophos-sfos` | `Network Generic Device by SNMP` |
+| `sophos-sfos` | `Aricoma Atlas Sophos SFOS by SNMP` |
 | `sophos-ap` | `Network Generic Device by SNMP` |
 
 Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business ani Sophos
-template. `cisco-cbs`, `sophos-sfos` a `sophos-ap` preto používajú oficiálny
-generic SNMP template. To poskytuje základné dostupnostné a interface dáta, ale
-negarantuje vendor-specific Sophos CPU, HA alebo VPN itemy. Komunitné Sophos
-template nie sú automaticky importované ani deklarované ako podporované.
+template. `cisco-cbs` a `sophos-ap` preto používajú oficiálny generic SNMP
+template. Pre `sophos-sfos` Atlas počas deploymentu idempotentne importuje
+`catalog/zabbix/templates/sophos_sfos_by_snmp.yaml`. Tento template dedí
+`Network Generic Device by SNMP` pre dostupnosť a interface discovery a pridáva
+vendor-specific SFOS firmware, pamäť, disk, swap, služby, HA a system-health
+itemy z aktuálnej oficiálnej MIB vetvy `1.3.6.1.4.1.2604.5`.
+
+CPU utilization nie je v aktuálnej Sophos private MIB definovaná. Atlas template
+preto používa compatibility probe: historický scalar
+`1.3.6.1.4.1.21067.2.1.2.2.1.0`, ak ho zariadenie ešte publikuje, inak priemer
+štandardných `HOST-RESOURCES-MIB::hrProcessorLoad` hodnôt. Ak firewall nevráti
+ani jeden zdroj, item ostane unsupported a template nevytvorí falošnú hodnotu.
+CPU/NPU temperature z MIB 22.0+ sú pre kompatibilitu so staršími SFOS predvolene
+vypnuté. Po deployment-e spusti `sudo atlasctl zabbix sync`; existujúci
+Atlas-owned Sophos host sa prepne z generic na nový managed template bez zmazania
+histórie. Komunitné Sophos template sa nepoužívajú, pretože ich historická vetva
+OID `1.3.6.1.4.1.21067` nezodpovedá aktuálnej SFOS MIB.
 `sophos-red` je inventárna platforma bez priameho Zabbix mappingu, pretože
 SD-RED sa spravuje cez nadradený Sophos Firewall a samostatný SNMP agent nebol
 pre tento release overený. Chýbajúci template alebo CPU item je explicitný

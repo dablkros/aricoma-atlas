@@ -261,7 +261,7 @@ def managed_host(**overrides):
         ],
         "hostgroups": [{"groupid": "10", "name": "Aricoma Atlas"}],
         "parentTemplates": [
-            {"templateid": "20", "host": "Cisco IOS by SNMP"}
+            {"templateid": "21", "host": "Cisco IOS by SNMP"}
         ],
         "tags": [
             {"tag": "managed_by", "value": "aricoma-atlas"},
@@ -302,7 +302,7 @@ class ZabbixSyncTests(unittest.TestCase):
         self.assertEqual(client.host_queries[0]["tags"][0]["operator"], 1)
         self.assertNotIn(COMMUNITY, repr(result))
 
-    def test_sophos_firewall_and_access_point_use_generic_snmp_template(self):
+    def test_sophos_firewall_uses_managed_template_and_access_point_uses_generic(self):
         devices = [
             netbox_device(
                 id=201,
@@ -325,12 +325,9 @@ class ZabbixSyncTests(unittest.TestCase):
             {payload["host"] for payload in client.created},
             {"XGS-01", "AP6-01"},
         )
-        self.assertTrue(
-            all(
-                payload["templates"] == [{"templateid": "23"}]
-                for payload in client.created
-            )
-        )
+        by_host = {payload["host"]: payload for payload in client.created}
+        self.assertEqual(by_host["XGS-01"]["templates"], [{"templateid": "20"}])
+        self.assertEqual(by_host["AP6-01"]["templates"], [{"templateid": "24"}])
 
     def test_sophos_red_is_not_silently_treated_as_snmp_firewall(self):
         device = netbox_device(
@@ -416,6 +413,33 @@ class ZabbixSyncTests(unittest.TestCase):
 
 
 class ZabbixDeploymentTests(unittest.TestCase):
+    def test_managed_sophos_template_uses_current_mib_and_generic_link(self):
+        path = ROOT / "catalog/zabbix/templates/sophos_sfos_by_snmp.yaml"
+        source = path.read_text(encoding="utf-8")
+        document = yaml.safe_load(source)
+        template = document["zabbix_export"]["templates"][0]
+
+        self.assertEqual(document["zabbix_export"]["version"], "7.0")
+        self.assertEqual(template["template"], "Aricoma Atlas Sophos SFOS by SNMP")
+        self.assertEqual(
+            template["templates"],
+            [{"name": "Network Generic Device by SNMP"}],
+        )
+        self.assertIn("1.3.6.1.4.1.2604.5", source)
+        self.assertNotIn("snmp_oid: 'get[1.3.6.1.4.1.21067", source)
+
+    def test_managed_template_import_is_idempotent(self):
+        admin = Mock()
+
+        deploy_zabbix._import_managed_templates(admin)
+
+        method, params = admin.call.call_args.args
+        self.assertEqual(method, "configuration.import")
+        self.assertEqual(params["format"], "yaml")
+        self.assertTrue(params["rules"]["templates"]["createMissing"])
+        self.assertTrue(params["rules"]["templates"]["updateExisting"])
+        self.assertIn("Aricoma Atlas Sophos SFOS by SNMP", params["source"])
+
     def test_configuration_is_explicitly_pinned_and_matches_mapping(self):
         config = deploy_zabbix.load_config(ROOT / "deployment/zabbix.yaml")
 

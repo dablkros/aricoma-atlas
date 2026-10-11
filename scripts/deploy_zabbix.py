@@ -32,6 +32,9 @@ from atlas.zabbix_config import load_zabbix_config  # noqa: E402
 
 
 CONFIG_FILE = ROOT / "deployment/zabbix.yaml"
+MANAGED_TEMPLATE_FILES = (
+    ROOT / "catalog/zabbix/templates/sophos_sfos_by_snmp.yaml",
+)
 IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 PROJECT = re.compile(r"[a-z0-9][a-z0-9_-]*")
 API_METHODS = [
@@ -316,6 +319,36 @@ def _find_one(admin, method, object_field, value, output):
     return result[0] if result else None
 
 
+def _import_managed_templates(admin):
+    rules = {
+        "templates": {"createMissing": True, "updateExisting": True},
+        "items": {"createMissing": True, "updateExisting": True},
+        "triggers": {"createMissing": True, "updateExisting": True},
+        "valueMaps": {"createMissing": True, "updateExisting": True},
+        "templateLinkage": {"createMissing": True},
+    }
+    for path in MANAGED_TEMPLATE_FILES:
+        try:
+            source = path.read_text(encoding="utf-8")
+            document = yaml.safe_load(source)
+        except (OSError, yaml.YAMLError) as exc:
+            raise RuntimeError(f"Unable to read managed Zabbix template: {path}") from exc
+        if (
+            not isinstance(document, dict)
+            or document.get("zabbix_export", {}).get("version") != "7.0"
+        ):
+            raise RuntimeError(f"Managed Zabbix template is not a 7.0 export: {path}")
+        try:
+            admin.call(
+                "configuration.import",
+                {"format": "yaml", "rules": rules, "source": source},
+            )
+        except ZabbixAPIError as exc:
+            raise RuntimeError(
+                f"Managed Zabbix template import failed ({exc.code}): {path.name}"
+            ) from None
+
+
 def _admin_client(config, bao, bao_token):
     unauthenticated = ZabbixClient(api_url(config), None, 3, 15)
     stored = optional_secret(bao, bao_token, "zabbix/admin")
@@ -398,6 +431,7 @@ def _admin_client(config, bao, bao_token):
 
 
 def _bootstrap_api_identity(config, bao, bao_token, admin):
+    _import_managed_templates(admin)
     existing = optional_secret(bao, bao_token, "zabbix/api")
     existing_token = None
     if existing is not None:

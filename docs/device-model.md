@@ -55,8 +55,9 @@ Eleven platform objects are prepared by a complete bootstrap. Actual create/exis
 
 All pinned Sophos Device Types are cataloged. XG/XGS are assigned
 `sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
-`sophos-red`. Zabbix uses its official generic SNMP template for the firewall
-and access-point platforms. SD-RED remains inventory-only because the reviewed
+`sophos-red`. Zabbix uses an Atlas-managed Sophos SFOS template linked to the
+official generic SNMP template for firewalls; access points use the generic
+template directly. SD-RED remains inventory-only because the reviewed
 Sophos documentation describes it as centrally configured through SG UTM or
 Sophos Firewall; no direct SD-RED SNMP agent was established. None of the
 Sophos platforms receives an unverified Oxidized mapping.
