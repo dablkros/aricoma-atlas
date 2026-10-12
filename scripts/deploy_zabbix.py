@@ -342,10 +342,12 @@ def _import_managed_templates(admin):
             admin.call(
                 "configuration.import",
                 {"format": "yaml", "rules": rules, "source": source},
+                error_detail=True,
             )
         except ZabbixAPIError as exc:
+            detail = f": {exc.detail}" if exc.detail else ""
             raise RuntimeError(
-                f"Managed Zabbix template import failed ({exc.code}): {path.name}"
+                f"Managed Zabbix template import failed ({exc.code}){detail}: {path.name}"
             ) from None
 
 

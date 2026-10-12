@@ -8,7 +8,7 @@ import requests
 
 
 class ZabbixAPIError(RuntimeError):
-    """Expected integration failure that never includes response or secret data."""
+    """Expected integration failure with a secret-safe string representation."""
 
     SAFE_CODES = {
         "connection_failed",
@@ -18,10 +18,13 @@ class ZabbixAPIError(RuntimeError):
         "api_error",
     }
 
-    def __init__(self, code: str) -> None:
+    def __init__(self, code: str, *, detail: Optional[str] = None) -> None:
         if code not in self.SAFE_CODES:
             raise ValueError("Unsupported Zabbix failure code")
+        if detail is not None and not isinstance(detail, str):
+            raise ValueError("Invalid Zabbix failure detail")
         self.code = code
+        self.detail = detail
         super().__init__(code)
 
 
@@ -67,6 +70,7 @@ class ZabbixClient:
         params: Optional[Any] = None,
         *,
         authenticated: bool = True,
+        error_detail: bool = False,
     ) -> Any:
         if not isinstance(method, str) or not method:
             raise ValueError("Zabbix method is required")
@@ -132,7 +136,12 @@ class ZabbixClient:
                 )
                 else "api_error"
             )
-            raise ZabbixAPIError(code)
+            detail = None
+            if error_detail and code == "api_error":
+                raw_detail = data.get("data")
+                if isinstance(raw_detail, str):
+                    detail = " ".join(raw_detail.split())[:512] or None
+            raise ZabbixAPIError(code, detail=detail)
         if "result" not in body:
             raise ZabbixAPIError("invalid_response")
         return body["result"]

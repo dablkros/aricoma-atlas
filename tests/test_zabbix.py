@@ -5,6 +5,7 @@ import json
 import os
 import tempfile
 import unittest
+import uuid
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import Mock, call, patch
@@ -165,6 +166,37 @@ class ZabbixClientTests(unittest.TestCase):
                 self.assertEqual(raised.exception.code, expected)
                 self.assertNotIn("api-token-value", str(raised.exception))
                 self.assertNotIn("community", str(raised.exception))
+
+    def test_explicit_api_error_detail_is_bounded_and_not_in_exception_text(self):
+        requester = QueueRequester(
+            FakeResponse(
+                body={
+                    "jsonrpc": "2.0",
+                    "error": {
+                        "code": -32602,
+                        "message": "Invalid params.",
+                        "data": "Invalid parameter   /1/uuid:\n UUIDv4 is expected."
+                        + "x" * 600,
+                    },
+                    "id": 1,
+                }
+            )
+        )
+        client = ZabbixClient(
+            "https://zabbix.example.test/api_jsonrpc.php",
+            "api-token-value",
+            2,
+            8,
+            requester=requester,
+        )
+
+        with self.assertRaises(ZabbixAPIError) as raised:
+            client.call("configuration.import", {}, error_detail=True)
+
+        self.assertEqual(raised.exception.code, "api_error")
+        self.assertTrue(raised.exception.detail.startswith("Invalid parameter /1/uuid"))
+        self.assertLessEqual(len(raised.exception.detail), 512)
+        self.assertEqual(str(raised.exception), "api_error")
 
 
 class FakeNetBox:
@@ -428,6 +460,20 @@ class ZabbixDeploymentTests(unittest.TestCase):
         self.assertIn("1.3.6.1.4.1.2604.5", source)
         self.assertNotIn("snmp_oid: 'get[1.3.6.1.4.1.21067", source)
 
+        def collect_uuids(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "uuid":
+                        yield child
+                    yield from collect_uuids(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from collect_uuids(child)
+
+        template_uuids = list(collect_uuids(document["zabbix_export"]))
+        self.assertTrue(template_uuids)
+        self.assertTrue(all(uuid.UUID(value).version == 4 for value in template_uuids))
+
     def test_managed_template_import_is_idempotent(self):
         admin = Mock()
 
@@ -436,9 +482,23 @@ class ZabbixDeploymentTests(unittest.TestCase):
         method, params = admin.call.call_args.args
         self.assertEqual(method, "configuration.import")
         self.assertEqual(params["format"], "yaml")
+        self.assertTrue(admin.call.call_args.kwargs["error_detail"])
         self.assertTrue(params["rules"]["templates"]["createMissing"])
         self.assertTrue(params["rules"]["templates"]["updateExisting"])
         self.assertIn("Aricoma Atlas Sophos SFOS by SNMP", params["source"])
+
+    def test_managed_template_import_reports_zabbix_validation_detail(self):
+        admin = Mock()
+        admin.call.side_effect = ZabbixAPIError(
+            "api_error",
+            detail='Invalid parameter "/1/uuid": UUIDv4 is expected.',
+        )
+
+        with self.assertRaisesRegex(
+            RuntimeError,
+            "UUIDv4 is expected",
+        ):
+            deploy_zabbix._import_managed_templates(admin)
 
     def test_configuration_is_explicitly_pinned_and_matches_mapping(self):
         config = deploy_zabbix.load_config(ROOT / "deployment/zabbix.yaml")
