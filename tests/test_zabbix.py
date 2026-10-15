@@ -107,6 +107,39 @@ class ZabbixClientTests(unittest.TestCase):
         self.assertNotIn("Authorization", kwargs["headers"])
         self.assertEqual(kwargs["json"]["auth"], "admin-session-value")
 
+    def test_call_can_override_only_the_read_timeout(self):
+        requester = QueueRequester(
+            FakeResponse(body={"jsonrpc": "2.0", "result": {}, "id": 1}),
+            FakeResponse(body={"jsonrpc": "2.0", "result": {}, "id": 2}),
+        )
+        client = ZabbixClient(
+            "https://zabbix.example.test/api_jsonrpc.php",
+            "api-token-value",
+            2,
+            8,
+            requester=requester,
+        )
+
+        client.call("configuration.import", {}, read_timeout=120)
+        client.call("host.get", {})
+
+        self.assertEqual(requester.calls[0][1]["timeout"], (2, 120.0))
+        self.assertEqual(requester.calls[1][1]["timeout"], (2, 8))
+
+    def test_call_rejects_invalid_read_timeout_override(self):
+        client = ZabbixClient(
+            "https://zabbix.example.test/api_jsonrpc.php",
+            "api-token-value",
+            2,
+            8,
+            requester=QueueRequester(),
+        )
+
+        for value in (True, 0, -1, "120"):
+            with self.subTest(value=value):
+                with self.assertRaisesRegex(ValueError, "read timeout"):
+                    client.call("configuration.import", {}, read_timeout=value)
+
     def test_unknown_authentication_mode_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "authentication mode"):
             ZabbixClient(
@@ -197,6 +230,27 @@ class ZabbixClientTests(unittest.TestCase):
         self.assertTrue(raised.exception.detail.startswith("Invalid parameter /1/uuid"))
         self.assertLessEqual(len(raised.exception.detail), 512)
         self.assertEqual(str(raised.exception), "api_error")
+
+    def test_explicit_timeout_detail_is_safe_and_uses_effective_read_timeout(self):
+        client = ZabbixClient(
+            "https://zabbix.example.test/api_jsonrpc.php",
+            "api-token-value",
+            2,
+            8,
+            requester=QueueRequester(requests.Timeout("secret-value")),
+        )
+
+        with self.assertRaises(ZabbixAPIError) as raised:
+            client.call(
+                "configuration.import",
+                {},
+                error_detail=True,
+                read_timeout=120,
+            )
+
+        self.assertEqual(raised.exception.code, "connection_failed")
+        self.assertEqual(raised.exception.detail, "request timed out after 120s")
+        self.assertNotIn("secret-value", str(raised.exception))
 
 
 class FakeNetBox:
@@ -477,12 +531,13 @@ class ZabbixDeploymentTests(unittest.TestCase):
     def test_managed_template_import_is_idempotent(self):
         admin = Mock()
 
-        deploy_zabbix._import_managed_templates(admin)
+        deploy_zabbix._import_managed_templates(admin, 120)
 
         method, params = admin.call.call_args.args
         self.assertEqual(method, "configuration.import")
         self.assertEqual(params["format"], "yaml")
         self.assertTrue(admin.call.call_args.kwargs["error_detail"])
+        self.assertEqual(admin.call.call_args.kwargs["read_timeout"], 120)
         self.assertTrue(params["rules"]["templates"]["createMissing"])
         self.assertTrue(params["rules"]["templates"]["updateExisting"])
         self.assertIn("Aricoma Atlas Sophos SFOS by SNMP", params["source"])
@@ -498,12 +553,13 @@ class ZabbixDeploymentTests(unittest.TestCase):
             RuntimeError,
             "UUIDv4 is expected",
         ):
-            deploy_zabbix._import_managed_templates(admin)
+            deploy_zabbix._import_managed_templates(admin, 120)
 
     def test_configuration_is_explicitly_pinned_and_matches_mapping(self):
         config = deploy_zabbix.load_config(ROOT / "deployment/zabbix.yaml")
 
         self.assertEqual(config["zabbix"]["version"], "7.0.31")
+        self.assertEqual(config["runtime"]["template_import_timeout"], 120)
         for field in ("server_image", "web_image", "postgres_image"):
             self.assertNotIn("latest", config["zabbix"][field])
         self.assertTrue(config["zabbix"]["server_image"].endswith(":alpine-7.0.31"))

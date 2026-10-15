@@ -71,9 +71,16 @@ class ZabbixClient:
         *,
         authenticated: bool = True,
         error_detail: bool = False,
+        read_timeout: Optional[float] = None,
     ) -> Any:
         if not isinstance(method, str) or not method:
             raise ValueError("Zabbix method is required")
+        if read_timeout is not None and (
+            isinstance(read_timeout, bool)
+            or not isinstance(read_timeout, (int, float))
+            or read_timeout <= 0
+        ):
+            raise ValueError("Zabbix read timeout must be positive")
         if authenticated and not self._token:
             raise ZabbixAPIError("authentication_failed")
 
@@ -92,13 +99,25 @@ class ZabbixClient:
         }
         if authenticated and self._auth_mode == "session":
             payload["auth"] = self._token
+        timeout = (
+            self.timeout
+            if read_timeout is None
+            else (self.timeout[0], float(read_timeout))
+        )
         try:
             response = self.requester.post(
                 self.api_url,
                 headers=headers,
                 json=payload,
-                timeout=self.timeout,
+                timeout=timeout,
             )
+        except requests.Timeout:
+            detail = (
+                f"request timed out after {timeout[1]:g}s"
+                if error_detail
+                else None
+            )
+            raise ZabbixAPIError("connection_failed", detail=detail) from None
         except requests.RequestException:
             raise ZabbixAPIError("connection_failed") from None
 

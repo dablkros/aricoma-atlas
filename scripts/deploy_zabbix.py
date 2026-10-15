@@ -84,6 +84,15 @@ def load_config(path=CONFIG_FILE):
     timeout = runtime.get("startup_timeout")
     if isinstance(timeout, bool) or not isinstance(timeout, int) or timeout < 30:
         raise ValueError("runtime.startup_timeout must be at least 30")
+    import_timeout = runtime.get("template_import_timeout")
+    if (
+        isinstance(import_timeout, bool)
+        or not isinstance(import_timeout, int)
+        or not 30 <= import_timeout <= timeout
+    ):
+        raise ValueError(
+            "runtime.template_import_timeout must be between 30 and startup_timeout"
+        )
     try:
         address = ipaddress.ip_address(network["listen_address"])
     except (KeyError, ValueError) as exc:
@@ -319,7 +328,7 @@ def _find_one(admin, method, object_field, value, output):
     return result[0] if result else None
 
 
-def _import_managed_templates(admin):
+def _import_managed_templates(admin, read_timeout):
     rules = {
         "templates": {"createMissing": True, "updateExisting": True},
         "items": {"createMissing": True, "updateExisting": True},
@@ -343,6 +352,7 @@ def _import_managed_templates(admin):
                 "configuration.import",
                 {"format": "yaml", "rules": rules, "source": source},
                 error_detail=True,
+                read_timeout=read_timeout,
             )
         except ZabbixAPIError as exc:
             detail = f": {exc.detail}" if exc.detail else ""
@@ -433,7 +443,10 @@ def _admin_client(config, bao, bao_token):
 
 
 def _bootstrap_api_identity(config, bao, bao_token, admin):
-    _import_managed_templates(admin)
+    _import_managed_templates(
+        admin,
+        config["runtime"]["template_import_timeout"],
+    )
     existing = optional_secret(bao, bao_token, "zabbix/api")
     existing_token = None
     if existing is not None:

@@ -9,6 +9,7 @@ runtime:
   directory: ".runtime/zabbix"
   compose_project: "atlas-zabbix"
   startup_timeout: 300
+  template_import_timeout: 120
 
 network:
   listen_address: "127.0.0.1"
