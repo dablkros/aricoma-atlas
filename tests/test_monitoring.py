@@ -150,7 +150,7 @@ class MonitoringServiceTests(unittest.TestCase):
 
 class FakeMonitoring:
     def __init__(self):
-        self.store = SimpleNamespace(recover=lambda: None, get_plan=lambda _identifier: {
+        self.store = SimpleNamespace(directory=Path("/path/that/does/not/exist"), recover=lambda: None, get_plan=lambda _identifier: {
             "device_id": 42, "mode": "monitor_only"})
         self.runs = []
 

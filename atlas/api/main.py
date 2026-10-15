@@ -38,7 +38,9 @@ def create_app(
     @asynccontextmanager
     async def lifespan(app):
         service = getattr(app.state.dependencies, "monitoring", None)
-        if service is not None:
+        # Image smoke tests intentionally run read-only without runtime mounts.
+        # Production deployment pre-creates and mounts this persistent directory.
+        if service is not None and service.store.directory.is_dir():
             service.store.recover()
         yield
 
