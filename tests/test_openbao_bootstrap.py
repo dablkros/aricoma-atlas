@@ -89,8 +89,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
     def test_monitoring_provisioner_policy_has_narrow_secret_permissions(self):
         spec = deploy_openbao.RUNTIME_ROLES["atlas-monitoring-provisioner"]
         policy = spec["policy_file"].read_text(encoding="utf-8")
-        self.assertIn('path "atlas/data/devices/credentials/*"', policy)
-        self.assertIn('capabilities = ["read"]', policy)
+        self.assertNotIn('path "atlas/data/devices/credentials/*"', policy)
         self.assertIn('path "atlas/data/devices/snmp/*"', policy)
         self.assertIn('capabilities = ["create", "read", "update"]', policy)
         for forbidden in ("delete", "sudo", "root"):

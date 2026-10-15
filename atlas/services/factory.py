@@ -58,8 +58,14 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     )
     provisioner = OpenBaoService(
         OpenBaoClient(str(settings.openbao_url), timeout=timeout), settings.monitoring_identity_file)
-    monitoring = MonitoringService(netbox, provisioner, zabbix,
-                                   settings.monitoring_config_file, settings.monitoring_jobs_directory)
+    monitoring = MonitoringService(
+        netbox,
+        provisioner,
+        zabbix,
+        settings.monitoring_config_file,
+        settings.monitoring_jobs_directory,
+        credential_source=openbao,
+    )
     inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
     return DependencyServices(
         monitoring=monitoring,

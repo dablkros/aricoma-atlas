@@ -310,18 +310,29 @@ class MonitoringServiceTests(unittest.TestCase):
                  "device_id": "42", "community_id": 7, "vdom": "root"},
                 {"version": 2},
             )
-            openbao.get_device_credentials.return_value = {"api_token": "api-secret"}
+            credential_source = Mock()
+            credential_source.get_device_credentials.return_value = {"api_token": "api-secret"}
             zabbix = Mock()
             zabbix.client.return_value = Client()
             service = MonitoringService(
-                netbox, openbao, zabbix, config, root / "jobs", driver_factory=Driver
+                netbox, openbao, zabbix, config, root / "jobs",
+                driver_factory=Driver, credential_source=credential_source,
             )
             public, _, _ = service.inspect(42, "monitor_only")
             rendered = json.dumps(public)
             self.assertEqual(public["resolved"]["api_endpoint"], "https://10.0.0.10:444")
             self.assertEqual(public["resolved"]["vdom"], "root")
+            self.assertEqual(
+                public["resolved"]["credential_reference"],
+                "devices/credentials/fortinet/edge/admin",
+            )
             self.assertNotIn("api-secret", rendered)
             self.assertNotIn(community, rendered)
+            self.assertEqual(Driver.token, "api-secret")
+            credential_source.get_device_credentials.assert_called_once_with(
+                "fortinet", "edge", authentication="api_token"
+            )
+            openbao.get_device_credentials.assert_not_called()
 
     def test_monitor_only_never_loads_management_credentials_or_generates_secret(self):
         with tempfile.TemporaryDirectory() as directory:

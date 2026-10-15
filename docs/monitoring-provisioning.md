@@ -26,9 +26,10 @@ sudo atlasctl openbao
 # Select: 2. Reconcile Atlas backend roles
 ```
 
-The role reads device management credentials and creates, reads, or updates
-only `atlas/devices/snmp/*`. It cannot delete secrets or access deployment
-secrets. The canonical KV v2 path for generated communities is
+The role creates, reads, or updates only `atlas/devices/snmp/*`. It cannot
+read operator-managed device credentials, delete secrets, or access deployment
+secrets. FortiGate API tokens are resolved through the same `atlas-backend`
+credential service used by Profylaxia. The canonical KV v2 path for generated communities is
 `atlas/devices/snmp/fortinet/<netbox-device-id>/monitoring`.
 
 Backend deployment creates `.runtime/monitoring/config.yaml` from a safe

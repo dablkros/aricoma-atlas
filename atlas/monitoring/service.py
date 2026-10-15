@@ -4,7 +4,7 @@ import hashlib
 import json
 import time
 
-from atlas.device_credentials import DeviceValidationError
+from atlas.device_credentials import DeviceValidationError, credential_path
 from atlas.integrations.zabbix import ZabbixAPIError
 from atlas.monitoring.fortigate import DRIVERS
 from atlas.monitoring.models import (
@@ -29,8 +29,21 @@ MODES = {"monitor_only", "provision_and_monitor"}
 
 
 class MonitoringService:
-    def __init__(self, netbox, openbao, zabbix, config_file, directory, driver_factory=None):
+    def __init__(
+        self,
+        netbox,
+        openbao,
+        zabbix,
+        config_file,
+        directory,
+        driver_factory=None,
+        credential_source=None,
+    ):
         self.netbox, self.openbao, self.zabbix = netbox, openbao, zabbix
+        # Read operator-managed admin credentials through the same resolver
+        # used by Profylaxia. Keep the monitoring AppRole scoped to generated
+        # per-device SNMP secrets.
+        self.credential_source = credential_source or openbao
         self.config_file = config_file
         self.store = JobStore(directory)
         self.secrets = MonitoringSecrets(openbao)
@@ -97,7 +110,7 @@ class MonitoringService:
         if stored is None and mode == "monitor_only":
             raise MonitoringError("snmp_credentials_missing")
         secret, version = stored if stored else (None, 0)
-        credentials = self.openbao.get_device_credentials(
+        credentials = self.credential_source.get_device_credentials(
             device.vendor, device.profile, authentication="api_token"
         )
         factory = self.driver_factory or DRIVERS[(device.vendor, device.platform)]
@@ -121,7 +134,8 @@ class MonitoringService:
                   "resolved": {"api_endpoint": f"https://{device.address}:{options['https_port']}",
                     "management_interface": options["interface"], "vdom": options["vdom"],
                     "snmp_port": options["snmp_port"], "monitoring_source_ip": options["source_ips"][0],
-                    "zabbix_template": template, "credential_profile": device.profile}}
+                    "zabbix_template": template, "credential_profile": device.profile,
+                    "credential_reference": credential_path(device.vendor, device.profile)}}
         fingerprint = self.fingerprint({"device": asdict(device), "config": config, "options": options,
             "secret": secret, "version": version, "fortigate": state, "zabbix": remote, "mode": mode})
         return public, fingerprint, (device, options, config, secret, version, driver, state, zabbix)
