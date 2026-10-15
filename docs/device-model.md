@@ -42,7 +42,8 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | Cisco IOS | `cisco-ios` | 20 | `ios` |
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
-| Cisco CBS | `cisco-cbs` | 21 | unsupported/unmapped |
+| Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | unsupported/unmapped |
+| Cisco CBS250/350 | `cisco-cbs250-350` | 19 | unsupported/unmapped |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
@@ -51,7 +52,7 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | Sophos Access Point | `sophos-ap` | 3 | unsupported/unmapped |
 | Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
 
-Eleven platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+Twelve platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
 
 All pinned Sophos Device Types are cataloged. XG/XGS are assigned
 `sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned

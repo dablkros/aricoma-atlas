@@ -88,6 +88,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
+| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
 | `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa

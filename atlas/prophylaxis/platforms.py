@@ -65,6 +65,18 @@ ANSIBLE_PLATFORMS = {
         module_family="community.ciscosmb.command",
         supported_checks=CPU_ONLY,
     ),
+    "cisco-cbs250-350": AnsiblePlatformProfile(
+        slug="cisco-cbs250-350",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        ansible_connection="ansible.netcommon.network_cli",
+        ansible_network_os="community.ciscosmb.ciscosmb",
+        authentication="ssh",
+        collection="community.ciscosmb",
+        module_family="community.ciscosmb.command",
+        supported_checks=CPU_ONLY,
+    ),
     "fortios": AnsiblePlatformProfile(
         slug="fortios",
         transport="https",

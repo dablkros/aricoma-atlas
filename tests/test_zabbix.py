@@ -347,7 +347,7 @@ def managed_host(**overrides):
         ],
         "hostgroups": [{"groupid": "10", "name": "Aricoma Atlas"}],
         "parentTemplates": [
-            {"templateid": "21", "host": "Cisco IOS by SNMP"}
+            {"templateid": "22", "host": "Cisco IOS by SNMP"}
         ],
         "tags": [
             {"tag": "managed_by", "value": "aricoma-atlas"},
@@ -412,8 +412,29 @@ class ZabbixSyncTests(unittest.TestCase):
             {"XGS-01", "AP6-01"},
         )
         by_host = {payload["host"]: payload for payload in client.created}
-        self.assertEqual(by_host["XGS-01"]["templates"], [{"templateid": "20"}])
-        self.assertEqual(by_host["AP6-01"]["templates"], [{"templateid": "24"}])
+        self.assertEqual(by_host["XGS-01"]["templates"], [{"templateid": "21"}])
+        self.assertEqual(by_host["AP6-01"]["templates"], [{"templateid": "25"}])
+
+    def test_cbs250_350_uses_managed_template_and_legacy_cbs_uses_generic(self):
+        devices = [
+            netbox_device(
+                id=301,
+                name="CBS350-01",
+                platform={"slug": "cisco-cbs250-350"},
+            ),
+            netbox_device(
+                id=302,
+                name="CBS220-01",
+                platform={"slug": "cisco-cbs"},
+            ),
+        ]
+
+        result, client = self.sync(devices)
+
+        self.assertEqual(result.summary.created, 2)
+        by_host = {payload["host"]: payload for payload in client.created}
+        self.assertEqual(by_host["CBS350-01"]["templates"], [{"templateid": "20"}])
+        self.assertEqual(by_host["CBS220-01"]["templates"], [{"templateid": "25"}])
 
     def test_sophos_red_is_not_silently_treated_as_snmp_firewall(self):
         device = netbox_device(
@@ -528,19 +549,66 @@ class ZabbixDeploymentTests(unittest.TestCase):
         self.assertTrue(template_uuids)
         self.assertTrue(all(uuid.UUID(value).version == 4 for value in template_uuids))
 
+    def test_managed_cisco_cbs_template_uses_documented_oids_and_graphs(self):
+        path = ROOT / "catalog/zabbix/templates/cisco_cbs250_350_by_snmp.yaml"
+        source = path.read_text(encoding="utf-8")
+        document = yaml.safe_load(source)
+        template = document["zabbix_export"]["templates"][0]
+
+        self.assertEqual(document["zabbix_export"]["version"], "7.0")
+        self.assertEqual(
+            template["template"],
+            "Aricoma Atlas Cisco CBS250-350 by SNMP",
+        )
+        self.assertEqual(
+            template["templates"],
+            [{"name": "Network Generic Device by SNMP"}],
+        )
+        for oid in (
+            "1.3.6.1.4.1.9.6.1.101.1.7.0",
+            "1.3.6.1.4.1.9.6.1.101.1.8.0",
+            "1.3.6.1.4.1.9.6.1.101.1.9.0",
+            "1.3.6.1.4.1.9.6.1.101.53.15.1.10.1",
+        ):
+            self.assertIn(oid, source)
+        self.assertEqual(
+            {graph["name"] for graph in document["zabbix_export"]["graphs"]},
+            {"Cisco CBS: CPU utilization", "Cisco CBS: Temperature"},
+        )
+
+        def collect_uuids(value):
+            if isinstance(value, dict):
+                for key, child in value.items():
+                    if key == "uuid":
+                        yield child
+                    yield from collect_uuids(child)
+            elif isinstance(value, list):
+                for child in value:
+                    yield from collect_uuids(child)
+
+        template_uuids = list(collect_uuids(document["zabbix_export"]))
+        self.assertTrue(template_uuids)
+        self.assertTrue(all(uuid.UUID(value).version == 4 for value in template_uuids))
+
     def test_managed_template_import_is_idempotent(self):
         admin = Mock()
 
         deploy_zabbix._import_managed_templates(admin, 120)
 
-        method, params = admin.call.call_args.args
-        self.assertEqual(method, "configuration.import")
-        self.assertEqual(params["format"], "yaml")
-        self.assertTrue(admin.call.call_args.kwargs["error_detail"])
-        self.assertEqual(admin.call.call_args.kwargs["read_timeout"], 120)
-        self.assertTrue(params["rules"]["templates"]["createMissing"])
-        self.assertTrue(params["rules"]["templates"]["updateExisting"])
-        self.assertIn("Aricoma Atlas Sophos SFOS by SNMP", params["source"])
+        self.assertEqual(admin.call.call_count, 2)
+        imported_sources = []
+        for import_call in admin.call.call_args_list:
+            method, params = import_call.args
+            self.assertEqual(method, "configuration.import")
+            self.assertEqual(params["format"], "yaml")
+            self.assertTrue(import_call.kwargs["error_detail"])
+            self.assertEqual(import_call.kwargs["read_timeout"], 120)
+            self.assertTrue(params["rules"]["templates"]["createMissing"])
+            self.assertTrue(params["rules"]["templates"]["updateExisting"])
+            self.assertTrue(params["rules"]["graphs"]["createMissing"])
+            imported_sources.append(params["source"])
+        self.assertIn("Aricoma Atlas Cisco CBS250-350 by SNMP", imported_sources[0])
+        self.assertIn("Aricoma Atlas Sophos SFOS by SNMP", imported_sources[1])
 
     def test_managed_template_import_reports_zabbix_validation_detail(self):
         admin = Mock()

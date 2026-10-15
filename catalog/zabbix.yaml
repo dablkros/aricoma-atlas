@@ -5,6 +5,7 @@ platform_templates:
   cisco-ios: "Cisco IOS by SNMP"
   cisco-ios-xe: "Cisco IOS by SNMP"
   cisco-cbs: "Network Generic Device by SNMP"
+  cisco-cbs250-350: "Aricoma Atlas Cisco CBS250-350 by SNMP"
   fortios: "FortiGate by SNMP"
   junos: "Juniper by SNMP"
   sophos-sfos: "Aricoma Atlas Sophos SFOS by SNMP"

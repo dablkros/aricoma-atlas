@@ -33,6 +33,7 @@ from atlas.zabbix_config import load_zabbix_config  # noqa: E402
 
 CONFIG_FILE = ROOT / "deployment/zabbix.yaml"
 MANAGED_TEMPLATE_FILES = (
+    ROOT / "catalog/zabbix/templates/cisco_cbs250_350_by_snmp.yaml",
     ROOT / "catalog/zabbix/templates/sophos_sfos_by_snmp.yaml",
 )
 IMAGE = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -333,6 +334,7 @@ def _import_managed_templates(admin, read_timeout):
         "templates": {"createMissing": True, "updateExisting": True},
         "items": {"createMissing": True, "updateExisting": True},
         "triggers": {"createMissing": True, "updateExisting": True},
+        "graphs": {"createMissing": True, "updateExisting": True},
         "valueMaps": {"createMissing": True, "updateExisting": True},
         "templateLinkage": {"createMissing": True},
     }

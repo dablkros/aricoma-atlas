@@ -54,12 +54,13 @@
     }
   },
   "total": 711,
-  "platform_mapping_sha256": "055747e535ef3064a885a07bc8dfdafe7b1ac44994e1ebd5fbf6382c92b417b3",
+  "platform_mapping_sha256": "88329cba8b03f31d97ae74646fa63cc514f5bb42d5e433b570ee28bdffc7fb61",
   "platforms": {
     "mapped": 516,
     "unmapped": 195,
     "by_platform": {
-      "cisco-cbs": 21,
+      "cisco-cbs": 2,
+      "cisco-cbs250-350": 19,
       "cisco-ios": 20,
       "cisco-ios-xe": 155,
       "fortianalyzer": 3,

@@ -1,0 +1,274 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 36bff6c29af64692839d077febfc7079
+      name: 'Templates/Network devices'
+  templates:
+    - uuid: 7b97396a46c64aebb5ae649645721b68
+      template: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+      name: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+      description: |
+        Cisco Business CBS250 and CBS350 monitoring maintained by Aricoma Atlas
+        for Zabbix 7.0.
+
+        The official Network Generic Device by SNMP template supplies ICMP,
+        standard system data and interface discovery. Vendor items use numeric
+        OIDs documented by Cisco for CBS250/CBS350 and Catalyst 1200/1300.
+
+        This template is intentionally not assigned to CBS220. Cisco does not
+        document the CBS250/CBS350 CPU and environment OIDs for that family.
+      vendor:
+        name: Aricoma
+        version: 7.0-1
+      groups:
+        - name: 'Templates/Network devices'
+      templates:
+        - name: 'Network Generic Device by SNMP'
+      items:
+        - uuid: dec78893a57946ef89430503744cc599
+          name: 'Cisco CBS: Firmware version'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.47.1.1.1.1.10.67109120]'
+          key: 'system.hw.firmware[entPhysicalSoftwareRev.67109120]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: ENTITY-MIB; entPhysicalSoftwareRev for the documented chassis entity.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: system
+        - uuid: d39d3a7bc24d4dac87ed3c148452224c
+          name: 'Cisco CBS: Serial number'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.47.1.1.1.1.11.67109120]'
+          key: 'system.hw.serialnumber[entPhysicalSerialNum.67109120]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: ENTITY-MIB; entPhysicalSerialNum for the documented chassis entity.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: system
+        - uuid: 0a9eff1791e74c5985134597b2f0bbaa
+          name: 'Cisco CBS: Manufacturer'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.2.1.47.1.1.1.1.12.67109120]'
+          key: 'system.hw.manufacturer[entPhysicalMfgName.67109120]'
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: ENTITY-MIB; entPhysicalMfgName for the documented chassis entity.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: system
+        - uuid: 1696b98629764205a2ddf9d631e43d45
+          name: 'Cisco CBS: CPU utilization (last second)'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.1.7.0]'
+          key: 'cisco.cbs.cpu.util[lastSecond]'
+          value_type: FLOAT
+          units: '%'
+          description: 'Cisco-documented CPU utilization during the last second.'
+          tags:
+            - tag: component
+              value: cpu
+        - uuid: b1afd543b33e4a30866b51dfa78db764
+          name: 'Cisco CBS: CPU utilization (last minute)'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.1.8.0]'
+          key: 'cisco.cbs.cpu.util[lastMinute]'
+          value_type: FLOAT
+          units: '%'
+          description: 'Cisco-documented CPU utilization during the last minute.'
+          tags:
+            - tag: component
+              value: cpu
+        - uuid: fc7ae73e9ab04efab66bab822e3ad83c
+          name: 'Cisco CBS: CPU utilization (last 5 minutes)'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.1.9.0]'
+          key: 'system.cpu.util[cisco-cbs]'
+          value_type: FLOAT
+          units: '%'
+          description: 'Cisco-documented CPU utilization during the last five minutes; canonical Atlas CPU metric.'
+          tags:
+            - tag: component
+              value: cpu
+          triggers:
+            - uuid: 7ddfa94e025444d08d51c7771b1062b5
+              expression: 'min(/Aricoma Atlas Cisco CBS250-350 by SNMP/system.cpu.util[cisco-cbs],5m)>{$CPU.UTIL.CRIT}'
+              name: 'Cisco CBS: CPU utilization is high'
+              event_name: 'Cisco CBS: CPU utilization is high (over {$CPU.UTIL.CRIT}% for 5m)'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: a28e60138eba47409b81dcff83de5a21
+          name: 'Cisco CBS: Temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.10.1]'
+          key: 'sensor.temp.value[rlPhdUnitEnvParamTempSensorValue.1]'
+          value_type: FLOAT
+          description: 'Cisco-documented current chassis temperature sensor value; the source does not specify the unit or scale.'
+          tags:
+            - tag: component
+              value: temperature
+        - uuid: 205a78a0dd134467815fde3f1b484baa
+          name: 'Cisco CBS: Fan 1 status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.4.1]'
+          key: 'sensor.fan.status[rlPhdUnitEnvParamFan1Status.1]'
+          description: 'Cisco-documented fan 1 status.'
+          valuemap:
+            name: 'Cisco CBS fan status'
+          tags:
+            - tag: component
+              value: fan
+          triggers:
+            - uuid: 3cdac784a5cd411fb6b5a5ca36adf583
+              expression: 'last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan1Status.1])<>1 and last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan1Status.1])<>5'
+              name: 'Cisco CBS: Fan 1 is not operating normally'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: eee3b60a87ba48cf8cc42c88f2162a31
+          name: 'Cisco CBS: Fan 2 status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.5.1]'
+          key: 'sensor.fan.status[rlPhdUnitEnvParamFan2Status.1]'
+          description: 'Cisco-documented fan 2 status.'
+          valuemap:
+            name: 'Cisco CBS fan status'
+          tags:
+            - tag: component
+              value: fan
+          triggers:
+            - uuid: 83d1230c9eba4d98b8ea29370e8a4495
+              expression: 'last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan2Status.1])<>1 and last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan2Status.1])<>5'
+              name: 'Cisco CBS: Fan 2 is not operating normally'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 45248a4c75454d0489573f8c641de41b
+          name: 'Cisco CBS: Fan 3 status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.6.1]'
+          key: 'sensor.fan.status[rlPhdUnitEnvParamFan3Status.1]'
+          description: 'Cisco-documented fan 3 status.'
+          valuemap:
+            name: 'Cisco CBS fan status'
+          tags:
+            - tag: component
+              value: fan
+          triggers:
+            - uuid: b7a166fc54c8433d98bacd9c34e5a55d
+              expression: 'last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan3Status.1])<>1 and last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan3Status.1])<>5'
+              name: 'Cisco CBS: Fan 3 is not operating normally'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: 2a762a2ed92f440a9a9655cf461f0324
+          name: 'Cisco CBS: Fan 4 status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.7.1]'
+          key: 'sensor.fan.status[rlPhdUnitEnvParamFan4Status.1]'
+          description: 'Cisco-documented fan 4 status.'
+          valuemap:
+            name: 'Cisco CBS fan status'
+          tags:
+            - tag: component
+              value: fan
+          triggers:
+            - uuid: fb495c7eefef4c418abdb378342485c0
+              expression: 'last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan4Status.1])<>1 and last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan4Status.1])<>5'
+              name: 'Cisco CBS: Fan 4 is not operating normally'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+        - uuid: f8757ffdc6cb44b8a1d87fce6da5f23d
+          name: 'Cisco CBS: Fan 5 status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.8.1]'
+          key: 'sensor.fan.status[rlPhdUnitEnvParamFan5Status.1]'
+          description: 'Cisco-documented fan 5 status.'
+          valuemap:
+            name: 'Cisco CBS fan status'
+          tags:
+            - tag: component
+              value: fan
+          triggers:
+            - uuid: 3ebed6c6ef7f46c483161d4b65209bbc
+              expression: 'last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan5Status.1])<>1 and last(/Aricoma Atlas Cisco CBS250-350 by SNMP/sensor.fan.status[rlPhdUnitEnvParamFan5Status.1])<>5'
+              name: 'Cisco CBS: Fan 5 is not operating normally'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: availability
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: switch
+        - tag: target
+          value: cisco-cbs
+      macros:
+        - macro: '{$CPU.UTIL.CRIT}'
+          value: '90'
+      valuemaps:
+        - uuid: 37b8894ce37d49ee9ff6d37d687ee7fc
+          name: 'Cisco CBS fan status'
+          mappings:
+            - value: '1'
+              newvalue: normal
+            - value: '2'
+              newvalue: warning
+            - value: '3'
+              newvalue: critical
+            - value: '4'
+              newvalue: shutdown
+            - value: '5'
+              newvalue: notPresent
+            - value: '6'
+              newvalue: notFunctioning
+  graphs:
+    - uuid: 74b6d4bbee884300ac91f74ca15b067a
+      name: 'Cisco CBS: CPU utilization'
+      ymin_type_1: FIXED
+      ymax_type_1: FIXED
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: 199C0D
+          item:
+            host: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+            key: 'system.cpu.util[cisco-cbs]'
+        - sortorder: '1'
+          color: F63100
+          item:
+            host: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+            key: 'cisco.cbs.cpu.util[lastMinute]'
+        - sortorder: '2'
+          color: 2774A4
+          item:
+            host: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+            key: 'cisco.cbs.cpu.util[lastSecond]'
+    - uuid: eed2023ee4c04636bf5eae5a0d01e589
+      name: 'Cisco CBS: Temperature'
+      graph_items:
+        - drawtype: GRADIENT_LINE
+          color: FF8000
+          item:
+            host: 'Aricoma Atlas Cisco CBS250-350 by SNMP'
+            key: 'sensor.temp.value[rlPhdUnitEnvParamTempSensorValue.1]'

@@ -1057,16 +1057,29 @@ Centralizované mapovanie pre Zabbix 7.0 je:
 | NetBox platform | Zabbix template |
 |---|---|
 | `cisco-ios`, `cisco-ios-xe` | `Cisco IOS by SNMP` |
-| `cisco-cbs` | `Network Generic Device by SNMP` |
+| `cisco-cbs` (CBS220 / legacy CBS) | `Network Generic Device by SNMP` |
+| `cisco-cbs250-350` | `Aricoma Atlas Cisco CBS250-350 by SNMP` |
 | `fortios` | `FortiGate by SNMP` |
 | `junos` | `Juniper by SNMP` |
 | `sophos-sfos` | `Aricoma Atlas Sophos SFOS by SNMP` |
 | `sophos-ap` | `Network Generic Device by SNMP` |
 
 Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business ani Sophos
-template. `cisco-cbs` a `sophos-ap` preto používajú oficiálny generic SNMP
-template. Pre `sophos-sfos` Atlas počas deploymentu idempotentne importuje
-`catalog/zabbix/templates/sophos_sfos_by_snmp.yaml`. Tento template dedí
+template. Atlas preto počas deploymentu idempotentne importuje vlastné
+`catalog/zabbix/templates/cisco_cbs250_350_by_snmp.yaml` a
+`catalog/zabbix/templates/sophos_sfos_by_snmp.yaml`. Cisco template je určený
+iba pre CBS250/350, dedí `Network Generic Device by SNMP` a pridáva tri CPU
+intervaly, teplotu, firmware, sériové číslo, výrobcu, ventilátory, alerty a
+CPU/temperature grafy z OID publikovaných spoločnosťou Cisco. CBS220 zostáva na
+generic template, pretože Cisco tieto OID pre CBS220 nedokumentuje.
+
+Bootstrap nastaví nový default `cisco-cbs250-350` na Device Types CBS250 a
+CBS350. Existujúce NetBox Devices Atlas zámerne nemigruje: ak už majú uloženú
+platformu `cisco-cbs`, treba ju jednorazovo zmeniť na `cisco-cbs250-350` a
+spustiť `sudo atlasctl zabbix sync`. CBS220 a ostatné staršie CBS zariadenia
+zostávajú na backward-compatible `cisco-cbs` a generic template.
+
+Sophos template dedí
 `Network Generic Device by SNMP` pre dostupnosť a interface discovery a pridáva
 vendor-specific SFOS firmware, pamäť, disk, swap, služby, HA a system-health
 itemy z aktuálnej oficiálnej MIB vetvy `1.3.6.1.4.1.2604.5`.
@@ -1088,7 +1101,8 @@ stav, nie silent fallback. Názvy sú viazané na oficiálny
 [Zabbix integrations katalóg](https://www.zabbix.com/integrations/snmp),
 [Zabbix 7.0 template source](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net?at=release%2F7.0),
 [Sophos Firewall SNMP dokumentáciu](https://docs.sophos.com/nsg/sophos-firewall/21.0/Help/en-us/webhelp/onlinehelp/AdministratorHelp/Administration/SNMP/index.html)
-a [Sophos AP6/APX SNMP dokumentáciu](https://docs.sophos.com/central/customer/help/en-us/ManageYourProducts/Wireless/AccessPoints/index.html).
+a [Sophos AP6/APX SNMP dokumentáciu](https://docs.sophos.com/central/customer/help/en-us/ManageYourProducts/Wireless/AccessPoints/index.html),
+ako aj [Cisco CBS250/350 SNMP OID dokumentáciu](https://www.cisco.com/c/en/us/support/docs/smb/switches/Cisco-Business-Switching/kmgmt3636-snmpv3-common-oids-cbs350.html).
 
 SNMPv2c community sa číta z
 `atlas/devices/credentials/<manufacturer>/<credential_profile>/snmp`, vloží sa
@@ -1611,7 +1625,8 @@ catalog/baseline/
 
 Prvá reusable runtime collection vrstva pre CPU je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
-explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs` a `fortios`,
+explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs`,
+`cisco-cbs250-350` a `fortios`,
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
 secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.

@@ -6,6 +6,7 @@ platforms:
   cisco-ios-xe: {name: Cisco IOS XE, manufacturer: Cisco}
   cisco-nxos: {name: Cisco NX-OS, manufacturer: Cisco}
   cisco-cbs: {name: Cisco CBS, manufacturer: Cisco}
+  cisco-cbs250-350: {name: Cisco CBS250/350, manufacturer: Cisco}
   fortios: {name: FortiOS, manufacturer: Fortinet}
   fortiap: {name: FortiAP, manufacturer: Fortinet}
   fortianalyzer: {name: FortiAnalyzer, manufacturer: Fortinet}
@@ -43,8 +44,10 @@ platform_mappings:
         - 'cisco-isr4451-x'
         - 'cisco-isr4461-x'
       platform: cisco-ios-xe
-    - slugs: ['cisco-cbs220-*', 'cisco-cbs250-*', 'cisco-cbs350-*']
+    - slugs: ['cisco-cbs220-*']
       platform: cisco-cbs
+    - slugs: ['cisco-cbs250-*', 'cisco-cbs350-*']
+      platform: cisco-cbs250-350
     # No Nexus selected by the current manifest; do not assume N9K implies NX-OS (ACI).
   Fortinet:
     - slugs: ['fortinet-fg-*', 'fortinet-fgr-*', 'fortinet-fortigate-7081f', 'fortinet-fortigate-7121f']

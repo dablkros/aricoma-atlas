@@ -11,6 +11,7 @@
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
       cisco-cbs: cpu/cisco_cbs.yml
+      cisco-cbs250-350: cpu/cisco_cbs.yml
       fortios: cpu/fortios.yml
 
 - name: Resolve the allow-listed platform task
@@ -21,6 +22,7 @@
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
       cisco-cbs: cpu/cisco_cbs.yml
+      cisco-cbs250-350: cpu/cisco_cbs.yml
       fortios: cpu/fortios.yml
 
 - name: Execute the platform-specific read-only collector
