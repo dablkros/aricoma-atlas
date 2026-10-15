@@ -1,8 +1,9 @@
-"""Non-secret configuration and validated NetBox device references."""
+"""Monitoring policy and validated NetBox device references."""
 from dataclasses import dataclass
 from ipaddress import ip_address, ip_interface, ip_network
 from pathlib import Path
 import re
+
 import yaml
 
 
@@ -27,7 +28,8 @@ def device_reference(raw):
     fields = raw.get("custom_fields") or {}
     if fields.get("monitoring_enabled") is not True:
         raise MonitoringError("monitoring_disabled")
-    if (raw.get("status") or {}).get("value") != "active":
+    status = raw.get("status") or {}
+    if (status.get("value") if isinstance(status, dict) else status) != "active":
         raise MonitoringError("device_not_active")
     vendor = ((raw.get("device_type") or {}).get("manufacturer") or {}).get("slug")
     platform = (raw.get("platform") or {}).get("slug")
@@ -35,14 +37,14 @@ def device_reference(raw):
         raise MonitoringError("unsupported_monitoring_driver")
     profile = fields.get("credential_profile")
     if not isinstance(profile, str) or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,127}", profile):
-        raise MonitoringError("missing_or_invalid_credential_profile")
-    primary = raw.get("primary_ip4") or raw.get("primary_ip6") or raw.get("primary_ip") or {}
+        raise MonitoringError("missing_credential_profile")
+    primary = raw.get("primary_ip4") or {}
     try:
         address = ip_interface(primary.get("address")).ip
         if address.version != 4 or address.is_loopback or address.is_link_local or address.is_unspecified or address.is_multicast:
             raise ValueError()
     except (ValueError, TypeError):
-        raise MonitoringError("invalid_management_ip") from None
+        raise MonitoringError("missing_primary_ip") from None
     if type(raw.get("id")) is not int or raw["id"] < 1:
         raise MonitoringError("invalid_device_id")
     if not isinstance(raw.get("name"), str) or not re.fullmatch(r"[A-Za-z0-9_. -]{1,128}", raw["name"]):
@@ -53,56 +55,96 @@ def device_reference(raw):
     return Device(raw["id"], raw["name"], str(address), vendor, platform, profile, site)
 
 
+def _port(value, default):
+    value = default if value is None else value
+    if type(value) is not int or not 1 <= value <= 65535:
+        raise ValueError()
+    return value
+
+
 def load_config(path):
     try:
-        config = yaml.safe_load(Path(path).read_text())
-        if not isinstance(config, dict) or config.get("version") != 1:
+        config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
+        if not isinstance(config, dict):
             raise ValueError()
-        instance = config["netbox_instance"]
-        if not isinstance(instance, str) or not re.fullmatch(r"[a-z0-9-]{1,48}", instance):
+        if config.get("version") == 1 or "devices" in config or "netbox_instance" in config:
+            raise MonitoringError("monitoring_configuration_v1_migration_required", 503)
+        if config.get("version") != 2:
             raise ValueError()
-        networks = [ip_network(n) for n in config["allowed_device_networks"]]
-        if not networks or any(n.version != 4 or n.prefixlen == 0 for n in networks):
+        networks = [ip_network(value) for value in config["allowed_device_networks"]]
+        if not networks or any(network.version != 4 or network.prefixlen == 0 for network in networks):
             raise ValueError()
-        if not isinstance(config.get("devices"), dict):
+        fortios = config.get("fortios") or {}
+        if not isinstance(fortios, dict):
             raise ValueError()
-        return config
+        default_vdom = fortios.get("default_vdom", "root")
+        if not isinstance(default_vdom, str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,35}", default_vdom):
+            raise ValueError()
+        normalized = dict(config)
+        normalized["allowed_device_networks"] = [str(network) for network in networks]
+        normalized["fortios"] = {
+            **fortios,
+            "default_vdom": default_vdom,
+            "default_https_port": _port(fortios.get("default_https_port"), 443),
+            "default_snmp_port": _port(fortios.get("default_snmp_port"), 161),
+            "tls_verify": fortios.get("tls_verify", True),
+            "lab_tls_exception": fortios.get("lab_tls_exception", False),
+        }
+        if normalized["fortios"]["tls_verify"] is not True and not (
+            normalized["fortios"]["tls_verify"] is False
+            and normalized["fortios"]["lab_tls_exception"] is True
+        ):
+            raise ValueError()
+        ca_bundle = normalized["fortios"].get("ca_bundle")
+        if ca_bundle and (not normalized["fortios"]["tls_verify"] or not Path(ca_bundle).is_file()):
+            raise ValueError()
+        monitoring = config.get("monitoring") or {}
+        if not isinstance(monitoring, dict):
+            raise ValueError()
+        source = monitoring.get("source_ip")
+        if source is not None:
+            parsed = ip_address(source)
+            if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast or parsed.is_loopback:
+                raise ValueError()
+            monitoring = {**monitoring, "source_ip": str(parsed)}
+        proxy_name = monitoring.get("proxy_name")
+        if proxy_name is not None and (
+            not isinstance(proxy_name, str) or not proxy_name.strip() or len(proxy_name) > 128
+        ):
+            raise ValueError()
+        normalized["monitoring"] = monitoring
+        return normalized
+    except MonitoringError:
+        raise
     except (OSError, KeyError, TypeError, ValueError, yaml.YAMLError):
         raise MonitoringError("monitoring_configuration_required", 503) from None
 
 
-def device_options(device, config):
-    # Operator-controlled file, not arbitrary request URLs/paths.
-    options = dict(config["devices"].get(str(device.id), config["devices"].get(device.id, {})))
-    if not any(ip_address(device.address) in ip_network(n) for n in config["allowed_device_networks"]):
-        raise MonitoringError("management_ip_not_allowed")
-    for key in ("https_port", "snmp_port"):
-        value = options.get(key, 443 if key == "https_port" else 161)
-        if type(value) is not int or not 1 <= value <= 65535:
-            raise MonitoringError("invalid_monitoring_port")
-        options[key] = value
-    for key in ("interface", "vdom"):
-        if not isinstance(options.get(key), str) or not re.fullmatch(r"[A-Za-z0-9_.-]{1,35}", options[key]):
-            raise MonitoringError("management_interface_and_vdom_required")
-    sources = options.get("source_ips", [])
-    try:
-        if not isinstance(sources, list) or not sources:
-            raise ValueError()
-        for value in sources:
-            ip = ip_address(value)
-            if ip.version != 4 or ip.is_unspecified or ip.is_multicast or ip.is_loopback:
-                raise ValueError()
-    except (ValueError, TypeError):
-        raise MonitoringError("explicit_monitoring_source_required") from None
-    options["source_ips"] = sorted(set(sources))
-    options.setdefault("tls_verify", True)
-    if options["tls_verify"] is not True and not (
-        options["tls_verify"] is False and options.get("lab_tls_exception") is True
-    ):
-        raise MonitoringError("invalid_tls_configuration")
-    if options.get("ca_bundle"):
-        if not options["tls_verify"] or not Path(options["ca_bundle"]).is_file():
-            raise MonitoringError("invalid_ca_bundle")
-    if options.get("proxy_name") is not None and not isinstance(options["proxy_name"], str):
-        raise MonitoringError("invalid_proxy_name")
+def ensure_device_network_allowed(device, config):
+    if not any(ip_address(device.address) in ip_network(value) for value in config["allowed_device_networks"]):
+        raise MonitoringError("device_network_not_allowed")
+
+
+def site_options(device, config, *, https_port, interface):
+    ensure_device_network_allowed(device, config)
+    source = config["monitoring"].get("source_ip")
+    if not source:
+        raise MonitoringError("monitoring_source_ip_unresolved")
+    fortios = config["fortios"]
+    options = {
+        "https_port": https_port,
+        "snmp_port": fortios["default_snmp_port"],
+        "default_vdom": fortios["default_vdom"],
+        "interface": interface,
+        "source_ips": [source],
+        "tls_verify": fortios["tls_verify"],
+    }
+    for key in ("lab_tls_exception", "ca_bundle"):
+        if key in fortios:
+            options[key] = fortios[key]
+    if config["monitoring"].get("proxy_name"):
+        options["proxy_name"] = config["monitoring"]["proxy_name"].strip()
     return options
+
+
+__all__ = ["Device", "MonitoringError", "device_reference", "ensure_device_network_allowed", "load_config", "site_options"]

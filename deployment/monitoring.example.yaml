@@ -1,15 +1,14 @@
-version: 1
-netbox_instance: customer-a
+version: 2
 allowed_device_networks:
   - 10.0.0.0/8
-devices:
-  "42":
-    interface: port1
-    vdom: root
-    source_ips:
-      - 10.20.30.40
-    https_port: 443
-    snmp_port: 161
-    tls_verify: true
-    # ca_bundle: /run/atlas/monitoring/trust/fortigate-ca.pem
-    # proxy_name: customer-a-proxy
+fortios:
+  default_vdom: root
+  default_https_port: 443
+  default_snmp_port: 161
+  tls_verify: true
+  lab_tls_exception: false
+  # ca_bundle: /run/atlas/monitoring/trust/fortigate-ca.pem
+monitoring:
+  # Site-level Atlas/Zabbix egress IPv4. Never use a subnet or wildcard.
+  source_ip: 10.20.30.40
+  # proxy_name: customer-a-proxy

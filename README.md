@@ -9,7 +9,8 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
 - **Atlas FastAPI backend 0.3.0-beta** zostavený a spustený v samostatnom kontajneri,
-- plánovaný a potvrdený [FortiGate monitoring provisioning P0](docs/monitoring-provisioning.md),
+- plánovaný a potvrdený [FortiGate monitoring provisioning P0](docs/monitoring-provisioning.md)
+  s automatickým NetBox onboardingom a site-level bezpečnostnou politikou,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,

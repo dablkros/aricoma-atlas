@@ -11,8 +11,12 @@ class FortiGateMonitoringDriver:
         self.requester = requester or requests
         self.base = f"https://{device.address}:{options['https_port']}/api/v2/cmdb/"
 
-    def request(self, method, resource, payload=None, schema=False):
-        params = {"vdom": self.options["vdom"]}
+    def request(self, method, resource, payload=None, schema=False, vdom="resolved"):
+        params = {}
+        if vdom == "resolved":
+            vdom = self.options.get("vdom")
+        if vdom is not None:
+            params["vdom"] = vdom
         if schema:
             params["action"] = "schema"
         try:
@@ -30,7 +34,7 @@ class FortiGateMonitoringDriver:
         if not isinstance(body, dict) or body.get("status") != "success":
             raise MonitoringError("fortigate_api_failed", 503)
         if str(body.get("version", "")).lstrip("v") != "7.0.9":
-            raise MonitoringError("fortios_version_not_validated")
+            raise MonitoringError("unsupported_fortios_version")
         return body.get("results")
 
     @staticmethod
@@ -51,6 +55,36 @@ class FortiGateMonitoringDriver:
         if not isinstance(allow, str):
             raise MonitoringError("fortigate_allowaccess_schema_unknown")
         return {"sysinfo": info, "communities": communities, "interface": interface}
+
+    def resolve_vdom(self):
+        global_state = self.one(self.request("GET", "system/global", vdom=None))
+        mode = global_state.get("vdom-mode")
+        default = self.options["default_vdom"]
+        resource = "system/interface/" + quote(self.options["interface"], safe="")
+        if mode in {"no-vdom", "disable"}:
+            self.one(self.request("GET", resource, vdom=default))
+            self.options["vdom"] = default
+            return default
+        if mode not in {"multi-vdom", "split-vdom", "enable"}:
+            raise MonitoringError("vdom_ambiguous")
+        interfaces = self.request("GET", resource, vdom="*")
+        if isinstance(interfaces, dict):
+            interfaces = [interfaces]
+        if not isinstance(interfaces, list):
+            raise MonitoringError("vdom_ambiguous")
+        vdoms = set()
+        for interface in interfaces:
+            if not isinstance(interface, dict) or interface.get("name") not in {None, self.options["interface"]}:
+                continue
+            value = interface.get("vdom")
+            if isinstance(value, dict):
+                value = value.get("name")
+            if isinstance(value, str) and value:
+                vdoms.add(value)
+        if len(vdoms) != 1:
+            raise MonitoringError("vdom_ambiguous")
+        self.options["vdom"] = vdoms.pop()
+        return self.options["vdom"]
 
     def check_schema(self):
         # Fail closed if firmware exposes a different CMDB schema.
@@ -77,7 +111,7 @@ class FortiGateMonitoringDriver:
 
     def desired_community(self, secret):
         if secret.get("vdom") != self.options["vdom"]:
-            raise MonitoringError("community_vdom_conflict", 409)
+            raise MonitoringError("snmp_community_conflict", 409)
         return {"id": secret["community_id"], "name": secret["community"], "status": "enable",
                 "query-v1-status": "disable", "query-v2c-status": "enable", "query-v2c-port": self.options["snmp_port"],
                 "trap-v1-status": "disable", "trap-v2c-status": "disable", "hosts6": [],
@@ -108,9 +142,9 @@ class FortiGateMonitoringDriver:
         desired = self.desired_community(secret)
         owned = [c for c in state["communities"] if c.get("id") == secret["community_id"]]
         if len(owned) > 1 or (owned and owned[0].get("name") != secret["community"]):
-            raise MonitoringError("community_ownership_conflict", 409)
+            raise MonitoringError("snmp_community_conflict", 409)
         if any(c.get("name") == secret["community"] and c.get("id") != secret["community_id"] for c in state["communities"]):
-            raise MonitoringError("community_identity_conflict", 409)
+            raise MonitoringError("snmp_community_conflict", 409)
         if not owned:
             changes.append("Create Atlas community restricted to monitoring sources")
         elif not self.community_equal(owned[0], desired):

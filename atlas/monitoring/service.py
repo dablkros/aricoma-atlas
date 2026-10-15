@@ -7,11 +7,22 @@ import time
 from atlas.device_credentials import DeviceValidationError
 from atlas.integrations.zabbix import ZabbixAPIError
 from atlas.monitoring.fortigate import DRIVERS
-from atlas.monitoring.models import MonitoringError, device_reference, device_options, load_config
+from atlas.monitoring.models import (
+    MonitoringError,
+    device_reference,
+    ensure_device_network_allowed,
+    load_config,
+    site_options,
+)
 from atlas.monitoring.secrets import MonitoringSecrets
-from atlas.monitoring.store import JobStore, TERMINAL
+from atlas.monitoring.store import JobStore
 from atlas.monitoring.zabbix import MonitoringZabbix
 from atlas.services.errors import DependencyError
+from atlas.services.device_resolution import (
+    DeviceResolutionError,
+    resolve_primary_interface,
+    resolve_tcp_service_port,
+)
 from atlas.zabbix_config import load_zabbix_config
 
 MODES = {"monitor_only", "provision_and_monitor"}
@@ -26,17 +37,40 @@ class MonitoringService:
         self.driver_factory = driver_factory
 
     def list_devices(self):
+        config = load_config(self.config_file)
         result = []
         for raw in self.netbox.get_monitoring_devices():
             if (raw.get("custom_fields") or {}).get("monitoring_enabled") is not True:
                 continue
             try:
                 device = device_reference(raw)
-                result.append({**asdict(device), "monitoring_enabled": True, "provisioning_status": "NOT_INSPECTED", "zabbix_status": "NOT_INSPECTED"})
+                options = self._resolve_options(device, raw, config)
+                result.append({**asdict(device), "monitoring_enabled": True,
+                    "provisioning_status": "READY_TO_INSPECT", "zabbix_status": "NOT_INSPECTED",
+                    "resolved": {"api_endpoint": f"https://{device.address}:{options['https_port']}",
+                        "management_interface": options["interface"],
+                        "snmp_port": options["snmp_port"],
+                        "monitoring_source_ip": options["source_ips"][0]}})
             except MonitoringError as exc:
                 result.append({"id": raw.get("id"), "name": raw.get("name"), "monitoring_enabled": True,
-                               "error_code": exc.code, "provisioning_status": "UNSUPPORTED"})
+                               "error_code": exc.code, "provisioning_status": "BLOCKED"})
         return result
+
+    def _resolve_options(self, device, raw, config):
+        # The allowlist is checked before any device-oriented NetBox lookup.
+        ensure_device_network_allowed(device, config)
+        try:
+            services = self.netbox.get_device_services(device.id, "fortios-api")
+            https_port = resolve_tcp_service_port(
+                services, config["fortios"]["default_https_port"]
+            )
+        except DeviceResolutionError:
+            raise MonitoringError("fortios_api_service_invalid") from None
+        try:
+            interface = resolve_primary_interface(self.netbox, raw)
+        except DeviceResolutionError:
+            raise MonitoringError("management_interface_unresolved") from None
+        return site_options(device, config, https_port=https_port, interface=interface)
 
     @staticmethod
     def fingerprint(value):
@@ -53,34 +87,41 @@ class MonitoringService:
         if mode not in MODES:
             raise MonitoringError("invalid_mode")
         config = load_config(self.config_file)
-        device = device_reference(self.netbox.get(f"/api/dcim/devices/{device_id}/"))
+        raw = self.netbox.get(f"/api/dcim/devices/{device_id}/")
+        device = device_reference(raw)
         if device.id != device_id:
             raise MonitoringError("netbox_identity_mismatch", 502)
-        options = device_options(device, config)
+        options = self._resolve_options(device, raw, config)
         self.openbao.check_ready()  # Sealed or unauthenticated => no downstream write.
-        stored = self.secrets.read(device, config["netbox_instance"])
+        stored = self.secrets.read(device)
         if stored is None and mode == "monitor_only":
             raise MonitoringError("snmp_credentials_missing")
         secret, version = stored if stored else (None, 0)
-        driver, state = None, None
-        device_changes = []
-        if mode == "provision_and_monitor":
-            credentials = self.openbao.get_device_credentials(device.vendor, device.profile, authentication="api_token")
-            factory = self.driver_factory or DRIVERS[(device.vendor, device.platform)]
-            driver = factory(device, options, credentials["api_token"])
-            driver.check_schema()
-            state = driver.inspect()
-            device_changes = driver.plan(state, secret)
+        credentials = self.openbao.get_device_credentials(
+            device.vendor, device.profile, authentication="api_token"
+        )
+        factory = self.driver_factory or DRIVERS[(device.vendor, device.platform)]
+        driver = factory(device, options, credentials["api_token"])
+        driver.resolve_vdom()
+        if secret is not None and secret.get("vdom") != options["vdom"]:
+            raise MonitoringError("snmp_community_conflict", 409)
+        driver.check_schema()
+        state = driver.inspect()
+        device_changes = driver.plan(state, secret) if mode == "provision_and_monitor" else []
         template = load_zabbix_config()["platform_templates"].get(device.platform)
         if not template:
             raise MonitoringError("template_mapping_missing")
-        zabbix = MonitoringZabbix(self.zabbix.client(), device, options, config["netbox_instance"], template)
+        zabbix = MonitoringZabbix(self.zabbix.client(), device, options, template)
         remote = zabbix.inspect()  # Conflicts/template errors precede secret/device writes.
         actions = (["Store device SNMP credentials with CAS"] if secret is None else []) + device_changes + zabbix.actions(remote, version or 1)
         public = {"device": asdict(device), "mode": mode, "planned_changes": actions,
                   "monitoring_sources": options["source_ips"], "verification": "PENDING",
                   "device_configuration": "NOT_CHANGED" if mode == "monitor_only" else "INSPECTED",
-                  "zabbix_status": "EXISTS" if remote["host"] else "MISSING"}
+                  "zabbix_status": "EXISTS" if remote["host"] else "MISSING",
+                  "resolved": {"api_endpoint": f"https://{device.address}:{options['https_port']}",
+                    "management_interface": options["interface"], "vdom": options["vdom"],
+                    "snmp_port": options["snmp_port"], "monitoring_source_ip": options["source_ips"][0],
+                    "zabbix_template": template, "credential_profile": device.profile}}
         fingerprint = self.fingerprint({"device": asdict(device), "config": config, "options": options,
             "secret": secret, "version": version, "fortigate": state, "zabbix": remote, "mode": mode})
         return public, fingerprint, (device, options, config, secret, version, driver, state, zabbix)
@@ -104,7 +145,7 @@ class MonitoringService:
                 approved = self.store.get_plan(plan_id)
                 public, fingerprint, context = self.inspect(job["device_id"], job["mode"])
                 if fingerprint != approved["fingerprint"]:
-                    raise MonitoringError("state_changed_replan_required", 409)
+                    raise MonitoringError("plan_stale", 409)
                 device, options, config, secret, version, driver, state, zabbix = context
                 def changed(label):
                     # Persist write intent before the request; a timeout may mean it applied.
@@ -112,7 +153,7 @@ class MonitoringService:
                 if job["mode"] == "provision_and_monitor":
                     if secret is None:
                         changed("Store device SNMP credentials with CAS")
-                        secret, version = self.secrets.ensure(device, config["netbox_instance"], driver.free_id(state), options)
+                        secret, version = self.secrets.ensure(device, driver.free_id(state), options)
                     self.store.update(job, status="CONFIGURING_DEVICE", current_step="CONFIGURING_DEVICE")
                     driver.configure(secret, changed)
                     self.store.update(job, device_configuration="CONFIGURED")

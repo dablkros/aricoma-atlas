@@ -13,10 +13,10 @@ def tags(host):
 
 
 class MonitoringZabbix:
-    def __init__(self, client, device, options, instance, template):
+    def __init__(self, client, device, options, template):
         self.client, self.device, self.options = client, device, options
-        self.instance, self.template = instance, template
-        self.group = f"Atlas/{instance}/{device.site}"
+        self.template = template
+        self.group = f"Atlas/{device.site}"
 
     def inspect(self):
         if not self.client.api_version().startswith("7.0."):
@@ -29,14 +29,13 @@ class MonitoringZabbix:
             values = tags(host)
             is_owned = (values.get("atlas_managed") == "true"
                 and values.get("atlas_netbox_device_id") == str(self.device.id)
-                and values.get("atlas_netbox_instance") == self.instance
                 and values.get("atlas_provisioning") == "p0")
             if is_owned:
                 owned.append(host)
             elif (host.get("host") == self.device.name or any(i.get("ip") == self.device.address for i in host.get("interfaces", []))
                   or (values.get(NETBOX_ID_TAG) == str(self.device.id) and values.get(MANAGED_BY_TAG) == MANAGED_BY_VALUE
-                      and values.get("atlas_netbox_instance", self.instance) == self.instance)):
-                raise MonitoringError("zabbix_host_ownership_conflict", 409)
+                      )):
+                raise MonitoringError("unmanaged_zabbix_collision", 409)
         if len(owned) > 1:
             raise MonitoringError("zabbix_duplicate_identity", 409)
         host = owned[0] if owned else None
@@ -66,7 +65,7 @@ class MonitoringZabbix:
     def wanted_tags(self, secret_version):
         return {MANAGED_BY_TAG: MANAGED_BY_VALUE, NETBOX_ID_TAG: str(self.device.id),
                 "atlas_managed": "true", "atlas_netbox_device_id": str(self.device.id),
-                "atlas_netbox_instance": self.instance, "atlas_provisioning": "p0",
+                "atlas_provisioning": "p0",
                 "atlas_snmp_secret_version": str(secret_version)}
 
     def interface(self):
@@ -75,7 +74,7 @@ class MonitoringZabbix:
                 "details": {"version": 2, "bulk": 1, "community": MACRO}}
 
     def macro_description(self, version):
-        return f"Atlas monitoring {self.instance}/{self.device.id} KV version {version}"
+        return f"Atlas monitoring device {self.device.id} KV version {version}"
 
     def actions(self, state, version):
         host = state["host"]

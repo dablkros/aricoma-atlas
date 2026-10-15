@@ -112,8 +112,9 @@ class BackendRuntimeTests(unittest.TestCase):
         monitoring_identity.write_text("{}\n", encoding="utf-8")
         monitoring_default = self.root / "deployment/monitoring.default.yaml"
         monitoring_default.write_text(
-            "version: 1\nnetbox_instance: local\n"
-            "allowed_device_networks: [192.0.2.0/24]\ndevices: {}\n",
+            "version: 2\nallowed_device_networks: [192.0.2.0/24]\n"
+            "fortios: {default_vdom: root, default_https_port: 443, default_snmp_port: 161, tls_verify: true}\n"
+            "monitoring: {}\n",
             encoding="utf-8",
         )
         known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
