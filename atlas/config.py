@@ -18,6 +18,10 @@ class Settings(BaseSettings):
     use a repository-root ``.env`` file, which is excluded from Git.
     """
 
+    monitoring_config_file: Path = Path(".runtime/monitoring/config.yaml")
+    monitoring_jobs_directory: Path = Path(".runtime/monitoring/jobs")
+    monitoring_identity_file: Path = Path(".runtime/openbao-monitoring.json")
+    monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
     app_name: str = Field(default="Aricoma Atlas", min_length=1, max_length=100)
     app_version: str = Field(default=__version__, min_length=1, max_length=50)
     environment: Literal["development", "test", "production"] = "development"
@@ -95,6 +99,9 @@ class Settings(BaseSettings):
         return value
 
     @field_validator(
+        "monitoring_config_file",
+        "monitoring_identity_file",
+        "monitoring_operator_token_file",
         "openbao_identity_file",
         "oxidized_inventory_file",
         "prophylaxis_results_file",
@@ -105,6 +112,13 @@ class Settings(BaseSettings):
     def validate_runtime_file(cls, value: Path) -> Path:
         if not value.name or ".." in value.parts:
             raise ValueError("runtime path must identify a file")
+        return value
+
+    @field_validator("monitoring_jobs_directory")
+    @classmethod
+    def validate_runtime_directory(cls, value: Path) -> Path:
+        if not value.name or ".." in value.parts:
+            raise ValueError("runtime path must identify a directory")
         return value
 
 

@@ -335,6 +335,8 @@ class ZabbixSyncService:
             issues = []
             protected_ids = set()
             for host in current:
+                if self._tags(host).get("atlas_provisioning") == "p0":
+                    continue  # Explicit P0 workflow owns these hosts.
                 value = self._tags(host).get(NETBOX_ID_TAG)
                 if not isinstance(value, str) or not value.isdigit():
                     issues.append(
@@ -351,7 +353,11 @@ class ZabbixSyncService:
             unchanged = []
             seen_ids = set()
 
+            p0_ids = {self._tags(h).get(NETBOX_ID_TAG) for h in current if self._tags(h).get("atlas_provisioning") == "p0"}
             for device in devices:
+                if str(device.get("id")) in p0_ids:
+                    unchanged.append(self._label(device))
+                    continue
                 label = self._label(device)
                 identifier = device.get("id")
                 if isinstance(identifier, int) and not isinstance(identifier, bool):

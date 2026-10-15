@@ -49,6 +49,11 @@ OPENBAO_BACKEND_IDENTITY_FILE = (
     / ".runtime"
     / "openbao-backend.json"
 )
+OPENBAO_MONITORING_IDENTITY_FILE = (
+    ROOT
+    / ".runtime"
+    / "openbao-monitoring.json"
+)
 
 OPENBAO_URL = os.environ.get(
     "OPENBAO_URL",
@@ -248,7 +253,7 @@ def verify_openbao_ready():
         raise RuntimeError(
             "Atlas backend OpenBao identity is missing. Run "
             "'sudo atlasctl openbao' and select "
-            "'2. Reconcile atlas-backend policy', then deploy again."
+            "'2. Reconcile Atlas backend roles', then deploy again."
         )
 
     backend_token = None
@@ -260,7 +265,7 @@ def verify_openbao_ready():
         raise RuntimeError(
             "Atlas backend cannot authenticate to OpenBao. Run "
             "'sudo atlasctl openbao' and select "
-            "'2. Reconcile atlas-backend policy', then deploy again."
+            "'2. Reconcile Atlas backend roles', then deploy again."
         ) from exc
 
     try:
@@ -269,6 +274,25 @@ def verify_openbao_ready():
         raise RuntimeError(
             "Atlas backend OpenBao authentication succeeded, but its "
             "readiness token could not be revoked"
+        ) from exc
+
+    if not OPENBAO_MONITORING_IDENTITY_FILE.exists():
+        raise RuntimeError(
+            "Atlas monitoring OpenBao identity is missing. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile Atlas backend roles', then deploy again."
+        )
+
+    try:
+        monitoring_token = client.login_from_identity(
+            OPENBAO_MONITORING_IDENTITY_FILE
+        )
+        client.revoke_self(monitoring_token)
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas monitoring provisioner cannot authenticate to OpenBao. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile Atlas backend roles', then deploy again."
         ) from exc
 
     ok(

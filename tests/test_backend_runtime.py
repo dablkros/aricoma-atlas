@@ -108,6 +108,14 @@ class BackendRuntimeTests(unittest.TestCase):
         identity = self.root / ".runtime/openbao-backend.json"
         identity.parent.mkdir(parents=True)
         identity.write_text("{}\n", encoding="utf-8")
+        monitoring_identity = self.root / ".runtime/openbao-monitoring.json"
+        monitoring_identity.write_text("{}\n", encoding="utf-8")
+        monitoring_default = self.root / "deployment/monitoring.default.yaml"
+        monitoring_default.write_text(
+            "version: 1\nnetbox_instance: local\n"
+            "allowed_device_networks: [192.0.2.0/24]\ndevices: {}\n",
+            encoding="utf-8",
+        )
         known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
         known_hosts.parent.mkdir(parents=True)
         known_hosts.write_text("fixture host key\n", encoding="utf-8")
@@ -213,6 +221,19 @@ class BackendRuntimeTests(unittest.TestCase):
             service["volumes"],
         )
         self.assertIn(
+            f"{(self.root / '.runtime/openbao-monitoring.json').resolve()}:"
+            "/run/secrets/atlas-monitoring.json:ro",
+            service["volumes"],
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_MONITORING_JOBS_DIRECTORY"],
+            "/run/atlas/monitoring/jobs",
+        )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/monitoring/operator-token").st_mode & 0o777,
+            0o600,
+        )
+        self.assertIn(
             f"{self.inventory_directory}:/run/atlas/oxidized:rw",
             service["volumes"],
         )
@@ -267,6 +288,7 @@ class BackendRuntimeTests(unittest.TestCase):
 
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
+        (self.root / ".runtime/openbao-monitoring.json").unlink()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
         (self.root / ".runtime/oxidized/ssh").rmdir()
         (self.root / ".runtime/oxidized").rmdir()
@@ -355,8 +377,10 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
             root = Path(directory)
             deployer = root / "deployer.json"
             backend = root / "backend.json"
+            monitoring = root / "monitoring.json"
             deployer.write_text("{}\n", encoding="utf-8")
             backend.write_text("{}\n", encoding="utf-8")
+            monitoring.write_text("{}\n", encoding="utf-8")
             client = Mock()
             client.seal_status.return_value = {
                 "initialized": True,
@@ -365,6 +389,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
             client.login_from_identity.side_effect = [
                 "deployer-token",
                 "backend-token",
+                "monitoring-token",
             ]
             with (
                 patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
@@ -372,6 +397,11 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                     deploy_atlas,
                     "OPENBAO_BACKEND_IDENTITY_FILE",
                     backend,
+                ),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_MONITORING_IDENTITY_FILE",
+                    monitoring,
                 ),
                 patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
                 patch.object(deploy_atlas, "header"),
@@ -381,11 +411,11 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
 
             self.assertEqual(
                 client.login_from_identity.call_args_list,
-                [call(deployer), call(backend)],
+                [call(deployer), call(backend), call(monitoring)],
             )
             self.assertEqual(
                 client.revoke_self.call_args_list,
-                [call("deployer-token"), call("backend-token")],
+                [call("deployer-token"), call("backend-token"), call("monitoring-token")],
             )
 
     def test_openbao_gate_has_actionable_backend_reconcile_error(self):
@@ -416,7 +446,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
             ):
                 with self.assertRaisesRegex(
                     RuntimeError,
-                    "Reconcile atlas-backend policy",
+                    "Reconcile Atlas backend roles",
                 ):
                     deploy_atlas.verify_openbao_ready()
 

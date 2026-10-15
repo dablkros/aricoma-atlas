@@ -74,6 +74,8 @@ jobs:
               Path("deployment/netbox.yaml"),
               Path("deployment/oxidized.yaml"),
               Path("deployment/backend.yaml"),
+              Path("deployment/monitoring.default.yaml"),
+              Path("deployment/monitoring.example.yaml"),
               Path("deployment/zabbix.yaml"),
               Path("deployment/proxy.example.yaml"),
           ]
@@ -145,6 +147,7 @@ jobs:
             deployment/openbao/docker-compose.yml
             deployment/openbao/openbao.hcl
             deployment/openbao/policies/atlas-backend.hcl
+            deployment/openbao/policies/atlas-monitoring-provisioner.hcl
             deployment/openbao/policies/atlas-deployer.hcl
             deployment/openbao/policies/atlas-operator.hcl
             deployment/openbao/policies/device-credentials-read.hcl

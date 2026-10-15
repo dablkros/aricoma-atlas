@@ -6,6 +6,7 @@ import copy
 import ipaddress
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -32,6 +33,7 @@ from atlas.proxy import (  # noqa: E402
 
 
 CONFIG_FILE = ROOT / "deployment/backend.yaml"
+MONITORING_DEFAULT_FILE = ROOT / "deployment/monitoring.default.yaml"
 IMAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -183,6 +185,52 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
             "Atlas backend AppRole identity is missing or is not a regular file"
         )
 
+    monitoring_identity_file = root / ".runtime/openbao-monitoring.json"
+    if monitoring_identity_file.is_symlink() or not monitoring_identity_file.is_file():
+        raise RuntimeError(
+            "Atlas monitoring provisioner AppRole identity is missing or is not a regular file"
+        )
+
+    monitoring_directory = root / ".runtime/monitoring"
+    if monitoring_directory.is_symlink():
+        raise RuntimeError("Monitoring runtime cannot be a symlink")
+    if runtime_base.resolve() not in monitoring_directory.resolve().parents:
+        raise RuntimeError("Monitoring runtime escaped the protected runtime directory")
+    monitoring_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_directory, 0o700)
+    monitoring_jobs = monitoring_directory / "jobs"
+    if monitoring_jobs.is_symlink():
+        raise RuntimeError("Monitoring jobs directory cannot be a symlink")
+    monitoring_jobs.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_jobs, 0o700)
+    monitoring_trust = monitoring_directory / "trust"
+    if monitoring_trust.is_symlink():
+        raise RuntimeError("Monitoring trust directory cannot be a symlink")
+    monitoring_trust.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_trust, 0o700)
+
+    monitoring_config = monitoring_directory / "config.yaml"
+    if not monitoring_config.exists():
+        if not MONITORING_DEFAULT_FILE.is_file():
+            raise RuntimeError("Safe monitoring default configuration is missing")
+        monitoring_config.write_text(
+            MONITORING_DEFAULT_FILE.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    if monitoring_config.is_symlink() or not monitoring_config.is_file():
+        raise RuntimeError("Monitoring configuration is not a regular file")
+    os.chmod(monitoring_config, 0o600)
+
+    monitoring_operator_token = monitoring_directory / "operator-token"
+    if not monitoring_operator_token.exists():
+        monitoring_operator_token.write_text(
+            secrets.token_urlsafe(32) + "\n",
+            encoding="utf-8",
+        )
+    if monitoring_operator_token.is_symlink() or not monitoring_operator_token.is_file():
+        raise RuntimeError("Monitoring operator token is not a regular file")
+    os.chmod(monitoring_operator_token, 0o600)
+
     known_hosts_file = root / ".runtime/oxidized/ssh/known_hosts"
     if (
         backend["ssh_strict_host_keys"]
@@ -223,6 +271,11 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
     )
     volumes = [
         f"{identity_file}:/run/secrets/atlas-backend.json:ro",
+        f"{monitoring_identity_file}:/run/secrets/atlas-monitoring.json:ro",
+        f"{monitoring_config}:/run/secrets/atlas-monitoring-config.yaml:ro",
+        f"{monitoring_operator_token}:/run/secrets/atlas-monitoring-operator-token:ro",
+        f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
+        f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{inventory_directory}:/run/atlas/oxidized:rw",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
     ]
@@ -254,6 +307,10 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
                         "ATLAS_LOG_LEVEL": backend["log_level"],
                         "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
                         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
+                        "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
+                        "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
+                        "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
+                        "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                         "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",

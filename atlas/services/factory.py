@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from atlas.config import Settings
+from atlas.monitoring.service import MonitoringService
 from atlas.openbao_client import OpenBaoClient
 from atlas.prophylaxis.ansible_backend import AnsibleBackend
 from atlas.prophylaxis.service import ProphylaxisService
@@ -29,6 +30,7 @@ class DependencyServices:
     zabbix: ZabbixService
     zabbix_sync: ZabbixSyncService
     zabbix_monitoring: ZabbixMonitoringService
+    monitoring: MonitoringService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -54,8 +56,13 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         settings.http_connect_timeout,
         settings.http_read_timeout,
     )
+    provisioner = OpenBaoService(
+        OpenBaoClient(str(settings.openbao_url), timeout=timeout), settings.monitoring_identity_file)
+    monitoring = MonitoringService(netbox, provisioner, zabbix,
+                                   settings.monitoring_config_file, settings.monitoring_jobs_directory)
     inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
     return DependencyServices(
+        monitoring=monitoring,
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,

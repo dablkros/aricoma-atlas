@@ -1,0 +1,7 @@
+version: 1
+netbox_instance: local
+# TEST-NET-1 is intentionally non-routable. Configure explicit customer ranges
+# and per-device settings before provisioning can contact a device.
+allowed_device_networks:
+  - 192.0.2.0/24
+devices: {}

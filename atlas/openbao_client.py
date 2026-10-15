@@ -593,6 +593,7 @@ class OpenBaoClient:
         path,
         data,
         mount="atlas",
+        cas=None,
     ):
         self._request(
             "POST",
@@ -600,5 +601,6 @@ class OpenBaoClient:
             token=token,
             payload={
                 "data": data,
+                **({"options": {"cas": cas}} if cas is not None else {}),
             },
         )

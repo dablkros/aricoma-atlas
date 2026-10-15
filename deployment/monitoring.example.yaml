@@ -1,0 +1,15 @@
+version: 1
+netbox_instance: customer-a
+allowed_device_networks:
+  - 10.0.0.0/8
+devices:
+  "42":
+    interface: port1
+    vdom: root
+    source_ips:
+      - 10.20.30.40
+    https_port: 443
+    snmp_port: 161
+    tls_verify: true
+    # ca_bundle: /run/atlas/monitoring/trust/fortigate-ca.pem
+    # proxy_name: customer-a-proxy
