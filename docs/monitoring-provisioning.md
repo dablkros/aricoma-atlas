@@ -77,6 +77,18 @@ Atlas never removes customer SNMP communities. A community conflict, unmanaged
 Zabbix host collision, unexpected schema, or unsupported version stops the
 operation. An interrupted write job becomes `PARTIAL` and requires a new plan.
 
+Zabbix writes from both `atlasctl zabbix sync` and approved monitoring jobs are
+owned by the shared `ZabbixSyncService`. Runtime reconciliation uses the
+deployment-managed `Aricoma Atlas` host group and records the NetBox site in the
+`atlas_site` ownership tag. The restricted runtime API identity does not create
+host groups and does not require the Zabbix Super admin user type. Vendor
+drivers only produce device state and SNMP credentials; FortiGate REST and
+future Ansible-backed vendors feed the same Zabbix reconciliation boundary.
+The sync service prefers an Atlas-generated per-device monitoring secret when
+one exists and otherwise retains the existing operator-managed SNMP profile
+lookup. Generated secret paths use
+`atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring`.
+
 ## API sequence
 
 All requests use `Authorization: Bearer <operator-token>`.

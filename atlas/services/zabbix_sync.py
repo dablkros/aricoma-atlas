@@ -4,10 +4,12 @@ import ipaddress
 import logging
 from dataclasses import dataclass, field
 from threading import Lock
+from types import SimpleNamespace
 from typing import Optional, Tuple
 
 from atlas.device_credentials import DeviceValidationError
 from atlas.integrations.zabbix import ZabbixAPIError
+from atlas.monitoring.models import MonitoringError
 from atlas.services.errors import DependencyError
 from atlas.services.zabbix import (
     MANAGED_BY_TAG,
@@ -85,7 +87,7 @@ def _nested_slug(value) -> Optional[str]:
     return value.get("slug") if isinstance(value, dict) else None
 
 
-def desired_host(device: dict, openbao, config: dict) -> DesiredHost:
+def desired_host(device: dict, openbao, config: dict, monitoring_secrets=None) -> DesiredHost:
     fields = device.get("custom_fields")
     if not isinstance(fields, dict) or fields.get("monitoring_enabled") is not True:
         raise DeviceValidationError(
@@ -128,7 +130,22 @@ def desired_host(device: dict, openbao, config: dict) -> DesiredHost:
             "Missing primary IP",
             code="missing_primary_ip",
         ) from None
-    credentials, secret_version = openbao.get_snmp_credentials(vendor, profile)
+    try:
+        generated = (
+            monitoring_secrets.read(SimpleNamespace(id=identifier, vendor=vendor))
+            if monitoring_secrets is not None
+            else None
+        )
+    except MonitoringError as exc:
+        raise DeviceValidationError(
+            "Invalid Atlas-managed monitoring secret",
+            code=exc.code,
+            category="error",
+        ) from exc
+    if generated is None:
+        credentials, secret_version = openbao.get_snmp_credentials(vendor, profile)
+    else:
+        credentials, secret_version = generated
     if credentials.get("version") != "2c":
         raise DeviceValidationError(
             "SNMP version is not enabled by the first Zabbix release",
@@ -158,12 +175,26 @@ class ZabbixSyncService:
         zabbix: ZabbixService,
         config=None,
         sync_lock: Optional[SyncLock] = None,
+        monitoring_secrets=None,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
         self.zabbix = zabbix
         self.config = config or load_zabbix_config()
         self.sync_lock = sync_lock or SyncLock()
+        self.monitoring_secrets = monitoring_secrets
+
+    def reconciler(self, device, options, template):
+        """Return the shared per-device reconciler for approved provisioning."""
+        from atlas.monitoring.zabbix import MonitoringZabbix
+
+        return MonitoringZabbix(
+            self.zabbix.client(),
+            device,
+            options,
+            template,
+            self.config["managed_host_group"],
+        )
 
     @staticmethod
     def _tags(host: dict) -> dict:
@@ -363,7 +394,12 @@ class ZabbixSyncService:
                 if isinstance(identifier, int) and not isinstance(identifier, bool):
                     protected_ids.add(str(identifier))
                 try:
-                    item = desired_host(device, self.openbao, self.config)
+                    item = desired_host(
+                        device,
+                        self.openbao,
+                        self.config,
+                        self.monitoring_secrets,
+                    )
                     if str(item.netbox_id) in seen_ids:
                         raise DeviceValidationError(
                             "Duplicate NetBox device id",

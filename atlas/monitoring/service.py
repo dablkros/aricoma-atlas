@@ -16,7 +16,6 @@ from atlas.monitoring.models import (
 )
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.monitoring.store import JobStore
-from atlas.monitoring.zabbix import MonitoringZabbix
 from atlas.services.errors import DependencyError
 from atlas.services.device_resolution import (
     DeviceResolutionError,
@@ -24,6 +23,7 @@ from atlas.services.device_resolution import (
     resolve_tcp_service_port,
 )
 from atlas.zabbix_config import load_zabbix_config
+from atlas.services.zabbix_sync import ZabbixSyncService
 
 MODES = {"monitor_only", "provision_and_monitor"}
 
@@ -38,12 +38,16 @@ class MonitoringService:
         directory,
         driver_factory=None,
         credential_source=None,
+        zabbix_sync=None,
     ):
         self.netbox, self.openbao, self.zabbix = netbox, openbao, zabbix
         # Read operator-managed admin credentials through the same resolver
         # used by Profylaxia. Keep the monitoring AppRole scoped to generated
         # per-device SNMP secrets.
         self.credential_source = credential_source or openbao
+        self.zabbix_sync = zabbix_sync or ZabbixSyncService(
+            netbox, self.credential_source, zabbix
+        )
         self.config_file = config_file
         self.store = JobStore(directory)
         self.secrets = MonitoringSecrets(openbao)
@@ -124,7 +128,7 @@ class MonitoringService:
         template = load_zabbix_config()["platform_templates"].get(device.platform)
         if not template:
             raise MonitoringError("template_mapping_missing")
-        zabbix = MonitoringZabbix(self.zabbix.client(), device, options, template)
+        zabbix = self.zabbix_sync.reconciler(device, options, template)
         remote = zabbix.inspect()  # Conflicts/template errors precede secret/device writes.
         actions = (["Store device SNMP credentials with CAS"] if secret is None else []) + device_changes + zabbix.actions(remote, version or 1)
         public = {"device": asdict(device), "mode": mode, "planned_changes": actions,

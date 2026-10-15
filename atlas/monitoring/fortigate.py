@@ -47,10 +47,34 @@ class FortiGateMonitoringDriver:
             raise MonitoringError("fortigate_invalid_response", 502)
         return value
 
+    def management_interface(self, vdom):
+        try:
+            interfaces = self.request("GET", "system/interface", vdom=vdom)
+        except MonitoringError as exc:
+            if exc.code == "fortigate_object_not_found":
+                return None
+            raise
+        if isinstance(interfaces, dict):
+            interfaces = [interfaces]
+        if not isinstance(interfaces, list) or any(
+            not isinstance(interface, dict) for interface in interfaces
+        ):
+            raise MonitoringError("fortigate_invalid_response", 502)
+        matches = [
+            interface
+            for interface in interfaces
+            if interface.get("name") == self.options["interface"]
+        ]
+        if len(matches) > 1:
+            raise MonitoringError("management_interface_unresolved")
+        return matches[0] if matches else None
+
     def inspect(self):
         info = self.one(self.request("GET", "system.snmp/sysinfo"))
         communities = self.request("GET", "system.snmp/community")
-        interface = self.one(self.request("GET", "system/interface/" + quote(self.options["interface"], safe="")))
+        interface = self.management_interface(self.options["vdom"])
+        if interface is None:
+            raise MonitoringError("management_interface_unresolved")
         if not isinstance(communities, list) or any(not isinstance(c, dict) for c in communities):
             raise MonitoringError("fortigate_invalid_response", 502)
         allow = interface.get("allowaccess")
@@ -62,21 +86,16 @@ class FortiGateMonitoringDriver:
         global_state = self.one(self.request("GET", "system/global", vdom=None))
         mode = global_state.get("vdom-mode")
         default = self.options["default_vdom"]
-        resource = "system/interface/" + quote(self.options["interface"], safe="")
         if mode in {"no-vdom", "disable"}:
-            # A non-VDOM FortiGate may reject an otherwise valid request when
-            # an artificial ?vdom=root query parameter is supplied.
-            self.one(self.request("GET", resource, vdom=None))
+            interface = self.management_interface(None)
+            if interface is None:
+                raise MonitoringError("management_interface_unresolved")
             self.options["vdom"] = default
             return default
         if mode not in {"multi-vdom", "split-vdom", "enable"}:
             raise MonitoringError("vdom_ambiguous")
-        try:
-            interface = self.one(self.request("GET", resource, vdom=default))
-        except MonitoringError as exc:
-            if exc.code != "fortigate_object_not_found":
-                raise
-        else:
+        interface = self.management_interface(default)
+        if interface is not None:
             value = interface.get("vdom")
             if isinstance(value, dict):
                 value = value.get("name")
@@ -84,7 +103,7 @@ class FortiGateMonitoringDriver:
                 self.options["vdom"] = default
                 return default
             raise MonitoringError("vdom_ambiguous")
-        interfaces = self.request("GET", resource, vdom="*")
+        interfaces = self.request("GET", "system/interface", vdom="*")
         if isinstance(interfaces, dict):
             interfaces = [interfaces]
         if not isinstance(interfaces, list):
@@ -189,7 +208,9 @@ class FortiGateMonitoringDriver:
             changed("Enable SNMP agent")
             self.request("PUT", "system.snmp/sysinfo", {"status": "enable"})
         resource = "system/interface/" + quote(self.options["interface"], safe="")
-        interface = self.one(self.request("GET", resource))
+        interface = self.management_interface(self.options["vdom"])
+        if interface is None:
+            raise MonitoringError("management_interface_unresolved")
         access = interface.get("allowaccess")
         if not isinstance(access, str):
             raise MonitoringError("fortigate_allowaccess_schema_unknown")

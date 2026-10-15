@@ -271,6 +271,13 @@ class FakeOpenBao:
         return {"version": "2c", "community": COMMUNITY}, 7
 
 
+class FakeGeneratedMonitoringSecrets:
+    def read(self, device):
+        if (device.vendor, device.id) == ("fortinet", 123):
+            return ({"version": "2c", "community": "generated-community"}, 9)
+        return None
+
+
 class FakeZabbixClient:
     def __init__(self, hosts=()):
         self.hosts = copy.deepcopy(list(hosts))
@@ -387,6 +394,29 @@ class ZabbixSyncTests(unittest.TestCase):
         self.assertIn({"tag": "netbox_id", "value": "123"}, payload["tags"])
         self.assertEqual(client.host_queries[0]["tags"][0]["operator"], 1)
         self.assertNotIn(COMMUNITY, repr(result))
+
+    def test_generated_device_secret_precedes_profile_secret(self):
+        client = FakeZabbixClient()
+        service = ZabbixSyncService(
+            FakeNetBox([
+                netbox_device(
+                    platform={"slug": "fortios"},
+                    device_type={"manufacturer": {"slug": "fortinet"}},
+                )
+            ]),
+            FakeOpenBao(),
+            FakeZabbixService(client),
+            monitoring_secrets=FakeGeneratedMonitoringSecrets(),
+        )
+
+        result = service.sync()
+
+        self.assertEqual(result.summary.created, 1)
+        self.assertEqual(client.created[0]["macros"][0]["value"], "generated-community")
+        self.assertIn(
+            {"tag": "atlas_snmp_secret_version", "value": "9"},
+            client.created[0]["tags"],
+        )
 
     def test_sophos_firewall_uses_managed_template_and_access_point_uses_generic(self):
         devices = [

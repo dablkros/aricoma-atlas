@@ -13,10 +13,12 @@ def tags(host):
 
 
 class MonitoringZabbix:
-    def __init__(self, client, device, options, template):
+    """Per-device view of the shared Zabbix reconciliation service."""
+
+    def __init__(self, client, device, options, template, group="Aricoma Atlas"):
         self.client, self.device, self.options = client, device, options
         self.template = template
-        self.group = f"Atlas/{device.site}"
+        self.group = group
 
     def inspect(self):
         if not self.client.api_version().startswith("7.0."):
@@ -27,14 +29,16 @@ class MonitoringZabbix:
         owned = []
         for host in hosts:
             values = tags(host)
-            is_owned = (values.get("atlas_managed") == "true"
-                and values.get("atlas_netbox_device_id") == str(self.device.id)
-                and values.get("atlas_provisioning") == "p0")
+            # NetBox ID plus the common Atlas ownership tag is the canonical
+            # identity used by both atlasctl sync and approved provisioning.
+            is_owned = (
+                values.get(MANAGED_BY_TAG) == MANAGED_BY_VALUE
+                and values.get(NETBOX_ID_TAG) == str(self.device.id)
+            )
             if is_owned:
                 owned.append(host)
             elif (host.get("host") == self.device.name or any(i.get("ip") == self.device.address for i in host.get("interfaces", []))
-                  or (values.get(NETBOX_ID_TAG) == str(self.device.id) and values.get(MANAGED_BY_TAG) == MANAGED_BY_VALUE
-                      )):
+                  or values.get(NETBOX_ID_TAG) == str(self.device.id)):
                 raise MonitoringError("unmanaged_zabbix_collision", 409)
         if len(owned) > 1:
             raise MonitoringError("zabbix_duplicate_identity", 409)
@@ -45,8 +49,11 @@ class MonitoringZabbix:
         if len(templates) != 1:
             raise MonitoringError("zabbix_template_missing")
         groups = self.client.hostgroup_get({"output": ["groupid", "name"], "filter": {"name": [self.group]}})
-        if len(groups) > 1:
-            raise MonitoringError("zabbix_group_conflict", 409)
+        if len(groups) != 1:
+            raise MonitoringError(
+                "managed_host_group_missing" if not groups else "zabbix_group_conflict",
+                409,
+            )
         proxy_id = None
         if self.options.get("proxy_name"):
             proxies = self.client.call("proxy.get", {"output": ["proxyid", "name"], "filter": {"name": [self.options["proxy_name"]]}})
@@ -59,11 +66,12 @@ class MonitoringZabbix:
             "hostids": [host["hostid"]], "filter": {"key_": [KEY]}}) if host else []
         if len(macros) > 1 or len(items) > 1:
             raise MonitoringError("zabbix_duplicate_objects", 409)
-        return {"host": host, "template": templates[0], "group": groups[0] if groups else None,
+        return {"host": host, "template": templates[0], "group": groups[0],
                 "proxy_id": proxy_id, "macro": macros[0] if macros else None, "item": items[0] if items else None}
 
     def wanted_tags(self, secret_version):
         return {MANAGED_BY_TAG: MANAGED_BY_VALUE, NETBOX_ID_TAG: str(self.device.id),
+                "atlas_platform": self.device.platform, "atlas_site": self.device.site,
                 "atlas_managed": "true", "atlas_netbox_device_id": str(self.device.id),
                 "atlas_provisioning": "p0",
                 "atlas_snmp_secret_version": str(secret_version)}
@@ -79,14 +87,14 @@ class MonitoringZabbix:
     def actions(self, state, version):
         host = state["host"]
         if not host:
-            return ["Create Zabbix host with SNMP interface, secret macro, template and group", "Create sysObjectID verification item"]
+            return ["Create Zabbix host with SNMP interface, secret macro and template", "Create sysObjectID verification item"]
         actions = []
         if host.get("host") != self.device.name or host.get("name") != self.device.name or str(host.get("status")) != "0":
             actions.append("Update Zabbix host identity/status")
         if any(tags(host).get(k) != v for k, v in self.wanted_tags(version).items()):
             actions.append("Update Atlas ownership tags")
-        if not state["group"] or str(state["group"]["groupid"]) not in {str(g["groupid"]) for g in host.get("hostgroups", [])}:
-            actions.append("Link Atlas site group")
+        if str(state["group"]["groupid"]) not in {str(g["groupid"]) for g in host.get("hostgroups", [])}:
+            actions.append("Link Atlas managed group")
         if str(state["template"]["templateid"]) not in {str(t["templateid"]) for t in host.get("parentTemplates", [])}:
             actions.append("Link monitoring template")
         if str(host.get("monitored_by", "0")) != ("1" if state["proxy_id"] else "0") or (state["proxy_id"] and str(host.get("proxyid")) != str(state["proxy_id"])):
@@ -111,11 +119,7 @@ class MonitoringZabbix:
     def configure(self, secret, version, changed):
         state = self.inspect()
         actions = self.actions(state, version)
-        if not state["group"]:
-            changed("Create Atlas site group")
-            groupid = self.client.hostgroup_create(self.group)
-        else:
-            groupid = state["group"]["groupid"]
+        groupid = state["group"]["groupid"]
         host = state["host"]
         macro = {"macro": MACRO, "value": secret["community"], "type": 1, "description": self.macro_description(version)}
         wanted_tags = self.wanted_tags(version)
@@ -129,7 +133,7 @@ class MonitoringZabbix:
                 **({"proxyid": state["proxy_id"]} if state["proxy_id"] else {})})
         else:
             hostid = host["hostid"]
-            host_actions = set(actions) & {"Update Zabbix host identity/status", "Update Atlas ownership tags", "Link Atlas site group", "Link monitoring template", "Configure monitoring source"}
+            host_actions = set(actions) & {"Update Zabbix host identity/status", "Update Atlas ownership tags", "Link Atlas managed group", "Link monitoring template", "Configure monitoring source"}
             if host_actions:
                 changed("Reconcile Atlas Zabbix host links")
                 merged_tags = {**tags(host), **wanted_tags}

@@ -11,7 +11,7 @@ class MonitoringSecrets:
 
     @staticmethod
     def path(device):
-        return f"devices/snmp/fortinet/{device.id}/monitoring"
+        return f"devices/snmp/{device.vendor}/{device.id}/monitoring"
 
     def read(self, device):
         try:

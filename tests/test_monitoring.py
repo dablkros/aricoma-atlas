@@ -158,6 +158,7 @@ class FortiGateDriverTests(unittest.TestCase):
             {"name": "port1"},
         ])
         self.assertEqual(self.driver.resolve_vdom(), "root")
+        self.assertEqual(self.driver.request.call_args_list[1].args[1], "system/interface")
         self.assertIsNone(self.driver.request.call_args_list[1].kwargs["vdom"])
 
         self.driver.request = Mock(side_effect=[
@@ -179,6 +180,13 @@ class FortiGateDriverTests(unittest.TestCase):
             [{"name": "port1", "vdom": "a"}, {"name": "port1", "vdom": "b"}],
         ])
         with self.assertRaisesRegex(MonitoringError, "vdom_ambiguous"):
+            self.driver.resolve_vdom()
+
+        self.driver.request = Mock(side_effect=[
+            {"vdom-mode": "no-vdom"},
+            [{"name": "port2"}],
+        ])
+        with self.assertRaisesRegex(MonitoringError, "management_interface_unresolved"):
             self.driver.resolve_vdom()
 
 
@@ -294,7 +302,7 @@ class MonitoringServiceTests(unittest.TestCase):
                 return [{"templateid": "40", "host": "FortiGate by SNMP"}]
 
             def hostgroup_get(self, _params):
-                return []
+                return [{"groupid": "30", "name": "Aricoma Atlas"}]
 
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
