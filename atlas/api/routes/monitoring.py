@@ -1,4 +1,5 @@
 """Authenticated monitoring routes. Targets and credentials cannot be caller supplied."""
+import logging
 import secrets
 from pathlib import Path
 from typing import Literal
@@ -11,6 +12,9 @@ from atlas.monitoring.models import MonitoringError
 from atlas.services.errors import DependencyError
 from atlas.device_credentials import DeviceValidationError
 from atlas.integrations.zabbix import ZabbixAPIError
+
+
+logger = logging.getLogger("atlas.monitoring")
 
 
 def authorized(request: Request):
@@ -45,8 +49,16 @@ def safe(operation):
     try:
         return operation()
     except MonitoringError as exc:
+        logger.info(
+            "monitoring.operation_blocked",
+            extra={"event": "monitoring.operation_blocked", "error_code": exc.code},
+        )
         raise AtlasError(exc.status, exc.code, "Monitoring operation cannot proceed; check configuration and plan") from None
     except DeviceValidationError as exc:
+        logger.info(
+            "monitoring.operation_blocked",
+            extra={"event": "monitoring.operation_blocked", "error_code": exc.code},
+        )
         raise AtlasError(422, exc.code, "Device credential validation failed") from None
     except (DependencyError, ZabbixAPIError):
         raise AtlasError(503, "monitoring_dependency_unavailable", "A monitoring dependency is unavailable") from None

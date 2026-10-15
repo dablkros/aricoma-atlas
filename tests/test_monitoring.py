@@ -158,15 +158,24 @@ class FortiGateDriverTests(unittest.TestCase):
             {"name": "port1"},
         ])
         self.assertEqual(self.driver.resolve_vdom(), "root")
+        self.assertIsNone(self.driver.request.call_args_list[1].kwargs["vdom"])
 
         self.driver.request = Mock(side_effect=[
             {"vdom-mode": "multi-vdom"},
+            {"name": "port1", "vdom": "root"},
+        ])
+        self.assertEqual(self.driver.resolve_vdom(), "root")
+
+        self.driver.request = Mock(side_effect=[
+            {"vdom-mode": "multi-vdom"},
+            MonitoringError("fortigate_object_not_found", 404),
             [{"name": "port1", "vdom": "customer"}],
         ])
         self.assertEqual(self.driver.resolve_vdom(), "customer")
 
         self.driver.request = Mock(side_effect=[
             {"vdom-mode": "multi-vdom"},
+            MonitoringError("fortigate_object_not_found", 404),
             [{"name": "port1", "vdom": "a"}, {"name": "port1", "vdom": "b"}],
         ])
         with self.assertRaisesRegex(MonitoringError, "vdom_ambiguous"):

@@ -26,6 +26,8 @@ class FortiGateMonitoringDriver:
                 verify=self.options.get("ca_bundle") or self.options["tls_verify"])
             if response.status_code in (401, 403):
                 raise MonitoringError("fortigate_permission_denied", 503)
+            if response.status_code == 404:
+                raise MonitoringError("fortigate_object_not_found", 404)
             if not 200 <= response.status_code < 300:
                 raise MonitoringError("fortigate_api_failed", 503)
             body = response.json()
@@ -62,10 +64,25 @@ class FortiGateMonitoringDriver:
         default = self.options["default_vdom"]
         resource = "system/interface/" + quote(self.options["interface"], safe="")
         if mode in {"no-vdom", "disable"}:
-            self.one(self.request("GET", resource, vdom=default))
+            # A non-VDOM FortiGate may reject an otherwise valid request when
+            # an artificial ?vdom=root query parameter is supplied.
+            self.one(self.request("GET", resource, vdom=None))
             self.options["vdom"] = default
             return default
         if mode not in {"multi-vdom", "split-vdom", "enable"}:
+            raise MonitoringError("vdom_ambiguous")
+        try:
+            interface = self.one(self.request("GET", resource, vdom=default))
+        except MonitoringError as exc:
+            if exc.code != "fortigate_object_not_found":
+                raise
+        else:
+            value = interface.get("vdom")
+            if isinstance(value, dict):
+                value = value.get("name")
+            if value in {None, default}:
+                self.options["vdom"] = default
+                return default
             raise MonitoringError("vdom_ambiguous")
         interfaces = self.request("GET", resource, vdom="*")
         if isinstance(interfaces, dict):
