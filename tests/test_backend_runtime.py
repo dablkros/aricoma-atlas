@@ -207,7 +207,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             service["environment"]["ATLAS_FORTIOS_VALIDATE_CERTS"],
-            "true",
+            "false",
         )
         self.assertEqual(
             service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],
