@@ -1,4 +1,3 @@
-import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -62,7 +61,7 @@ class AnsibleBackendTests(unittest.TestCase):
             runner=runner,
         )
 
-    def test_runtime_inventory_has_target_and_local_delegate_without_secrets(self):
+    def test_runtime_inventory_is_one_host_and_secret_free(self):
         runner = CapturingRunner(
             {
                 "schema_version": 1,
@@ -88,22 +87,12 @@ class AnsibleBackendTests(unittest.TestCase):
         self.assertEqual(result.raw_output, "CPU output")
         self.assertEqual(
             list(call["inventory"]["all"]["hosts"]),
-            ["atlas_target", "localhost"],
+            ["atlas_target"],
         )
         self.assertNotIn("secret", repr(call["inventory"]))
         self.assertEqual(
             call["inventory"]["all"]["hosts"]["atlas_target"]["ansible_port"],
             22,
-        )
-        self.assertEqual(
-            call["inventory"]["all"]["hosts"]["localhost"]["ansible_connection"],
-            "local",
-        )
-        self.assertEqual(
-            call["inventory"]["all"]["hosts"]["localhost"][
-                "ansible_python_interpreter"
-            ],
-            sys.executable,
         )
         self.assertEqual(
             call["roles_path"],

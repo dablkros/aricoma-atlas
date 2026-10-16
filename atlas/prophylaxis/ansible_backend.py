@@ -5,7 +5,6 @@ import os
 from pathlib import Path
 import re
 import shutil
-import sys
 import tempfile
 from typing import Callable, Iterable
 
@@ -256,17 +255,7 @@ class AnsibleBackend:
                     "ansible_httpapi_port": port,
                 }
             )
-        return {
-            "all": {
-                "hosts": {
-                    "atlas_target": variables,
-                    "localhost": {
-                        "ansible_connection": "local",
-                        "ansible_python_interpreter": sys.executable,
-                    },
-                }
-            }
-        }
+        return {"all": {"hosts": {"atlas_target": variables}}}
 
     @staticmethod
     def _credential_environment(
