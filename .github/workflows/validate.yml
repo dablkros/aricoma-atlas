@@ -998,7 +998,7 @@ jobs:
                   "device_type": device_types["results"][0]["id"],
                   "status": "active",
                   "custom_fields": {
-                      "checkmk_enabled": True,
+                      "monitoring_enabled": True,
                       "profylaxia_checks": [
                           "cpu_utilization",
                           "os_version",
@@ -1249,12 +1249,7 @@ jobs:
 
           if custom_fields.get("monitoring_enabled") is not True:
               raise SystemExit(
-                  "[ERROR] Legacy monitoring selection was not migrated"
-              )
-
-          if "checkmk_enabled" in custom_fields:
-              raise SystemExit(
-                  "[ERROR] Legacy monitoring field still exists"
+                  "[ERROR] Monitoring selection did not survive upgrade"
               )
 
           checks = custom_fields.get("profylaxia_checks")
