@@ -51,14 +51,45 @@
       "patterns": [
         "*.yaml"
       ]
+    },
+    "HPE": {
+      "count": 109,
+      "patterns": [
+        "Aruba-5420.yaml",
+        "Aruba-6000-*.yaml",
+        "Aruba-6100-*.yaml",
+        "Aruba-6200F-*.yaml",
+        "Aruba-6200M-*.yaml",
+        "Aruba-6300F-*.yaml",
+        "Aruba-6300M-*.yaml",
+        "Aruba-6405*.yaml",
+        "Aruba-6410*.yaml",
+        "Aruba-8100-*.yaml",
+        "Aruba-8320-*.yaml",
+        "Aruba-8325-*.yaml",
+        "Aruba-8360-*.yaml",
+        "Aruba-8400.yaml",
+        "Aruba-10000-*.yaml",
+        "Aruba-2530-*.yaml",
+        "Aruba-2540-*.yaml",
+        "Aruba-2620-*.yaml",
+        "Aruba-2920-*.yaml",
+        "Aruba-2930F-*.yaml",
+        "Aruba-2930M-*.yaml",
+        "Aruba-3810M-*.yaml",
+        "Aruba-5406R-*.yaml",
+        "Aruba-5412R-*.yaml"
+      ]
     }
   },
-  "total": 711,
-  "platform_mapping_sha256": "88329cba8b03f31d97ae74646fa63cc514f5bb42d5e433b570ee28bdffc7fb61",
+  "total": 820,
+  "platform_mapping_sha256": "a84be671a5707aacdb6723c8ef90bebd36fc6138578ca2d205db29a9ea045a26",
   "platforms": {
-    "mapped": 516,
+    "mapped": 625,
     "unmapped": 195,
     "by_platform": {
+      "aruba-aos-cx": 68,
+      "aruba-aos-switch": 41,
       "cisco-cbs": 2,
       "cisco-cbs250-350": 19,
       "cisco-ios": 20,
