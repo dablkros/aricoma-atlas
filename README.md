@@ -1708,6 +1708,10 @@ vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` a explicitný parser |
 | `fortios` | `httpapi` cez HTTPS | `fortinet.fortios.fortios_monitor_fact` (`system_status`) |
 
+Aruba SSH/CLI modul potrebuje v backend image aj Python knižnicu Paramiko.
+Atlas ju pripína v `requirements.txt`; zmena sa prejaví až po novom zostavení
+backend image cez deployment.
+
 FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
 host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.
 

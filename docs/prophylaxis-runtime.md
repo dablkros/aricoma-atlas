@@ -109,6 +109,12 @@ Primárne zdroje:
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
 - [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
+- [Paramiko 5.0.0](https://pypi.org/project/paramiko/5.0.0/)
+
+Aruba `aoscx_command` používaný cez `network_cli` vyžaduje na Ansible control
+node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
+pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
+Python requirements kolekcie neinštaluje.
 
 ## Runtime a secrets
 
