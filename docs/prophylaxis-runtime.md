@@ -91,7 +91,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 | NetBox platform | Connection | Network OS | `device_facts` modul |
 | --- | --- | --- | --- |
-| `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
+| `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `cisco.ios.ios_facts`; Telnet `show version` + `show inventory` |
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
@@ -112,6 +112,7 @@ Primárne zdroje:
 
 - [Ansible Runner Python interface](https://docs.ansible.com/projects/runner/en/latest/python_interface/)
 - [ansible.netcommon 8.6.2](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/index.html)
+- [ansible.netcommon.telnet](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/telnet_module.html)
 - [ansible.utils 6.1.0](https://docs.ansible.com/projects/ansible/latest/collections/ansible/utils/index.html)
 - [cisco.ios 11.5.1](https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/index.html)
 - [community.ciscosmb 1.0.12](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/index.html)
@@ -127,10 +128,22 @@ node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
 pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
 Python requirements kolekcie neinštaluje.
 
-Profil `cisco-ios` pridáva do predvoleného libssh zoznamu iba legacy KEX
-`diffie-hellman-group1-sha1`. Moderné algoritmy zostávajú preferované; slabý
-KEX sa použije iba vtedy, keď zariadenie neponúkne spoločný modernejší
-algoritmus. `cisco-ios-xe`, CBS a Aruba profily ho nepovoľujú.
+Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
+`diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
+modernejšími typmi kľúčov. Slabší algoritmus sa použije iba vtedy, keď
+zariadenie neponúkne spoločný modernejší algoritmus. `cisco-ios-xe`, CBS a
+Aruba profily tieto výnimky nepovoľujú.
+
+Telnet je pre `cisco-ios` explicitný fallback, nie predvolený transport. Atlas
+ho povolí iba vtedy, keď má konkrétne zariadenie v NetBoxe práve jednu TCP
+službu s presným názvom `telnet`; použije port tejto služby, štandardne 23.
+Fallback sa vykoná iba po `ssh_negotiation_failed`. Neaktivuje sa pri zlom
+hesle, neznámom alebo zmenenom SSH host key ani pri inom zlyhaní. Telnet úlohy
+sú read-only a zbierajú iba CPU alebo `show version` + `show inventory`.
+Výstupy device facts parsujú pripnuté NTC Templates `cisco_ios`; prihlasovacie
+údaje ostávajú v procesnom environment a Telnet task používa `no_log`.
+Telnet neprenáša prihlásenie ani dáta šifrovane, preto služba v NetBoxe slúži
+ako vedomé povolenie pre konkrétne zariadenie.
 
 ## Runtime a secrets
 

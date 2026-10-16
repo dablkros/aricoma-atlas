@@ -22,6 +22,9 @@ class AnsiblePlatformProfile:
     module_family: str
     supported_collectors: frozenset[CollectorId]
     legacy_kex_algorithms: tuple[str, ...] = ()
+    legacy_hostkey_algorithms: tuple[str, ...] = ()
+    telnet_fallback_service_name: str | None = None
+    telnet_fallback_default_port: int = 23
 
     def supports_collector(self, collector_id: CollectorId) -> bool:
         return collector_id in self.supported_collectors
@@ -43,6 +46,16 @@ ANSIBLE_PLATFORMS = {
         module_family="cisco.ios.ios_command",
         supported_collectors=CPU_AND_FACTS,
         legacy_kex_algorithms=("diffie-hellman-group1-sha1",),
+        legacy_hostkey_algorithms=(
+            "ssh-ed25519",
+            "ecdsa-sha2-nistp521",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp256",
+            "rsa-sha2-512",
+            "rsa-sha2-256",
+            "ssh-rsa",
+        ),
+        telnet_fallback_service_name="telnet",
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(
         slug="cisco-ios-xe",

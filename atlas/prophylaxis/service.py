@@ -202,6 +202,22 @@ class ProphylaxisService:
         )
         return resolve_service_port(services, profile.default_port)
 
+    def _telnet_fallback_port(
+        self,
+        target: DeviceTarget,
+        profile: AnsiblePlatformProfile,
+    ) -> int | None:
+        service_name = profile.telnet_fallback_service_name
+        if service_name is None:
+            return None
+        services = self.netbox.get_device_services(target.id, service_name)
+        if not services:
+            return None
+        return resolve_service_port(
+            services,
+            profile.telnet_fallback_default_port,
+        )
+
     def collect(self, identifier: int | str, check_id: CheckId | str) -> CheckResult:
         try:
             check_id = CheckId(check_id)
@@ -246,6 +262,7 @@ class ProphylaxisService:
                     status="unsupported",
                 )
             connection_port = self._connection_port(target, profile)
+            telnet_fallback_port = self._telnet_fallback_port(target, profile)
             credentials = self.openbao.get_device_credentials(
                 target.vendor,
                 target.credential_profile,
@@ -258,6 +275,7 @@ class ProphylaxisService:
                 collector_id=collector.id,
                 check_id=check_id,
                 credentials=credentials,
+                telnet_fallback_port=telnet_fallback_port,
             )
             if raw_result.status != "ok":
                 return self._error(

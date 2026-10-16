@@ -1,0 +1,24 @@
+---
+atlas_transport_files:
+  ssh:
+    cpu_usage:
+      cisco-ios: cpu/cisco_ios.yml
+      cisco-ios-xe: cpu/cisco_ios.yml
+      cisco-cbs: cpu/cisco_cbs.yml
+      cisco-cbs250-350: cpu/cisco_cbs.yml
+    device_facts:
+      cisco-ios: device_facts/cisco_ios.yml
+      cisco-ios-xe: device_facts/cisco_ios.yml
+      cisco-cbs: device_facts/cisco_cbs.yml
+      cisco-cbs250-350: device_facts/cisco_cbs.yml
+      aruba-aos-cx: device_facts/aruba_aoscx.yml
+  https:
+    cpu_usage:
+      fortios: cpu/fortios.yml
+    device_facts:
+      fortios: device_facts/fortios.yml
+  telnet:
+    cpu_usage:
+      cisco-ios: telnet/cpu/cisco_ios.yml
+    device_facts:
+      cisco-ios: telnet/device_facts/cisco_ios.yml

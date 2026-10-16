@@ -1711,7 +1711,8 @@ dostupná cez API.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
-| `cisco-ios`, `cisco-ios-xe` | `network_cli` | `cisco.ios.ios_facts` s minimálnym subsetom |
+| `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | `cisco.ios.ios_facts`; cez Telnet NTC `show version` + `show inventory` |
+| `cisco-ios-xe` | `network_cli` | `cisco.ios.ios_facts` s minimálnym subsetom |
 | `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` a explicitný parser |
 | `fortios` | `httpapi` cez HTTPS | `fortinet.fortios.fortios_monitor_fact` (`system_status`) |
@@ -1725,11 +1726,17 @@ balíka `ntc-templates 9.3.0`. NTC šablóny `cisco_s300/show system` a
 `cisco_s300/show version` poskytujú hostname a OS verziu. Model sa parsuje ako
 PID zo `show inventory`, pre ktorý NTC nemá `cisco_s300` šablónu.
 
-Legacy profil `cisco-ios` pridáva libssh algoritmus
-`diffie-hellman-group1-sha1` za moderné predvolené KEX algoritmy. Umožňuje
-zber zo starších IOS zariadení, ale používa kryptograficky slabý algoritmus,
-ak server neponúkne modernejší spoločný KEX. Ostatné platformové profily ho
-nepovoľujú.
+Legacy profil `cisco-ios` pridáva libssh KEX
+`diffie-hellman-group1-sha1` a host-key algoritmus `ssh-rsa` za modernejšie
+možnosti. Ostatné platformové profily tieto výnimky nepovoľujú.
+
+Telnet fallback sa pre `cisco-ios` aktivuje iba explicitnou TCP službou
+`telnet` na konkrétnom zariadení v NetBoxe. Atlas použije port tejto služby
+(štandardne 23) a Telnet skúsi iba po chybe SSH vyjednávania. Zlé heslo,
+neznámy alebo zmenený SSH host key fallback nespustia. Telnet prenáša
+credentials aj dáta bez šifrovania; služba v NetBoxe preto predstavuje vedomé
+povolenie pre dané zariadenie. Telnet facts sa parsujú cez pripnuté NTC
+Templates `cisco_ios`.
 
 FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
 host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.

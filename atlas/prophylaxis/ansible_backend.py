@@ -208,23 +208,46 @@ class AnsibleBackend:
         host: str,
         port: int,
         profile: AnsiblePlatformProfile,
+        *,
+        transport: str | None = None,
     ) -> dict:
+        transport = transport or profile.transport
         variables = {
             "ansible_host": host,
-            "ansible_connection": profile.ansible_connection,
-            "ansible_network_os": profile.ansible_network_os,
             "ansible_connect_timeout": self.connect_timeout,
             "ansible_command_timeout": self.command_timeout,
             "ansible_host_key_checking": self.strict_host_keys,
         }
-        if profile.transport == "ssh":
-            variables["ansible_port"] = port
-            variables["ansible_network_cli_ssh_type"] = "libssh"
+        if transport == "telnet":
+            variables.update(
+                {
+                    "ansible_connection": "local",
+                    "ansible_port": port,
+                }
+            )
+        else:
+            variables.update(
+                {
+                    "ansible_connection": profile.ansible_connection,
+                    "ansible_network_os": profile.ansible_network_os,
+                }
+            )
+        if transport == "ssh":
+            variables.update(
+                {
+                    "ansible_port": port,
+                    "ansible_network_cli_ssh_type": "libssh",
+                }
+            )
             if profile.legacy_kex_algorithms:
                 variables["ansible_libssh_key_exchange_algorithms"] = (
                     "+" + ",".join(profile.legacy_kex_algorithms)
                 )
-        if profile.transport == "https":
+            if profile.legacy_hostkey_algorithms:
+                variables["ansible_libssh_hostkeys"] = ",".join(
+                    profile.legacy_hostkey_algorithms
+                )
+        if transport == "https":
             variables.update(
                 {
                     "ansible_httpapi_use_ssl": True,
@@ -256,6 +279,7 @@ class AnsibleBackend:
         collector_id: CollectorId | None = None,
         check_id: CheckId,
         credentials: dict,
+        telnet_fallback_port: int | None = None,
     ) -> RawCollectorResult:
         if collector_id is None:
             collector_id = (
@@ -316,39 +340,54 @@ class AnsibleBackend:
                 "SSH_AUTH_SOCK": "",
                 **self._credential_environment(profile, credentials),
             }
-            try:
-                result = self.runner(
-                    private_data_dir=str(private_dir),
-                    project_dir=str(self.project_dir),
-                    playbook="playbooks/run_check.yml",
-                    roles_path=[str(self.project_dir / "roles")],
-                    inventory=self._inventory(host, port, profile),
-                    extravars={
-                        "atlas_collector": collector_id.value,
-                        "atlas_platform": profile.slug,
-                        "atlas_schema_version": 1,
-                    },
-                    envvars=environment,
-                    suppress_env_files=True,
-                    event_handler=event_handler,
-                    quiet=True,
-                    rotate_artifacts=0,
-                    timeout=self.job_timeout,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "ansible_runner_failed",
-                    extra={
-                        "event": "ansible_runner_failed",
-                        "platform": profile.slug,
-                        "port": port,
-                        "collector": collector_id.value,
-                        "check": check_id.value,
-                        "reason_code": "ansible_execution_failed",
-                        "exception_type": type(exc).__name__,
-                    },
-                )
-                raise AnsibleExecutionError() from None
+
+            def run_attempt(transport: str, attempt_port: int):
+                nonlocal captured_result, captured_failure
+                captured_result = None
+                captured_failure = None
+                try:
+                    return self.runner(
+                        private_data_dir=str(private_dir),
+                        project_dir=str(self.project_dir),
+                        playbook="playbooks/run_check.yml",
+                        roles_path=[str(self.project_dir / "roles")],
+                        inventory=self._inventory(
+                            host,
+                            attempt_port,
+                            profile,
+                            transport=transport,
+                        ),
+                        extravars={
+                            "atlas_collector": collector_id.value,
+                            "atlas_platform": profile.slug,
+                            "atlas_schema_version": 1,
+                            "atlas_transport": transport,
+                        },
+                        envvars=environment,
+                        suppress_env_files=True,
+                        event_handler=event_handler,
+                        quiet=True,
+                        rotate_artifacts=0,
+                        timeout=self.job_timeout,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ansible_runner_failed",
+                        extra={
+                            "event": "ansible_runner_failed",
+                            "platform": profile.slug,
+                            "transport": transport,
+                            "port": attempt_port,
+                            "collector": collector_id.value,
+                            "check": check_id.value,
+                            "reason_code": "ansible_execution_failed",
+                            "exception_type": type(exc).__name__,
+                        },
+                    )
+                    raise AnsibleExecutionError() from None
+
+            transport = profile.transport
+            result = run_attempt(transport, port)
 
             if getattr(result, "status", None) != "successful" or getattr(result, "rc", 1) != 0:
                 failure = _failure_from_event(captured_failure)
@@ -357,6 +396,7 @@ class AnsibleBackend:
                     extra={
                         "event": "ansible_execution_failed",
                         "platform": profile.slug,
+                        "transport": transport,
                         "port": port,
                         "collector": collector_id.value,
                         "check": check_id.value,
@@ -371,7 +411,53 @@ class AnsibleBackend:
                         ),
                     },
                 )
-                raise failure
+                if (
+                    isinstance(failure, SSHNegotiationFailedError)
+                    and telnet_fallback_port is not None
+                    and profile.telnet_fallback_service_name is not None
+                ):
+                    logger.warning(
+                        "ansible_telnet_fallback_started",
+                        extra={
+                            "event": "ansible_telnet_fallback_started",
+                            "platform": profile.slug,
+                            "port": telnet_fallback_port,
+                            "collector": collector_id.value,
+                            "check": check_id.value,
+                            "reason_code": failure.code,
+                        },
+                    )
+                    transport = "telnet"
+                    port = telnet_fallback_port
+                    result = run_attempt(transport, port)
+                    if (
+                        getattr(result, "status", None) != "successful"
+                        or getattr(result, "rc", 1) != 0
+                    ):
+                        telnet_failure = _failure_from_event(captured_failure)
+                        logger.warning(
+                            "ansible_execution_failed",
+                            extra={
+                                "event": "ansible_execution_failed",
+                                "platform": profile.slug,
+                                "transport": transport,
+                                "port": port,
+                                "collector": collector_id.value,
+                                "check": check_id.value,
+                                "reason_code": telnet_failure.code,
+                                "runner_status": str(
+                                    getattr(result, "status", "unknown")
+                                )[:32],
+                                "runner_rc": getattr(result, "rc", None),
+                                **_failure_context(
+                                    captured_failure,
+                                    secrets=credentials.values(),
+                                ),
+                            },
+                        )
+                        raise telnet_failure
+                else:
+                    raise failure
             if captured_result is None:
                 raise AnsibleExecutionError()
             if "collector" not in captured_result and "check" in captured_result:

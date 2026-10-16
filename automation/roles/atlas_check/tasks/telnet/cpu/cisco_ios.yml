@@ -1,0 +1,23 @@
+---
+- name: Collect Cisco IOS CPU utilization over explicit Telnet fallback
+  ansible.netcommon.telnet:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port }}"
+    user: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
+    login_prompt: "(?i)(?:username|login):\\s*$"
+    password_prompt: "(?i)password:\\s*$"
+    prompts:
+      - "[>#]\\s*$"
+    command:
+      - terminal length 0
+      - show processes cpu
+    timeout: "{{ ansible_command_timeout }}"
+  register: atlas_cisco_telnet_cpu
+  changed_when: false
+  no_log: true
+
+- name: Prepare Cisco IOS Telnet CPU output for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      raw_output: "{{ atlas_cisco_telnet_cpu.output[1] }}"

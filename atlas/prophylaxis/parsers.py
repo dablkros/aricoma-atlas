@@ -117,6 +117,66 @@ def parse_structured_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     return _device_facts(raw.data)
 
 
+def parse_cisco_ios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    data = raw.data
+    if isinstance(data, dict) and all(
+        isinstance(data.get(key), str)
+        for key in ("hostname", "model", "os_version")
+    ):
+        return _device_facts(data)
+    if not isinstance(data, dict):
+        raise ParseFailedError()
+    version_output = data.get("show_version")
+    inventory_output = data.get("show_inventory")
+    if not isinstance(version_output, str) or not version_output.strip():
+        raise ParseFailedError()
+    if not isinstance(inventory_output, str):
+        raise ParseFailedError()
+    try:
+        from ntc_templates.parse import parse_output
+
+        version_rows = parse_output(
+            platform="cisco_ios",
+            command="show version",
+            data=version_output,
+        )
+        inventory_rows = parse_output(
+            platform="cisco_ios",
+            command="show inventory",
+            data=inventory_output,
+        )
+    except Exception:
+        raise ParseFailedError() from None
+    if not version_rows or not isinstance(version_rows[0], dict):
+        raise ParseFailedError()
+    version = version_rows[0]
+    inventory_model = next(
+        (
+            row.get("pid")
+            for row in inventory_rows
+            if isinstance(row, dict)
+            and isinstance(row.get("pid"), str)
+            and row.get("pid").strip()
+        ),
+        None,
+    )
+    hardware = version.get("hardware")
+    version_model = (
+        hardware[0]
+        if isinstance(hardware, list)
+        and hardware
+        and isinstance(hardware[0], str)
+        else None
+    )
+    return _device_facts(
+        {
+            "hostname": version.get("hostname"),
+            "model": inventory_model or version_model,
+            "os_version": version.get("version"),
+        }
+    )
+
+
 def parse_cisco_cbs_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     data = raw.data
     if not isinstance(data, dict):
@@ -202,7 +262,7 @@ def parse_aruba_aoscx_device_facts(raw: RawCollectorResult) -> DeviceFactsValues
 
 
 DEVICE_FACTS_PARSERS = {
-    "cisco-ios": parse_structured_device_facts,
+    "cisco-ios": parse_cisco_ios_device_facts,
     "cisco-ios-xe": parse_structured_device_facts,
     "cisco-cbs": parse_cisco_cbs_device_facts,
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
@@ -233,6 +293,7 @@ __all__ = [
     "parse_aruba_aoscx_device_facts",
     "parse_cisco_cbs_device_facts",
     "parse_cisco_cbs_cpu",
+    "parse_cisco_ios_device_facts",
     "parse_cisco_ios_cpu",
     "parse_fortios_cpu",
 ]

@@ -265,6 +265,22 @@ class DeviceFactsRunService:
                 else []
             )
             port = resolve_service_port(services, profile.default_port)
+            telnet_services = (
+                self.netbox.get_device_services(
+                    target.id,
+                    profile.telnet_fallback_service_name,
+                )
+                if profile.telnet_fallback_service_name
+                else []
+            )
+            telnet_fallback_port = (
+                resolve_service_port(
+                    telnet_services,
+                    profile.telnet_fallback_default_port,
+                )
+                if telnet_services
+                else None
+            )
             credentials = self.openbao.get_device_credentials(
                 target.vendor,
                 target.credential_profile,
@@ -290,6 +306,7 @@ class DeviceFactsRunService:
                     collector_id=task.collector.id,
                     check_id=task.checks[0],
                     credentials=credentials,
+                    telnet_fallback_port=telnet_fallback_port,
                 )
             except Exception as exc:
                 status, code = self._classify_exception(exc)
