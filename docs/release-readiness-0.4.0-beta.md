@@ -2,20 +2,20 @@
 
 Audit date: 2026-10-16  
 Audited branch: `atlas/monitoring`  
-Audited base HEAD: `f031b4747f9988112ccb013f6bb5e9b2722dab9f`  
+Audited candidate HEAD: `c908f6de96641e78f9b8fd2566dcbb4ff9d4d1f3`
 Latest existing local and remote tag: `v0.3.0-beta`
 
 ## Recommendation
 
-**NO-GO until the local stabilization changes pass the complete GitHub release
-workflow.** The base HEAD is green, but the Cisco SMB mapping, version bump and
-documentation changes exist only in the working tree and therefore have no CI
-evidence yet. After a green run on the committed candidate, the remaining
-items below are acceptable beta limitations if they are retained in the
-release notes.
+**CONDITIONAL GO for PR merge; NO-GO for the tag until the merged `main` commit
+passes its workflow.** The operator reports that the complete CI workflow and
+redeploy passed for candidate `c908f6d`. This report-only correction must also
+pass PR CI. Merge only after that result, then require a green workflow for the
+resulting `main` commit before creating the tag.
 
-Confidence: **High** for repository and base-HEAD CI findings; **medium** for
-the secret scan because no dedicated history scanner was available locally.
+Confidence: **High** for repository and local test findings; **medium** for the
+operator-reported CI/redeploy and secret scan because CI could not be fetched
+independently and no dedicated history scanner was available locally.
 
 ## 1. Latest existing tag
 
@@ -24,13 +24,13 @@ commit `7520ea2` dated 2026-10-08. The audited base HEAD descends from it.
 
 ## 2. Changes since the latest tag
 
-**Fact:** the committed comparison `v0.3.0-beta..f031b47` contains 19 commits,
-79 changed paths, 7,515 insertions and 220 deletions. The principal changes are
+**Fact:** the committed comparison `v0.3.0-beta..c908f6d` contains 21 commits,
+83 changed paths, 7,783 insertions and 247 deletions. The principal changes are
 Zabbix deployment/API/reconciliation, monitoring schema v2, FortiGate
 provisioning, Sophos and Cisco CBS templates, HPE Aruba catalog/platform
 support, new OpenBao policy boundaries, Operations UI updates and tests.
 
-**Fact:** the release worktree additionally maps `cisco-cbs` and
+**Fact:** the committed candidate maps `cisco-cbs` and
 `cisco-cbs250-350` to `ciscosmb`, refreshes the catalog audit snapshot, adds a
 regression test, updates version metadata to `0.4.0-beta`, and updates release
 documentation. It also removes the false Ubuntu 22.04 support claim: the pinned
@@ -102,11 +102,14 @@ Primary Oxidized evidence: [ciscosmb model at 0.37.0](https://github.com/ytti/ox
 
 ## 7. Test results
 
-- **Fact:** GitHub Actions run
+- **Operator-confirmed, not independently fetched:** the complete GitHub
+  workflow passed for candidate `c908f6d`, including validation/unit tests and
+  integration jobs. The redeploy also passed.
+- **Fact:** the prior independently inspected workflow
   [38876630159](https://github.com/dablkros/aricoma-atlas/actions/runs/38876630159)
-  passed all five jobs on base HEAD `f031b47`: validation/unit tests, full Atlas
-  clean installation and second deployment, OpenBao integration, Oxidized
-  HTTPS ingress/persistence, and NetBox upgrade/data preservation.
+  passed all five jobs on `f031b47`: validation/unit tests, full Atlas clean
+  installation and second deployment, OpenBao integration, Oxidized HTTPS
+  ingress/persistence, and NetBox upgrade/data preservation.
 - **Fact:** 76 focused local backend/installer, device-model, Oxidized runtime
   and Oxidized-sync tests pass with the stabilization changes. Python syntax
   compilation, catalog build, catalog audit and component-field audit also pass.
@@ -122,28 +125,30 @@ Primary Oxidized evidence: [ciscosmb model at 0.37.0](https://github.com/ytti/ox
 
 ## 8. Clean install and redeploy status
 
-- **Fact:** base-HEAD CI completed a fresh Atlas deployment, a second complete
-  deployment, health verification, device-model idempotency and preserved
-  Oxidized state.
-- **Fact:** the upgrade job deployed `v0.3.0-beta`, upgraded to base HEAD,
+- **Operator-confirmed, not independently fetched:** deployment and redeploy
+  passed for candidate `c908f6d`.
+- **Fact:** the prior independently inspected base workflow completed a fresh
+  Atlas deployment, a second complete deployment, health verification,
+  device-model idempotency and preserved Oxidized state.
+- **Fact:** its upgrade job deployed `v0.3.0-beta`, upgraded to the tested head,
   verified persistent data survival, and passed post-upgrade idempotency.
-- **Not verified:** no local or production deployment was performed, and the
-  uncommitted Cisco/version/documentation changes have not run in Docker CI.
+- **Not performed:** no production deployment was run during this audit.
 
 ## 9. Remaining blockers
 
-1. **BLOCKER:** commit the reviewed worktree changes and obtain a complete green
-   workflow for that exact commit.
-2. **BLOCKER:** confirm `docs/platform-audit.json` equality in that workflow.
-3. **BLOCKER:** do not create the tag until the candidate commit is clean,
-   reviewed and green.
-4. **SHOULD FIX / explicitly waive for beta:** validate `ciscosmb` on each CBS
+1. **BLOCKER FOR MERGE:** obtain a complete green PR workflow after this
+   report-only commit.
+2. **BLOCKER FOR TAG:** merge the PR, update local `main` and obtain a complete
+   green workflow for the resulting `main` commit.
+3. **BLOCKER FOR TAG:** confirm the working tree is clean and tag that verified
+   `main` commit, not the feature-branch commit.
+4. **Accepted beta limitation:** validate `ciscosmb` on each CBS
    family intended for collection; otherwise retain the experimental label.
-5. **SHOULD FIX:** run a dedicated secret scanner before publishing the tag.
+5. **Recommended:** run a dedicated secret scanner before publishing the tag.
 
 ## 10. Recommended next version
 
 **Inference:** `v0.4.0-beta` is appropriate because the release adds a new
 monitoring backend and multiple integration/platform contracts rather than a
-patch-only correction. Create the annotated tag only after the blockers above
-are closed; do not tag the current uncommitted worktree.
+patch-only correction. Create the annotated tag only after the merged `main`
+commit passes its workflow and all tag blockers above are closed.
