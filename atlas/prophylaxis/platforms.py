@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from atlas.prophylaxis.models import CheckId
+from atlas.prophylaxis.models import CollectorId
 
 
 AuthenticationType = Literal["ssh", "api_token"]
@@ -20,13 +20,14 @@ class AnsiblePlatformProfile:
     authentication: AuthenticationType
     collection: str
     module_family: str
-    supported_checks: frozenset[CheckId]
+    supported_collectors: frozenset[CollectorId]
 
-    def supports(self, check_id: CheckId) -> bool:
-        return check_id in self.supported_checks
+    def supports_collector(self, collector_id: CollectorId) -> bool:
+        return collector_id in self.supported_collectors
 
 
-CPU_ONLY = frozenset({CheckId.CPU_UTILIZATION})
+CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
+FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS})
 
 ANSIBLE_PLATFORMS = {
     "cisco-ios": AnsiblePlatformProfile(
@@ -39,7 +40,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(
         slug="cisco-ios-xe",
@@ -51,7 +52,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
     ),
     "cisco-cbs": AnsiblePlatformProfile(
         slug="cisco-cbs",
@@ -63,7 +64,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
     ),
     "cisco-cbs250-350": AnsiblePlatformProfile(
         slug="cisco-cbs250-350",
@@ -75,7 +76,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
     ),
     "fortios": AnsiblePlatformProfile(
         slug="fortios",
@@ -87,7 +88,19 @@ ANSIBLE_PLATFORMS = {
         authentication="api_token",
         collection="fortinet.fortios",
         module_family="fortinet.fortios.fortios_monitor_fact",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
+    ),
+    "aruba-aos-cx": AnsiblePlatformProfile(
+        slug="aruba-aos-cx",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        ansible_connection="ansible.netcommon.network_cli",
+        ansible_network_os="arubanetworks.aoscx.aoscx",
+        authentication="ssh",
+        collection="arubanetworks.aoscx",
+        module_family="arubanetworks.aoscx.aoscx_command",
+        supported_collectors=FACTS_ONLY,
     ),
 }
 

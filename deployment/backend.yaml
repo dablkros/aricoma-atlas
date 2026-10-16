@@ -6,9 +6,10 @@ backend:
   environment: "production"
   log_level: "INFO"
   ansible_job_timeout: 120
-  fortios_validate_certs: false
+  fortios_validate_certs: true
   ssh_strict_host_keys: true
   prophylaxis_result_retention: 10000
+  prophylaxis_concurrency: 4
 
 runtime:
   directory: ".runtime/backend"

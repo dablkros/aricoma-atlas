@@ -1,0 +1,15 @@
+---
+- name: Collect minimal Cisco IOS device facts
+  cisco.ios.ios_facts:
+    gather_subset:
+      - min
+  changed_when: false
+
+- name: Prepare Cisco IOS device facts for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        hostname: "{{ ansible_net_hostname }}"
+        model: "{{ ansible_net_model }}"
+        os_version: "{{ ansible_net_version }}"
+

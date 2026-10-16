@@ -10,3 +10,5 @@ collections:
     version: 1.0.12
   - name: fortinet.fortios
     version: 2.6.0
+  - name: arubanetworks.aoscx
+    version: 4.5.2

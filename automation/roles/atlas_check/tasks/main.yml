@@ -3,27 +3,43 @@
   ansible.builtin.assert:
     that:
       - atlas_schema_version | int == 1
-      - atlas_check == "cpu_utilization"
-      - atlas_platform in atlas_task_files
+      - atlas_collector in atlas_collector_files
+      - atlas_platform in atlas_collector_files[atlas_collector]
     quiet: true
   vars:
-    atlas_task_files:
-      cisco-ios: cpu/cisco_ios.yml
-      cisco-ios-xe: cpu/cisco_ios.yml
-      cisco-cbs: cpu/cisco_cbs.yml
-      cisco-cbs250-350: cpu/cisco_cbs.yml
-      fortios: cpu/fortios.yml
+    atlas_collector_files:
+      cpu_usage:
+        cisco-ios: cpu/cisco_ios.yml
+        cisco-ios-xe: cpu/cisco_ios.yml
+        cisco-cbs: cpu/cisco_cbs.yml
+        cisco-cbs250-350: cpu/cisco_cbs.yml
+        fortios: cpu/fortios.yml
+      device_facts:
+        cisco-ios: device_facts/cisco_ios.yml
+        cisco-ios-xe: device_facts/cisco_ios.yml
+        cisco-cbs: device_facts/cisco_cbs.yml
+        cisco-cbs250-350: device_facts/cisco_cbs.yml
+        fortios: device_facts/fortios.yml
+        aruba-aos-cx: device_facts/aruba_aoscx.yml
 
 - name: Resolve the allow-listed platform task
   ansible.builtin.set_fact:
-    atlas_task_file: "{{ atlas_task_files[atlas_platform] }}"
+    atlas_task_file: "{{ atlas_collector_files[atlas_collector][atlas_platform] }}"
   vars:
-    atlas_task_files:
-      cisco-ios: cpu/cisco_ios.yml
-      cisco-ios-xe: cpu/cisco_ios.yml
-      cisco-cbs: cpu/cisco_cbs.yml
-      cisco-cbs250-350: cpu/cisco_cbs.yml
-      fortios: cpu/fortios.yml
+    atlas_collector_files:
+      cpu_usage:
+        cisco-ios: cpu/cisco_ios.yml
+        cisco-ios-xe: cpu/cisco_ios.yml
+        cisco-cbs: cpu/cisco_cbs.yml
+        cisco-cbs250-350: cpu/cisco_cbs.yml
+        fortios: cpu/fortios.yml
+      device_facts:
+        cisco-ios: device_facts/cisco_ios.yml
+        cisco-ios-xe: device_facts/cisco_ios.yml
+        cisco-cbs: device_facts/cisco_cbs.yml
+        cisco-cbs250-350: device_facts/cisco_cbs.yml
+        fortios: device_facts/fortios.yml
+        aruba-aos-cx: device_facts/aruba_aoscx.yml
 
 - name: Execute the platform-specific read-only collector
   ansible.builtin.include_tasks: "{{ atlas_task_file }}"
@@ -32,7 +48,7 @@
   ansible.builtin.set_fact:
     atlas_result:
       schema_version: 1
-      check: "{{ atlas_check }}"
+      collector: "{{ atlas_collector }}"
       platform: "{{ atlas_platform }}"
       status: ok
       data: "{{ atlas_transport_result.data | default(none) }}"

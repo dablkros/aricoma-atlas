@@ -587,9 +587,11 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - explicitnú operáciu **Sync inventory**,
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
-- samostatný zoznam aktívnych zariadení s `profylaxia_enabled=true` a zvolenou
-  kontrolou `cpu_utilization` (label `CPU utilization`),
-- explicitné tlačidlo **Run CPU check** a posledný lokálne uložený výsledok.
+- operátorskú operáciu **Run Prophylaxis**, ktorá asynchrónne spustí bezpečný
+  `device_facts` zber pre aktívne zariadenia s `profylaxia_enabled=true` a
+  presne zvolenou hodnotou `device_facts`,
+- priebežný stav behu a súhrn `success`, `failure` a `skipped`,
+- pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
 
@@ -611,6 +613,8 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
 | `POST /api/prophylaxis/devices/{id}/checks/cpu` | Vykoná jednu CPU kontrolu a uloží normalizovaný výsledok lokálne. |
 | `GET /api/prophylaxis/results?limit=50` | Vráti najnovšie lokálne uložené výsledky bez credentials a raw CLI výstupu. |
+| `POST /api/prophylaxis/runs` | Po autorizácii operator tokenom vytvorí asynchrónny `device_facts` beh a vráti `202` so stavom `PENDING`. |
+| `GET /api/prophylaxis/runs/{run_id}` | Po autorizácii vráti stav, súhrn a normalizované výsledky konkrétneho behu. |
 
 Profylaxia história je SQLite databáza v kontajneri na
 `/run/atlas/prophylaxis/results.sqlite3`. Deployment pripája persistentný host
@@ -620,17 +624,26 @@ reštart alebo výmenu backend kontajnera. Databáza má režim `0600`, adresár
 prekročení limitu odstránia. Neukladá sa username, password, OpenBao token ani
 raw príkazový výstup.
 
+Každý hromadný `device_facts` beh má samostatný adresár
+`/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
+`result.json` a čitateľným `report.txt`. Adresáre majú režim `0700` a súbory
+`0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
+normalizované `hostname`, `model`, `os_version` a bezpečné chybové kódy.
+Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbežne
+spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
+`deployment/backend.yaml` (predvolene `4`).
+
 ### Manuálny test Profylaxia flow
 
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261007-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261016-1' \
   | grep -i '^cache-control:'
 ```
 
-Očakávaná hodnota je `Cache-Control: no-store`. Potom over zariadenia, spusti
-kontrolu podľa vráteného NetBox ID a načítaj uloženú históriu:
+Očakávaná hodnota je `Cache-Control: no-store`. Pôvodný CPU flow možno naďalej
+overiť podľa NetBox ID:
 
 ```bash
 curl -sS http://127.0.0.1:8081/api/prophylaxis/devices \
@@ -642,6 +655,28 @@ curl -sS -X POST \
 
 curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
   | python3 -m json.tool
+```
+
+Pre nový hromadný flow musí mať cieľ v NetBoxe stav `active`,
+`profylaxia_enabled=true` a vo výbere `profylaxia_checks` hodnotu
+`device_facts`. Používa rovnaký runtime operator token ako Monitoring
+Provisioning:
+
+```bash
+read -rsp 'Atlas operator token: ' OPERATOR_TOKEN
+printf '\n'
+
+RUN_ID="$(curl -sS -X POST \
+  -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+  http://127.0.0.1:8081/api/prophylaxis/runs \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')"
+
+curl -sS \
+  -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+  "http://127.0.0.1:8081/api/prophylaxis/runs/${RUN_ID}" \
+  | python3 -m json.tool
+
+unset OPERATOR_TOKEN
 ```
 
 Počas checku možno sledovať filtrované bezpečné structured logy:
@@ -1652,15 +1687,29 @@ catalog/baseline/
 
 ### Profylaxia checks
 
-Prvá reusable runtime collection vrstva pre CPU je popísaná v
+Reusable runtime collection vrstva je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
-explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs`,
-`cisco-cbs250-350` a `fortios`,
+CPU collector pre explicitné platformy `cisco-ios`, `cisco-ios-xe`,
+`cisco-cbs`, `cisco-cbs250-350` a `fortios`. Collector `device_facts` navyše
+podporuje `aruba-aos-cx` a zbiera iba `hostname`, `model` a `os_version`.
+Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
+výrobcu. Vrstva
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
 secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
-Threshold evaluation a scheduler zatiaľ nie sú súčasťou tejto vrstvy. Manuálnu
-CPU kontrolu, lokálnu históriu a frontend tlačidlo poskytuje Atlas Operations UI.
+Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
+vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho
+`device_facts` behu; pôvodná manuálna CPU kontrola zostáva dostupná cez API.
+
+| Platform slug | Transport | `device_facts` implementácia |
+| --- | --- | --- |
+| `cisco-ios`, `cisco-ios-xe` | `network_cli` | `cisco.ios.ios_facts` s minimálnym subsetom |
+| `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy a TextFSM parser |
+| `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` a explicitný parser |
+| `fortios` | `httpapi` cez HTTPS | `fortinet.fortios.fortios_monitor_fact` (`system_status`) |
+
+FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
+host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.
 
 Pre lokálny development a test je host-key verification dočasne vypnutá cez
 `ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
@@ -1668,6 +1717,7 @@ explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
 
 Aktuálne možnosti:
 
+- `device_facts` — Device facts (`hostname`, `model`, `os_version`)
 - `cpu_utilization` — CPU utilization
 - `os_version` — OS version
 - `cpu_temperature` — CPU temperature

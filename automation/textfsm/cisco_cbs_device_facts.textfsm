@@ -1,0 +1,9 @@
+Value Required HOSTNAME (\S+)
+Value Required MODEL (\S+)
+Value Required OS_VERSION (\S+)
+
+Start
+  ^\s*System Name\s*:\s*${HOSTNAME}\s*$$
+  ^\s*(?:System Model ID|System Model|PID)\s*:\s*${MODEL}(?:\s*,.*)?\s*$$
+  ^\s*(?:SW version|Software Version)\s*[: ]\s*${OS_VERSION}\s*$$
+

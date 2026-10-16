@@ -1,0 +1,15 @@
+---
+- name: Collect Cisco CBS identity commands
+  community.ciscosmb.command:
+    commands:
+      - show system
+      - show version
+      - show inventory
+  register: atlas_cbs_facts
+  changed_when: false
+
+- name: Prepare Cisco CBS output for Atlas TextFSM normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      raw_output: "{{ atlas_cbs_facts.stdout | join('\n') }}"
+

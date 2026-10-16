@@ -7,6 +7,8 @@ from atlas.monitoring.service import MonitoringService
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.openbao_client import OpenBaoClient
 from atlas.prophylaxis.ansible_backend import AnsibleBackend
+from atlas.prophylaxis.runs import DeviceFactsRunService
+from atlas.prophylaxis.run_store import FileRunStore
 from atlas.prophylaxis.service import ProphylaxisService
 from atlas.prophylaxis.store import SQLiteResultStore
 from atlas.services.netbox import NetBoxService
@@ -28,6 +30,7 @@ class DependencyServices:
     oxidized_operations: OxidizedOperationsService
     platform_status: PlatformStatusService
     prophylaxis: ProphylaxisService
+    prophylaxis_runs: DeviceFactsRunService
     zabbix: ZabbixService
     zabbix_sync: ZabbixSyncService
     zabbix_monitoring: ZabbixMonitoringService
@@ -75,6 +78,15 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         zabbix_sync=zabbix_sync,
     )
     inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
+    ansible_backend = AnsibleBackend(
+        settings.ansible_project_dir,
+        known_hosts_file=settings.ssh_known_hosts_file,
+        strict_host_keys=settings.ssh_strict_host_keys,
+        connect_timeout=settings.ssh_connect_timeout,
+        command_timeout=settings.ssh_command_timeout,
+        job_timeout=settings.ansible_job_timeout,
+        fortios_validate_certs=settings.fortios_validate_certs,
+    )
     return DependencyServices(
         monitoring=monitoring,
         openbao=openbao,
@@ -95,19 +107,18 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         prophylaxis=ProphylaxisService(
             netbox,
             openbao,
-            backend=AnsibleBackend(
-                settings.ansible_project_dir,
-                known_hosts_file=settings.ssh_known_hosts_file,
-                strict_host_keys=settings.ssh_strict_host_keys,
-                connect_timeout=settings.ssh_connect_timeout,
-                command_timeout=settings.ssh_command_timeout,
-                job_timeout=settings.ansible_job_timeout,
-                fortios_validate_certs=settings.fortios_validate_certs,
-            ),
+            backend=ansible_backend,
             result_store=SQLiteResultStore(
                 settings.prophylaxis_results_file,
                 settings.prophylaxis_result_retention,
             ),
+        ),
+        prophylaxis_runs=DeviceFactsRunService(
+            netbox,
+            openbao,
+            backend=ansible_backend,
+            store=FileRunStore(settings.prophylaxis_runs_directory),
+            concurrency=settings.prophylaxis_concurrency,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,

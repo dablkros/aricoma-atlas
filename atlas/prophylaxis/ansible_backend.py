@@ -18,7 +18,7 @@ from atlas.prophylaxis.errors import (
     HostKeyUnknownError,
     SSHNegotiationFailedError,
 )
-from atlas.prophylaxis.models import CheckId, RawCheckResult
+from atlas.prophylaxis.models import CheckId, CollectorId, RawCollectorResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
@@ -249,12 +249,19 @@ class AnsibleBackend:
         host: str,
         port: int,
         profile: AnsiblePlatformProfile,
+        collector_id: CollectorId | None = None,
         check_id: CheckId,
         credentials: dict,
-    ) -> RawCheckResult:
-        if not profile.supports(check_id):
-            return RawCheckResult(
-                check=check_id,
+    ) -> RawCollectorResult:
+        if collector_id is None:
+            collector_id = (
+                CollectorId.DEVICE_FACTS
+                if check_id == CheckId.DEVICE_FACTS
+                else CollectorId.CPU_USAGE
+            )
+        if not profile.supports_collector(collector_id):
+            return RawCollectorResult(
+                collector=collector_id,
                 platform=profile.slug,
                 status="unsupported",
                 error_code="unsupported_check",
@@ -313,7 +320,7 @@ class AnsibleBackend:
                     roles_path=[str(self.project_dir / "roles")],
                     inventory=self._inventory(host, port, profile),
                     extravars={
-                        "atlas_check": check_id.value,
+                        "atlas_collector": collector_id.value,
                         "atlas_platform": profile.slug,
                         "atlas_schema_version": 1,
                     },
@@ -331,6 +338,7 @@ class AnsibleBackend:
                         "event": "ansible_runner_failed",
                         "platform": profile.slug,
                         "port": port,
+                        "collector": collector_id.value,
                         "check": check_id.value,
                         "reason_code": "ansible_execution_failed",
                         "exception_type": type(exc).__name__,
@@ -346,6 +354,7 @@ class AnsibleBackend:
                         "event": "ansible_execution_failed",
                         "platform": profile.slug,
                         "port": port,
+                        "collector": collector_id.value,
                         "check": check_id.value,
                         "reason_code": failure.code,
                         "runner_status": str(
@@ -361,11 +370,20 @@ class AnsibleBackend:
                 raise failure
             if captured_result is None:
                 raise AnsibleExecutionError()
+            if "collector" not in captured_result and "check" in captured_result:
+                captured_result = {
+                    **captured_result,
+                    "collector": collector_id.value,
+                }
+                captured_result.pop("check", None)
             try:
-                raw_result = RawCheckResult.model_validate(captured_result)
+                raw_result = RawCollectorResult.model_validate(captured_result)
             except ValueError:
                 raise AnsibleExecutionError() from None
-            if raw_result.check != check_id or raw_result.platform != profile.slug:
+            if (
+                raw_result.collector != collector_id
+                or raw_result.platform != profile.slug
+            ):
                 raise AnsibleExecutionError()
             return raw_result
 

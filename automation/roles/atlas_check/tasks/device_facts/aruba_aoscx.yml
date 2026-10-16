@@ -1,0 +1,14 @@
+---
+- name: Collect Aruba AOS-CX identity commands
+  arubanetworks.aoscx.aoscx_command:
+    commands:
+      - show system
+      - show version
+  register: atlas_aoscx_facts
+  changed_when: false
+
+- name: Prepare Aruba AOS-CX output for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      raw_output: "{{ atlas_aoscx_facts.stdout | join('\n') }}"
+

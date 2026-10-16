@@ -5,6 +5,7 @@ from ipaddress import ip_interface
 import logging
 
 from atlas.device_credentials import DeviceValidationError
+from atlas.prophylaxis.collectors import CollectorRegistry
 from atlas.prophylaxis.errors import (
     AmbiguousServicePortError,
     CheckNotSelectedError,
@@ -27,7 +28,6 @@ from atlas.prophylaxis.models import (
     CheckResult,
     StoredCheckResult,
 )
-from atlas.prophylaxis.parsers import normalize_cpu
 from atlas.prophylaxis.platforms import (
     AnsiblePlatformProfile,
     AnsiblePlatformRegistry,
@@ -161,12 +161,14 @@ class ProphylaxisService:
         *,
         backend,
         registry: AnsiblePlatformRegistry | None = None,
+        collector_registry: CollectorRegistry | None = None,
         result_store=None,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
         self.backend = backend
         self.registry = registry or AnsiblePlatformRegistry()
+        self.collector_registry = collector_registry or CollectorRegistry()
         self.result_store = result_store
 
     def _get_device(self, identifier: int | str) -> dict:
@@ -223,7 +225,18 @@ class ProphylaxisService:
             device_name = target.name
             platform = target.platform
             profile = self.registry.resolve(target.platform)
-            if not profile.supports(check_id):
+            try:
+                collector = self.collector_registry.resolve_check(check_id)
+            except ValueError:
+                return self._error(
+                    target.name,
+                    target.id,
+                    target.platform,
+                    "unsupported_check",
+                    check_id=check_id,
+                    status="unsupported",
+                )
+            if not profile.supports_collector(collector.id):
                 return self._error(
                     target.name,
                     target.id,
@@ -242,6 +255,7 @@ class ProphylaxisService:
                 host=target.host,
                 port=connection_port,
                 profile=profile,
+                collector_id=collector.id,
                 check_id=check_id,
                 credentials=credentials,
             )
@@ -254,17 +268,7 @@ class ProphylaxisService:
                     check_id=check_id,
                     status=raw_result.status,
                 )
-            if check_id == CheckId.CPU_UTILIZATION:
-                values = normalize_cpu(raw_result)
-            else:
-                return self._error(
-                    target.name,
-                    target.id,
-                    target.platform,
-                    "unsupported_check",
-                    check_id=check_id,
-                    status="unsupported",
-                )
+            values = collector.normalize(check_id, raw_result)
         except (DeviceResolutionError, ProphylaxisExecutionError) as exc:
             return self._error(device_name, device_id, platform, exc.code, check_id=check_id)
         except DeviceValidationError as exc:
@@ -310,7 +314,10 @@ class ProphylaxisService:
                 validate_cpu_selection(device)
                 target = device_target(device)
                 profile = self.registry.resolve(target.platform)
-                if not profile.supports(CheckId.CPU_UTILIZATION):
+                collector = self.collector_registry.resolve_check(
+                    CheckId.CPU_UTILIZATION
+                )
+                if not profile.supports_collector(collector.id):
                     continue
             except (DeviceResolutionError, ProphylaxisExecutionError) as exc:
                 logger.warning(

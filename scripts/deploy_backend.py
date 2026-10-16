@@ -110,6 +110,16 @@ def validate_config(raw):
             "backend.prophylaxis_result_retention must be an integer from 100 to 1000000"
         )
 
+    concurrency = backend.get("prophylaxis_concurrency")
+    if (
+        isinstance(concurrency, bool)
+        or not isinstance(concurrency, int)
+        or not 1 <= concurrency <= 32
+    ):
+        raise ValueError(
+            "backend.prophylaxis_concurrency must be an integer from 1 to 32"
+        )
+
     dockerfile = Path(backend["dockerfile"])
     if dockerfile.is_absolute() or ".." in dockerfile.parts:
         raise ValueError("backend.dockerfile must be a safe repository-relative path")
@@ -319,8 +329,12 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
                         "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
+                        "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
                         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
                             backend["prophylaxis_result_retention"]
+                        ),
+                        "ATLAS_PROPHYLAXIS_CONCURRENCY": str(
+                            backend["prophylaxis_concurrency"]
                         ),
                         "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
                         "ATLAS_ANSIBLE_JOB_TIMEOUT": str(

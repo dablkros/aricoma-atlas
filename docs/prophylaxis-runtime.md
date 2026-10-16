@@ -1,13 +1,13 @@
 # Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Stav dokumentácie: 2026-10-08. Implementácia zachováva Atlas ako orchestrátor;
+Stav dokumentácie: 2026-10-16. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
 
 ```text
 Atlas UI/API
-  -> ProphylaxisService.run_check(device_id, check_id)
+  -> ProphylaxisService.collect(...) alebo DeviceFactsRunService
   -> existujúci NetBoxService
   -> active + profylaxia_enabled + profylaxia_checks
   -> device/IP/platform/vendor/credential_profile
@@ -16,10 +16,10 @@ Atlas UI/API
   -> AnsiblePlatformRegistry
   -> AnsibleBackend / ansible-runner
   -> read-only Ansible collection module
-  -> RawCheckResult
+  -> RawCollectorResult
   -> platform-specific Python parser
-  -> CheckResult
-  -> SQLite store / API / UI
+  -> normalizovaný check result
+  -> SQLite história alebo runs/<run_id>/{result.json,report.txt} / API / UI
 ```
 
 Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH polia
@@ -68,14 +68,16 @@ Interný kontrakt používa:
 
 ```text
 cpu_utilization
+device_facts
 os_version
 cpu_temperature
 uptime
 ```
 
-V tejto iterácii je implementovaný iba `cpu_utilization`. Registry vráti pre
-známu platformu a zatiaľ neimplementovaný check stav `unsupported`; nevydáva ho
-za connection error a nevytvára nulovú hodnotu.
+V tejto iterácii sú implementované `cpu_utilization` a `device_facts`.
+`device_facts` normalizuje presne hostname, model a OS verziu. Registry vráti
+pre známu platformu a neimplementovaný check stav `unsupported`; nevydáva ho za
+connection error a nevytvára nulovú hodnotu.
 
 NetBox choice set používa stabilné ID ako value a ľudský text ako label.
 Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
@@ -83,12 +85,13 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 ## Platform registry
 
-| NetBox platform | Connection | Network OS | Modul pre CPU |
+| NetBox platform | Connection | Network OS | `device_facts` modul |
 | --- | --- | --- | --- |
-| `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
-| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
-| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
-| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
+| `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
+| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
+| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + TextFSM |
+| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + TextFSM |
+| `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `arubanetworks.aoscx.aoscx_command` |
 | `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
@@ -105,6 +108,7 @@ Primárne zdroje:
 - [community.ciscosmb.command](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/command_module.html)
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
+- [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
 
 ## Runtime a secrets
 
@@ -128,13 +132,10 @@ Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts
 do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
 SSH/Netmiko transport.
 
-Nasadzovaný profil má `fortios_validate_certs: false`, takže FortiOS HTTPS
-spojenie je šifrované, ale Atlas neoveruje identitu zariadenia podľa TLS
-certifikátu. Je to vedomý prevádzkový kompromis pre zariadenia s lokálnymi alebo
-factory certifikátmi a zvyšuje riziko MITM útoku. Hodnota sa nastavuje v
-`deployment/backend.yaml`; jej zmena sa aplikuje cez `sudo atlasctl deploy`.
-Interný fallback aplikácie zostáva `true`, aby spustenie bez deployment
-konfigurácie validáciu certifikátov nevypínalo potichu.
+Nasadzovaný profil má `fortios_validate_certs: true`; FortiOS HTTPS certifikát
+sa overuje. Atlas host musí dôverovať CA, ktorá certifikát podpísala. Hodnota sa
+nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`.
+Interný fallback aplikácie je tiež `true`.
 
 FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
@@ -161,7 +162,7 @@ výstup zariadenia sa do logu nezapisujú.
 
 ## Výsledok
 
-Transport vracia interný `RawCheckResult`. Python parser ho normalizuje napríklad
+Transport vracia interný `RawCollectorResult`. Python parser ho normalizuje napríklad
 na:
 
 ```json
