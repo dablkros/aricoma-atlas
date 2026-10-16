@@ -132,8 +132,9 @@ Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
 `diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
 modernejšími typmi kľúčov. Do dočasného per-job SSH configu zároveň pridáva
 `aes128-cbc` za moderné šifry. Slabší algoritmus sa použije iba vtedy, keď
-zariadenie neponúkne spoločný modernejší algoritmus. Config sa odovzdáva cez
-`ansible_libssh_config_file` a odstráni sa spolu s dočasným Runner adresárom.
+zariadenie neponúkne spoločný modernejší algoritmus. Config sa uloží do
+dočasného `$HOME/.ssh/config` a jeho cesta sa odovzdá cez procesnú premennú
+`ANSIBLE_LIBSSH_CONFIG_FILE`; odstráni sa spolu s dočasným Runner adresárom.
 `3des-cbc` sa nepovoľuje. `cisco-ios-xe`, CBS a Aruba profily tieto výnimky
 nepovoľujú.
 

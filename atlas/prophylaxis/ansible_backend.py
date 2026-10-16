@@ -210,7 +210,6 @@ class AnsibleBackend:
         profile: AnsiblePlatformProfile,
         *,
         transport: str | None = None,
-        ssh_config_file: Path | None = None,
     ) -> dict:
         transport = transport or profile.transport
         variables = {
@@ -248,8 +247,6 @@ class AnsibleBackend:
                 variables["ansible_libssh_hostkeys"] = ",".join(
                     profile.legacy_hostkey_algorithms
                 )
-            if ssh_config_file is not None:
-                variables["ansible_libssh_config_file"] = str(ssh_config_file)
         if transport == "https":
             variables.update(
                 {
@@ -330,7 +327,7 @@ class AnsibleBackend:
             local_tmp.mkdir(mode=0o700)
             ssh_config_file = None
             if profile.legacy_ciphers:
-                ssh_config_file = private_dir / "ssh_config"
+                ssh_config_file = home / ".ssh" / "config"
                 ssh_config_file.write_text(
                     "Host *\n"
                     "  Ciphers +"
@@ -339,6 +336,14 @@ class AnsibleBackend:
                     encoding="utf-8",
                 )
                 os.chmod(ssh_config_file, 0o600)
+                logger.info(
+                    "ansible_legacy_ssh_configured",
+                    extra={
+                        "event": "ansible_legacy_ssh_configured",
+                        "platform": profile.slug,
+                        "legacy_ciphers": list(profile.legacy_ciphers),
+                    },
+                )
             environment = {
                 "HOME": str(home),
                 # The Compose runtime uses the host Atlas UID, which may not
@@ -354,6 +359,8 @@ class AnsibleBackend:
                 "SSH_AUTH_SOCK": "",
                 **self._credential_environment(profile, credentials),
             }
+            if ssh_config_file is not None:
+                environment["ANSIBLE_LIBSSH_CONFIG_FILE"] = str(ssh_config_file)
 
             def run_attempt(transport: str, attempt_port: int):
                 nonlocal captured_result, captured_failure
@@ -370,7 +377,6 @@ class AnsibleBackend:
                             attempt_port,
                             profile,
                             transport=transport,
-                            ssh_config_file=ssh_config_file,
                         ),
                         extravars={
                             "atlas_collector": collector_id.value,
