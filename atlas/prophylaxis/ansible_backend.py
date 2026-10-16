@@ -220,6 +220,10 @@ class AnsibleBackend:
         if profile.transport == "ssh":
             variables["ansible_port"] = port
             variables["ansible_network_cli_ssh_type"] = "libssh"
+            if profile.legacy_kex_algorithms:
+                variables["ansible_libssh_key_exchange_algorithms"] = (
+                    "+" + ",".join(profile.legacy_kex_algorithms)
+                )
         if profile.transport == "https":
             variables.update(
                 {

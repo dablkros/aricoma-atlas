@@ -1712,13 +1712,24 @@ dostupná cez API.
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
 | `cisco-ios`, `cisco-ios-xe` | `network_cli` | `cisco.ios.ios_facts` s minimálnym subsetom |
-| `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy a TextFSM parser |
+| `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` a explicitný parser |
 | `fortios` | `httpapi` cez HTTPS | `fortinet.fortios.fortios_monitor_fact` (`system_status`) |
 
 Aruba SSH/CLI modul potrebuje v backend image aj Python knižnicu Paramiko.
 Atlas ju pripína v `requirements.txt`; zmena sa prejaví až po novom zostavení
 backend image cez deployment.
+
+Cisco CBS facts collector posiela samostatné výstupy príkazov do pripnutého
+balíka `ntc-templates 9.3.0`. NTC šablóny `cisco_s300/show system` a
+`cisco_s300/show version` poskytujú hostname a OS verziu. Model sa parsuje ako
+PID zo `show inventory`, pre ktorý NTC nemá `cisco_s300` šablónu.
+
+Legacy profil `cisco-ios` pridáva libssh algoritmus
+`diffie-hellman-group1-sha1` za moderné predvolené KEX algoritmy. Umožňuje
+zber zo starších IOS zariadení, ale používa kryptograficky slabý algoritmus,
+ak server neponúkne modernejší spoločný KEX. Ostatné platformové profily ho
+nepovoľujú.
 
 FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
 host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.

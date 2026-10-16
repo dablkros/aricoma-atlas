@@ -8,8 +8,11 @@
   register: atlas_cbs_facts
   changed_when: false
 
-- name: Prepare Cisco CBS output for Atlas TextFSM normalization
+- name: Prepare individual Cisco CBS command outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      raw_output: "{{ atlas_cbs_facts.stdout | join('\n') }}"
+      data:
+        show_system: "{{ atlas_cbs_facts.stdout[0] }}"
+        show_version: "{{ atlas_cbs_facts.stdout[1] }}"
+        show_inventory: "{{ atlas_cbs_facts.stdout[2] }}"
 

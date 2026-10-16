@@ -1,6 +1,5 @@
 """Platform-specific parsing kept separate from Ansible transport."""
 
-from pathlib import Path
 import re
 
 from atlas.prophylaxis.errors import ParseFailedError
@@ -10,9 +9,6 @@ from atlas.prophylaxis.models import (
     OSVersionValues,
     RawCollectorResult,
 )
-
-
-TEXTFSM_DIRECTORY = Path(__file__).resolve().parents[2] / "automation" / "textfsm"
 
 
 CISCO_IOS_CPU_PATTERN = re.compile(
@@ -122,25 +118,57 @@ def parse_structured_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
 
 
 def parse_cisco_cbs_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
-    if not isinstance(raw.raw_output, str) or not raw.raw_output.strip():
+    data = raw.data
+    if not isinstance(data, dict):
         raise ParseFailedError()
     try:
-        import textfsm
+        from ntc_templates.parse import parse_output
     except ImportError:
         raise ParseFailedError() from None
-    try:
-        template_path = TEXTFSM_DIRECTORY / "cisco_cbs_device_facts.textfsm"
-        if template_path.is_symlink() or not template_path.is_file():
+
+    command_outputs = {}
+    for key in ("show_system", "show_version", "show_inventory"):
+        output = data.get(key)
+        if not isinstance(output, str) or not output.strip():
             raise ParseFailedError()
-        with template_path.open(encoding="utf-8") as template_file:
-            parser = textfsm.TextFSM(template_file)
-            rows = parser.ParseText(raw.raw_output)
-    except (OSError, textfsm.TextFSMError):
+        command_outputs[key] = output
+
+    try:
+        system_rows = parse_output(
+            platform="cisco_s300",
+            command="show system",
+            data=command_outputs["show_system"],
+        )
+        version_rows = parse_output(
+            platform="cisco_s300",
+            command="show version",
+            data=command_outputs["show_version"],
+        )
+    except Exception:
         raise ParseFailedError() from None
-    if not rows:
+    if (
+        not isinstance(system_rows, list)
+        or not system_rows
+        or not isinstance(system_rows[0], dict)
+        or not isinstance(version_rows, list)
+        or not version_rows
+        or not isinstance(version_rows[0], dict)
+    ):
         raise ParseFailedError()
-    values = dict(zip((name.lower() for name in parser.header), rows[0]))
-    return _device_facts(values)
+
+    model_match = re.search(
+        r"(?im)^\s*PID:\s*(?P<model>\S+)",
+        command_outputs["show_inventory"],
+    )
+    if model_match is None:
+        raise ParseFailedError()
+    return _device_facts(
+        {
+            "hostname": system_rows[0].get("hostname"),
+            "model": model_match.group("model"),
+            "os_version": version_rows[0].get("sw_version"),
+        }
+    )
 
 
 def parse_aruba_aoscx_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:

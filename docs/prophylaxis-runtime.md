@@ -93,14 +93,20 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | --- | --- | --- | --- |
 | `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
-| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + TextFSM |
-| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + TextFSM |
+| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
+| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `arubanetworks.aoscx.aoscx_command` |
 | `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
 `show cpu utilization`. FortiOS používa monitor selector
 `system_resource_usage` s `resource: cpu` a API tokenom.
+
+Cisco CBS facts collector zachováva výstupy `show system`, `show version` a
+`show inventory` oddelene. Hostname a verzia sa parsujú cez pripnuté
+`ntc-templates 9.3.0` šablóny `cisco_s300`; model sa berie z explicitného PID
+v `show inventory`, pretože NTC katalóg nemá pre túto dvojicu platformy a
+príkazu šablónu.
 
 Primárne zdroje:
 
@@ -114,11 +120,17 @@ Primárne zdroje:
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
 - [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
 - [Paramiko 5.0.0](https://pypi.org/project/paramiko/5.0.0/)
+- [NTC Templates 9.3.0](https://github.com/networktocode/ntc-templates/tree/v9.3.0/ntc_templates/templates)
 
 Aruba `aoscx_command` používaný cez `network_cli` vyžaduje na Ansible control
 node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
 pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
 Python requirements kolekcie neinštaluje.
+
+Profil `cisco-ios` pridáva do predvoleného libssh zoznamu iba legacy KEX
+`diffie-hellman-group1-sha1`. Moderné algoritmy zostávajú preferované; slabý
+KEX sa použije iba vtedy, keď zariadenie neponúkne spoločný modernejší
+algoritmus. `cisco-ios-xe`, CBS a Aruba profily ho nepovoľujú.
 
 ## Runtime a secrets
 

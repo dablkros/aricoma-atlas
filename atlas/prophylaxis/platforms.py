@@ -21,6 +21,7 @@ class AnsiblePlatformProfile:
     collection: str
     module_family: str
     supported_collectors: frozenset[CollectorId]
+    legacy_kex_algorithms: tuple[str, ...] = ()
 
     def supports_collector(self, collector_id: CollectorId) -> bool:
         return collector_id in self.supported_collectors
@@ -41,6 +42,7 @@ ANSIBLE_PLATFORMS = {
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
         supported_collectors=CPU_AND_FACTS,
+        legacy_kex_algorithms=("diffie-hellman-group1-sha1",),
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(
         slug="cisco-ios-xe",
