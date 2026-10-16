@@ -1,0 +1,16 @@
+---
+- name: Collect Cisco IOS identity commands
+  cisco.ios.ios_command:
+    commands:
+      - show version
+      - show inventory
+  register: atlas_cisco_facts
+  changed_when: false
+
+- name: Prepare Cisco IOS command outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_version: "{{ atlas_cisco_facts.stdout[0] }}"
+        show_inventory: "{{ atlas_cisco_facts.stdout[1] }}"
+

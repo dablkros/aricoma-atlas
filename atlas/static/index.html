@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261015-1">
-    <script src="/static/app.js?v=20261015-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261016-1">
+    <script src="/static/app.js?v=20261016-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -209,37 +209,34 @@
         </div>
       </section>
 
-      <section class="panel devices-panel prophylaxis-panel" aria-labelledby="prophylaxis-heading">
+      <section class="panel prophylaxis-panel" aria-labelledby="prophylaxis-heading">
         <div class="panel-heading devices-heading-row">
           <div>
             <p class="section-kicker">Profylaxia</p>
-            <h2 id="prophylaxis-heading">CPU utilization checks</h2>
+            <h2 id="prophylaxis-heading">Selected prophylaxis checks</h2>
           </div>
-          <p id="prophylaxis-total" class="device-total">0 devices</p>
+          <span id="prophylaxis-status" class="status-pill status-pill-neutral">IDLE</span>
         </div>
 
         <p class="panel-description">
-          Run an explicit read-only check. Normalized results are stored locally
-          on the Atlas VM and remain available after a backend restart.
+          Run the checks selected on each eligible NetBox device. Supported checks
+          are collected once per required data source; unsupported checks are reported
+          as skipped. Results and the text report stay on the Atlas VM.
         </p>
 
-        <div class="table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th scope="col">Device</th>
-                <th scope="col">IP address</th>
-                <th scope="col">Platform</th>
-                <th scope="col">Latest result</th>
-                <th scope="col">Collected</th>
-                <th scope="col"><span class="visually-hidden">Action</span></th>
-              </tr>
-            </thead>
-            <tbody id="prophylaxis-table-body">
-              <tr><td colspan="6" class="table-message">Loading Profylaxia devices…</td></tr>
-            </tbody>
-          </table>
+        <div class="table-toolbar prophylaxis-toolbar">
+          <div class="field-group search-field">
+            <label for="prophylaxis-token">Operator token</label>
+            <input id="prophylaxis-token" type="password" autocomplete="off" placeholder="Runtime operator token">
+          </div>
+          <button id="prophylaxis-run" class="button button-primary" type="button">Run Prophylaxis</button>
         </div>
+        <dl class="result-summary prophylaxis-summary">
+          <div><dt>Checks successful</dt><dd id="prophylaxis-success">0</dd></div>
+          <div><dt>Checks failed</dt><dd id="prophylaxis-failure">0</dd></div>
+          <div><dt>Checks skipped</dt><dd id="prophylaxis-skipped">0</dd></div>
+        </dl>
+        <p id="prophylaxis-report" class="prophylaxis-report">No run has been launched.</p>
       </section>
 
       <section class="panel devices-panel" aria-labelledby="monitoring-heading">

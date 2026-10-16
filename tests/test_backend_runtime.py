@@ -25,9 +25,10 @@ def backend_config(**overrides):
             "environment": "production",
             "log_level": "INFO",
             "ansible_job_timeout": 120,
-            "fortios_validate_certs": True,
+            "fortios_validate_certs": False,
             "ssh_strict_host_keys": True,
             "prophylaxis_result_retention": 10000,
+            "prophylaxis_concurrency": 4,
         },
         "runtime": {
             "directory": ".runtime/backend",
@@ -206,7 +207,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             service["environment"]["ATLAS_FORTIOS_VALIDATE_CERTS"],
-            "true",
+            "false",
         )
         self.assertEqual(
             service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],

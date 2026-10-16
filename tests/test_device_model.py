@@ -357,6 +357,42 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(summary["drift"], 1)
         self.assertEqual(client.writes, [])
 
+    def test_previous_device_facts_label_is_migrated_idempotently(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES
+        )
+        client.post("/api/extras/custom-field-choice-sets/", previous)
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+            writes = copy.deepcopy(client.writes)
+            second = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(first["migrated"], 1)
+        self.assertEqual(first["drift"], 0)
+        self.assertEqual(second["migrated"], 0)
+        self.assertEqual(second["drift"], 0)
+        self.assertEqual(client.writes, writes)
+        self.assertEqual(
+            client.tables["/api/extras/custom-field-choice-sets/"][0][
+                "extra_choices"
+            ],
+            desired["extra_choices"],
+        )
+
     def test_stale_mapping_invalidates_cached_build(self):
         manifest = bootstrap_netbox.load_manifest()
         with tempfile.TemporaryDirectory() as directory:

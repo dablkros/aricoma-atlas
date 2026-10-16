@@ -18,7 +18,7 @@ from atlas.prophylaxis.errors import (
     HostKeyUnknownError,
     SSHNegotiationFailedError,
 )
-from atlas.prophylaxis.models import CheckId, RawCheckResult
+from atlas.prophylaxis.models import CheckId, CollectorId, RawCollectorResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
@@ -208,19 +208,46 @@ class AnsibleBackend:
         host: str,
         port: int,
         profile: AnsiblePlatformProfile,
+        *,
+        transport: str | None = None,
     ) -> dict:
+        transport = transport or profile.transport
         variables = {
             "ansible_host": host,
-            "ansible_connection": profile.ansible_connection,
-            "ansible_network_os": profile.ansible_network_os,
             "ansible_connect_timeout": self.connect_timeout,
             "ansible_command_timeout": self.command_timeout,
             "ansible_host_key_checking": self.strict_host_keys,
         }
-        if profile.transport == "ssh":
-            variables["ansible_port"] = port
-            variables["ansible_network_cli_ssh_type"] = "libssh"
-        if profile.transport == "https":
+        if transport == "telnet":
+            variables.update(
+                {
+                    "ansible_connection": "local",
+                    "ansible_port": port,
+                }
+            )
+        else:
+            variables.update(
+                {
+                    "ansible_connection": profile.ansible_connection,
+                    "ansible_network_os": profile.ansible_network_os,
+                }
+            )
+        if transport == "ssh":
+            variables.update(
+                {
+                    "ansible_port": port,
+                    "ansible_network_cli_ssh_type": "libssh",
+                }
+            )
+            if profile.legacy_kex_algorithms:
+                variables["ansible_libssh_key_exchange_algorithms"] = (
+                    "+" + ",".join(profile.legacy_kex_algorithms)
+                )
+            if profile.legacy_hostkey_algorithms:
+                variables["ansible_libssh_hostkeys"] = ",".join(
+                    profile.legacy_hostkey_algorithms
+                )
+        if transport == "https":
             variables.update(
                 {
                     "ansible_httpapi_use_ssl": True,
@@ -249,12 +276,20 @@ class AnsibleBackend:
         host: str,
         port: int,
         profile: AnsiblePlatformProfile,
+        collector_id: CollectorId | None = None,
         check_id: CheckId,
         credentials: dict,
-    ) -> RawCheckResult:
-        if not profile.supports(check_id):
-            return RawCheckResult(
-                check=check_id,
+        telnet_fallback_port: int | None = None,
+    ) -> RawCollectorResult:
+        if collector_id is None:
+            collector_id = (
+                CollectorId.DEVICE_FACTS
+                if check_id == CheckId.DEVICE_FACTS
+                else CollectorId.CPU_USAGE
+            )
+        if not profile.supports_collector(collector_id):
+            return RawCollectorResult(
+                collector=collector_id,
                 platform=profile.slug,
                 status="unsupported",
                 error_code="unsupported_check",
@@ -290,6 +325,30 @@ class AnsibleBackend:
             home = self._prepare_home(private_dir)
             local_tmp = private_dir / "local-tmp"
             local_tmp.mkdir(mode=0o700)
+            ssh_config_file = None
+            if profile.legacy_ciphers or profile.legacy_macs:
+                ssh_config_file = home / ".ssh" / "config"
+                options = ["Host *"]
+                if profile.legacy_ciphers:
+                    options.append(
+                        "  Ciphers +" + ",".join(profile.legacy_ciphers)
+                    )
+                if profile.legacy_macs:
+                    options.append("  MACs +" + ",".join(profile.legacy_macs))
+                ssh_config_file.write_text(
+                    "\n".join(options) + "\n",
+                    encoding="utf-8",
+                )
+                os.chmod(ssh_config_file, 0o600)
+                logger.info(
+                    "ansible_legacy_ssh_configured",
+                    extra={
+                        "event": "ansible_legacy_ssh_configured",
+                        "platform": profile.slug,
+                        "legacy_ciphers": list(profile.legacy_ciphers),
+                        "legacy_macs": list(profile.legacy_macs),
+                    },
+                )
             environment = {
                 "HOME": str(home),
                 # The Compose runtime uses the host Atlas UID, which may not
@@ -305,38 +364,56 @@ class AnsibleBackend:
                 "SSH_AUTH_SOCK": "",
                 **self._credential_environment(profile, credentials),
             }
-            try:
-                result = self.runner(
-                    private_data_dir=str(private_dir),
-                    project_dir=str(self.project_dir),
-                    playbook="playbooks/run_check.yml",
-                    roles_path=[str(self.project_dir / "roles")],
-                    inventory=self._inventory(host, port, profile),
-                    extravars={
-                        "atlas_check": check_id.value,
-                        "atlas_platform": profile.slug,
-                        "atlas_schema_version": 1,
-                    },
-                    envvars=environment,
-                    suppress_env_files=True,
-                    event_handler=event_handler,
-                    quiet=True,
-                    rotate_artifacts=0,
-                    timeout=self.job_timeout,
-                )
-            except Exception as exc:
-                logger.warning(
-                    "ansible_runner_failed",
-                    extra={
-                        "event": "ansible_runner_failed",
-                        "platform": profile.slug,
-                        "port": port,
-                        "check": check_id.value,
-                        "reason_code": "ansible_execution_failed",
-                        "exception_type": type(exc).__name__,
-                    },
-                )
-                raise AnsibleExecutionError() from None
+            if ssh_config_file is not None:
+                environment["ANSIBLE_LIBSSH_CONFIG_FILE"] = str(ssh_config_file)
+
+            def run_attempt(transport: str, attempt_port: int):
+                nonlocal captured_result, captured_failure
+                captured_result = None
+                captured_failure = None
+                try:
+                    return self.runner(
+                        private_data_dir=str(private_dir),
+                        project_dir=str(self.project_dir),
+                        playbook="playbooks/run_check.yml",
+                        roles_path=[str(self.project_dir / "roles")],
+                        inventory=self._inventory(
+                            host,
+                            attempt_port,
+                            profile,
+                            transport=transport,
+                        ),
+                        extravars={
+                            "atlas_collector": collector_id.value,
+                            "atlas_platform": profile.slug,
+                            "atlas_schema_version": 1,
+                            "atlas_transport": transport,
+                        },
+                        envvars=environment,
+                        suppress_env_files=True,
+                        event_handler=event_handler,
+                        quiet=True,
+                        rotate_artifacts=0,
+                        timeout=self.job_timeout,
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "ansible_runner_failed",
+                        extra={
+                            "event": "ansible_runner_failed",
+                            "platform": profile.slug,
+                            "transport": transport,
+                            "port": attempt_port,
+                            "collector": collector_id.value,
+                            "check": check_id.value,
+                            "reason_code": "ansible_execution_failed",
+                            "exception_type": type(exc).__name__,
+                        },
+                    )
+                    raise AnsibleExecutionError() from None
+
+            transport = profile.transport
+            result = run_attempt(transport, port)
 
             if getattr(result, "status", None) != "successful" or getattr(result, "rc", 1) != 0:
                 failure = _failure_from_event(captured_failure)
@@ -345,7 +422,9 @@ class AnsibleBackend:
                     extra={
                         "event": "ansible_execution_failed",
                         "platform": profile.slug,
+                        "transport": transport,
                         "port": port,
+                        "collector": collector_id.value,
                         "check": check_id.value,
                         "reason_code": failure.code,
                         "runner_status": str(
@@ -358,14 +437,69 @@ class AnsibleBackend:
                         ),
                     },
                 )
-                raise failure
+                if (
+                    isinstance(failure, SSHNegotiationFailedError)
+                    and telnet_fallback_port is not None
+                    and profile.telnet_fallback_service_name is not None
+                ):
+                    logger.warning(
+                        "ansible_telnet_fallback_started",
+                        extra={
+                            "event": "ansible_telnet_fallback_started",
+                            "platform": profile.slug,
+                            "port": telnet_fallback_port,
+                            "collector": collector_id.value,
+                            "check": check_id.value,
+                            "reason_code": failure.code,
+                        },
+                    )
+                    transport = "telnet"
+                    port = telnet_fallback_port
+                    result = run_attempt(transport, port)
+                    if (
+                        getattr(result, "status", None) != "successful"
+                        or getattr(result, "rc", 1) != 0
+                    ):
+                        telnet_failure = _failure_from_event(captured_failure)
+                        logger.warning(
+                            "ansible_execution_failed",
+                            extra={
+                                "event": "ansible_execution_failed",
+                                "platform": profile.slug,
+                                "transport": transport,
+                                "port": port,
+                                "collector": collector_id.value,
+                                "check": check_id.value,
+                                "reason_code": telnet_failure.code,
+                                "runner_status": str(
+                                    getattr(result, "status", "unknown")
+                                )[:32],
+                                "runner_rc": getattr(result, "rc", None),
+                                **_failure_context(
+                                    captured_failure,
+                                    secrets=credentials.values(),
+                                ),
+                            },
+                        )
+                        raise telnet_failure
+                else:
+                    raise failure
             if captured_result is None:
                 raise AnsibleExecutionError()
+            if "collector" not in captured_result and "check" in captured_result:
+                captured_result = {
+                    **captured_result,
+                    "collector": collector_id.value,
+                }
+                captured_result.pop("check", None)
             try:
-                raw_result = RawCheckResult.model_validate(captured_result)
+                raw_result = RawCollectorResult.model_validate(captured_result)
             except ValueError:
                 raise AnsibleExecutionError() from None
-            if raw_result.check != check_id or raw_result.platform != profile.slug:
+            if (
+                raw_result.collector != collector_id
+                or raw_result.platform != profile.slug
+            ):
                 raise AnsibleExecutionError()
             return raw_result
 

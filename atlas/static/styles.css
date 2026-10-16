@@ -321,6 +321,22 @@ h2 {
   margin-top: 1rem;
 }
 
+.prophylaxis-toolbar {
+  margin-bottom: 1rem;
+}
+
+.prophylaxis-summary {
+  max-width: 520px;
+  margin-top: 1rem;
+}
+
+.prophylaxis-report {
+  margin: 1rem 0 0;
+  color: var(--ink-soft);
+  font: 0.76rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  overflow-wrap: anywhere;
+}
+
 .check-result {
   color: var(--healthy);
   font-weight: 750;

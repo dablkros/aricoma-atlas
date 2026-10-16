@@ -7,8 +7,9 @@ backend:
   log_level: "INFO"
   ansible_job_timeout: 120
   fortios_validate_certs: false
-  ssh_strict_host_keys: true
+  ssh_strict_host_keys: false
   prophylaxis_result_retention: 10000
+  prophylaxis_concurrency: 4
 
 runtime:
   directory: ".runtime/backend"

@@ -4,9 +4,8 @@ const state = {
   devices: [],
   syncing: false,
   backupsInProgress: new Set(),
-  prophylaxisDevices: [],
-  prophylaxisResults: [],
-  checksInProgress: new Set(),
+  prophylaxisToken: "",
+  prophylaxisRun: null,
   monitoringDevices: [],
   monitoringToken: "",
   monitoringJobs: new Map(),
@@ -37,8 +36,13 @@ const elements = {
   deviceTotal: document.querySelector("#device-total"),
   deviceTableBody: document.querySelector("#device-table-body"),
   toastRegion: document.querySelector("#toast-region"),
-  prophylaxisTotal: document.querySelector("#prophylaxis-total"),
-  prophylaxisTableBody: document.querySelector("#prophylaxis-table-body"),
+  prophylaxisToken: document.querySelector("#prophylaxis-token"),
+  prophylaxisRun: document.querySelector("#prophylaxis-run"),
+  prophylaxisStatus: document.querySelector("#prophylaxis-status"),
+  prophylaxisSuccess: document.querySelector("#prophylaxis-success"),
+  prophylaxisFailure: document.querySelector("#prophylaxis-failure"),
+  prophylaxisSkipped: document.querySelector("#prophylaxis-skipped"),
+  prophylaxisReport: document.querySelector("#prophylaxis-report"),
   monitoringToken: document.querySelector("#monitoring-token"),
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
@@ -421,87 +425,23 @@ function renderDevicesUnavailable() {
   tableMessage("The runtime device list is unavailable.");
 }
 
-function latestResult(device) {
-  return state.prophylaxisResults.find((result) => result.device === device);
-}
-
-function resultText(result) {
-  if (!result) return "Not run";
-  if (result.status === "ok") {
-    return `${Number(result.values.current_percent).toFixed(1)}% CPU`;
-  }
-  return titleCase(result.error_code);
-}
-
-function resultTime(result) {
-  if (!result) return "—";
-  return new Intl.DateTimeFormat(undefined, {
-    dateStyle: "short",
-    timeStyle: "medium",
-  }).format(new Date(result.collected_at));
-}
-
-function prophylaxisTableMessage(message) {
-  const row = document.createElement("tr");
-  const cell = document.createElement("td");
-  cell.colSpan = 6;
-  cell.className = "table-message";
-  cell.textContent = message;
-  row.append(cell);
-  elements.prophylaxisTableBody.replaceChildren(row);
-}
-
-function renderProphylaxisDevices() {
-  elements.prophylaxisTotal.textContent = `${state.prophylaxisDevices.length} ${
-    state.prophylaxisDevices.length === 1 ? "device" : "devices"
-  }`;
-  if (!state.prophylaxisDevices.length) {
-    prophylaxisTableMessage("No active device has the CPU utilization check enabled.");
-    return;
-  }
-
-  const rows = state.prophylaxisDevices.map((device) => {
-    const row = document.createElement("tr");
-    const name = document.createElement("td");
-    name.className = "device-name";
-    name.textContent = device.name;
-    const address = document.createElement("td");
-    address.textContent = device.ip;
-    const platform = document.createElement("td");
-    const platformTag = document.createElement("span");
-    platformTag.className = "device-model";
-    platformTag.textContent = device.platform;
-    platform.append(platformTag);
-
-    const stored = latestResult(device.name);
-    const result = document.createElement("td");
-    result.className = stored && stored.status !== "ok" ? "check-result check-error" : "check-result";
-    result.textContent = resultText(stored);
-    const collected = document.createElement("td");
-    collected.className = "muted";
-    collected.textContent = resultTime(stored);
-
-    const action = document.createElement("td");
-    action.className = "action-cell";
-    const button = document.createElement("button");
-    const busy = state.checksInProgress.has(device.id);
-    button.type = "button";
-    button.className = "button button-compact button-check";
-    button.disabled = busy;
-    button.textContent = busy ? "Checking…" : "Run CPU check";
-    button.setAttribute("aria-label", `Run CPU utilization check for ${device.name}`);
-    button.addEventListener("click", () => runCpuCheck(device));
-    action.append(button);
-    row.append(name, address, platform, result, collected, action);
-    return row;
-  });
-  elements.prophylaxisTableBody.replaceChildren(...rows);
-}
-
-function renderProphylaxisUnavailable() {
-  state.prophylaxisDevices = [];
-  elements.prophylaxisTotal.textContent = "Unavailable";
-  prophylaxisTableMessage("Profylaxia devices or local result history are unavailable.");
+function renderProphylaxisRun(run = state.prophylaxisRun) {
+  const status = run?.status || "IDLE";
+  const visualStatus = status === "COMPLETED"
+    ? "healthy"
+    : status === "PARTIAL"
+      ? "degraded"
+      : status === "FAILED"
+        ? "unhealthy"
+        : "unknown";
+  setPill(elements.prophylaxisStatus, visualStatus, status);
+  elements.prophylaxisSuccess.textContent = String(run?.summary?.success ?? 0);
+  elements.prophylaxisFailure.textContent = String(run?.summary?.failure ?? 0);
+  elements.prophylaxisSkipped.textContent = String(run?.summary?.skipped ?? 0);
+  elements.prophylaxisReport.textContent = run
+    ? `Run ${run.run_id} · Report: ${run.report_path}`
+    : "No run has been launched.";
+  elements.prophylaxisRun.disabled = ["PENDING", "RUNNING"].includes(status);
 }
 
 function addResultEvent(symbol, kind, device, detail = "") {
@@ -570,12 +510,10 @@ function setSyncBusy(busy) {
 async function loadDashboard() {
   elements.refreshButton.disabled = true;
   setPageMessage();
-  const [platform, overview, devices, prophylaxisDevices, prophylaxisResults] = await Promise.allSettled([
+  const [platform, overview, devices] = await Promise.allSettled([
     apiRequest("/api/status"),
     apiRequest("/api/oxidized/status"),
     apiRequest("/api/oxidized/devices"),
-    apiRequest("/api/prophylaxis/devices"),
-    apiRequest("/api/prophylaxis/results?limit=50"),
   ]);
 
   if (platform.status === "fulfilled") {
@@ -597,15 +535,7 @@ async function loadDashboard() {
     renderDevicesUnavailable();
   }
 
-  if (prophylaxisDevices.status === "fulfilled" && prophylaxisResults.status === "fulfilled") {
-    state.prophylaxisDevices = prophylaxisDevices.value;
-    state.prophylaxisResults = prophylaxisResults.value;
-    renderProphylaxisDevices();
-  } else {
-    renderProphylaxisUnavailable();
-  }
-
-  if ([platform, overview, devices, prophylaxisDevices, prophylaxisResults].some(
+  if ([platform, overview, devices].some(
     (result) => result.status === "rejected",
   )) {
     setPageMessage("Some operational data is currently unavailable. Refresh after the dependency recovers.");
@@ -618,31 +548,49 @@ async function loadDashboard() {
   elements.refreshButton.disabled = false;
 }
 
-async function runCpuCheck(device) {
-  if (state.checksInProgress.has(device.id)) return;
-  state.checksInProgress.add(device.id);
-  renderProphylaxisDevices();
+function prophylaxisHeaders() {
+  return { Authorization: `Bearer ${state.prophylaxisToken}` };
+}
+
+async function pollProphylaxisRun() {
+  const run = state.prophylaxisRun;
+  if (!run || !["PENDING", "RUNNING"].includes(run.status)) return;
   try {
-    const result = await apiRequest(
-      `/api/prophylaxis/devices/${device.id}/checks/cpu`,
-      { method: "POST" },
+    state.prophylaxisRun = await apiRequest(
+      `/api/prophylaxis/runs/${run.run_id}`,
+      { headers: prophylaxisHeaders() },
     );
-    state.prophylaxisResults = [
-      result,
-      ...state.prophylaxisResults.filter((item) => item.id !== result.id),
-    ].slice(0, 50);
-    renderProphylaxisDevices();
-    toast(
-      result.status === "ok"
-        ? `${result.device}: ${Number(result.values.current_percent).toFixed(1)}% CPU.`
-        : `${result.device}: ${titleCase(result.error_code)}.`,
-      result.status === "ok" ? "success" : "error",
-    );
+    renderProphylaxisRun();
+    if (["PENDING", "RUNNING"].includes(state.prophylaxisRun.status)) {
+      window.setTimeout(pollProphylaxisRun, 1500);
+    } else {
+      toast(`Profylaxia finished with status ${state.prophylaxisRun.status}.`,
+        state.prophylaxisRun.status === "COMPLETED" ? "success" : "warning");
+    }
   } catch (error) {
-    toast(error.safeMessage || `Could not check ${device.name}.`, "error");
-  } finally {
-    state.checksInProgress.delete(device.id);
-    renderProphylaxisDevices();
+    elements.prophylaxisRun.disabled = false;
+    toast(error.safeMessage || "Could not read the Profylaxia run.", "error");
+  }
+}
+
+async function launchProphylaxisRun() {
+  const token = elements.prophylaxisToken.value.trim();
+  if (!token) {
+    toast("Enter the operator token.", "warning");
+    return;
+  }
+  state.prophylaxisToken = token;
+  elements.prophylaxisRun.disabled = true;
+  try {
+    state.prophylaxisRun = await apiRequest("/api/prophylaxis/runs", {
+      method: "POST",
+      headers: prophylaxisHeaders(),
+    });
+    renderProphylaxisRun();
+    window.setTimeout(pollProphylaxisRun, 500);
+  } catch (error) {
+    elements.prophylaxisRun.disabled = false;
+    toast(error.safeMessage || "Could not launch Profylaxia.", "error");
   }
 }
 
@@ -697,6 +645,7 @@ elements.refreshButton.addEventListener("click", loadDashboard);
 elements.syncButton.addEventListener("click", synchronizeInventory);
 elements.deviceFilter.addEventListener("input", renderDevices);
 elements.deviceSort.addEventListener("change", renderDevices);
+elements.prophylaxisRun.addEventListener("click", launchProphylaxisRun);
 elements.monitoringLoad.addEventListener("click", loadMonitoringDevices);
 elements.monitoringBulk.addEventListener("click", planAllMonitoringDevices);
 

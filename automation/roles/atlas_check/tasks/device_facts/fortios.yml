@@ -1,0 +1,25 @@
+---
+- name: Collect FortiOS system status
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_status
+    vdom: root
+  register: atlas_fortios_facts
+  changed_when: false
+
+- name: Collect FortiOS uptime timestamps
+  atlas_fortios_monitor:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    path: /api/v2/monitor/web-ui/state
+  register: atlas_fortios_uptime
+  changed_when: false
+
+- name: Prepare FortiOS device facts for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        hostname: "{{ atlas_fortios_facts.meta.results.hostname }}"
+        model: "{{ atlas_fortios_facts.meta.results.model_number }}"
+        os_version: "{{ atlas_fortios_facts.meta.version | default(atlas_fortios_facts.meta.results.version) }}"
+        serial_number: "{{ atlas_fortios_facts.meta.serial }}"
+        uptime_state: "{{ atlas_fortios_uptime.response }}"
