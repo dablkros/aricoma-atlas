@@ -1,6 +1,6 @@
 """Public Operations UI platform-status schemas."""
 
-from typing import Literal
+from typing import Literal, Optional
 
 from pydantic import BaseModel, ConfigDict
 
@@ -12,6 +12,7 @@ class ComponentStatusResponse(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     status: HealthState
+    url: Optional[str] = None
 
 
 class PlatformComponentsResponse(BaseModel):
@@ -21,6 +22,7 @@ class PlatformComponentsResponse(BaseModel):
     openbao: ComponentStatusResponse
     netbox: ComponentStatusResponse
     oxidized: ComponentStatusResponse
+    zabbix: ComponentStatusResponse
 
 
 class PlatformStatusResponse(BaseModel):

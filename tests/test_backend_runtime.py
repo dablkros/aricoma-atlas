@@ -3,11 +3,12 @@ import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
-from unittest.mock import call, patch
+from unittest.mock import Mock, call, patch
 
 import yaml
 
 from atlas import __version__
+from atlas.openbao_client import OpenBaoAuthenticationError
 from scripts import deploy_atlas, deploy_backend
 
 
@@ -47,12 +48,14 @@ def backend_config(**overrides):
 class BackendConfigurationTests(unittest.TestCase):
     def test_repository_configuration_matches_package_version(self):
         config = deploy_backend.load_config(ROOT / "deployment/backend.yaml")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
         self.assertEqual(config["backend"]["version"], __version__)
         self.assertEqual(
             config["backend"]["docker_image"],
             f"aricoma-atlas-backend:{__version__}",
         )
+        self.assertIn(f"ATLAS_APP_VERSION={__version__}", env_example.splitlines())
         self.assertFalse(config["backend"]["fortios_validate_certs"])
 
     def test_public_listen_address_is_rejected(self):
@@ -107,6 +110,15 @@ class BackendRuntimeTests(unittest.TestCase):
         identity = self.root / ".runtime/openbao-backend.json"
         identity.parent.mkdir(parents=True)
         identity.write_text("{}\n", encoding="utf-8")
+        monitoring_identity = self.root / ".runtime/openbao-monitoring.json"
+        monitoring_identity.write_text("{}\n", encoding="utf-8")
+        monitoring_default = self.root / "deployment/monitoring.default.yaml"
+        monitoring_default.write_text(
+            "version: 2\nallowed_device_networks: [192.0.2.0/24]\n"
+            "fortios: {default_vdom: root, default_https_port: 443, default_snmp_port: 161, tls_verify: true}\n"
+            "monitoring: {}\n",
+            encoding="utf-8",
+        )
         known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
         known_hosts.parent.mkdir(parents=True)
         known_hosts.write_text("fixture host key\n", encoding="utf-8")
@@ -122,13 +134,22 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.environment.start()
         self.config = deploy_backend.validate_config(backend_config())
+        self.ui_urls = {
+            "netbox": "https://netbox.example.test/",
+            "oxidized": "https://oxidized.example.test/",
+            "zabbix": "https://zabbix.example.test/",
+        }
 
     def tearDown(self):
         self.environment.stop()
         self.temporary.cleanup()
 
     def test_prepare_runtime_writes_hardened_loopback_only_compose(self):
-        compose_file = deploy_backend.prepare_runtime(self.config, self.root)
+        compose_file = deploy_backend.prepare_runtime(
+            self.config,
+            self.root,
+            self.ui_urls,
+        )
         data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         service = data["services"]["backend"]
 
@@ -154,6 +175,14 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(
             service["environment"]["ATLAS_OXIDIZED_URL"],
             "http://atlas-oxidized:8888",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ZABBIX_URL"],
+            "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_ZABBIX_UI_URL"],
+            "https://zabbix.example.test/",
         )
         self.assertEqual(
             service["environment"]["ATLAS_OXIDIZED_INVENTORY_FILE"],
@@ -190,16 +219,29 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(service["user"], f"{os.geteuid()}:{os.getegid()}")
         self.assertNotEqual(service["user"].split(":", 1)[0], "0")
         self.assertIn(
-            f"{self.root / '.runtime/openbao-backend.json'}:"
+            f"{(self.root / '.runtime/openbao-backend.json').resolve()}:"
             "/run/secrets/atlas-backend.json:ro",
             service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / '.runtime/openbao-monitoring.json').resolve()}:"
+            "/run/secrets/atlas-monitoring.json:ro",
+            service["volumes"],
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_MONITORING_JOBS_DIRECTORY"],
+            "/run/atlas/monitoring/jobs",
+        )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/monitoring/operator-token").st_mode & 0o777,
+            0o600,
         )
         self.assertIn(
             f"{self.inventory_directory}:/run/atlas/oxidized:rw",
             service["volumes"],
         )
         self.assertIn(
-            f"{self.root / '.runtime/prophylaxis'}:"
+            f"{(self.root / '.runtime/prophylaxis').resolve()}:"
             "/run/atlas/prophylaxis:rw",
             service["volumes"],
         )
@@ -208,7 +250,7 @@ class BackendRuntimeTests(unittest.TestCase):
             0o700,
         )
         self.assertIn(
-            f"{self.root / '.runtime/oxidized/ssh/known_hosts'}:"
+            f"{(self.root / '.runtime/oxidized/ssh/known_hosts').resolve()}:"
             "/run/atlas/ssh/known_hosts:ro",
             service["volumes"],
         )
@@ -220,7 +262,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             set(service["networks"]),
-            {"openbao", "netbox", "oxidized"},
+            {"openbao", "netbox", "oxidized", "zabbix"},
         )
         self.assertEqual(
             data["networks"],
@@ -237,6 +279,10 @@ class BackendRuntimeTests(unittest.TestCase):
                     "external": True,
                     "name": "atlas-oxidized-web",
                 },
+                "zabbix": {
+                    "external": True,
+                    "name": "atlas-zabbix-api",
+                },
             },
         )
         self.assertIn("healthcheck", service)
@@ -245,6 +291,7 @@ class BackendRuntimeTests(unittest.TestCase):
 
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
+        (self.root / ".runtime/openbao-monitoring.json").unlink()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
         (self.root / ".runtime/oxidized/ssh").rmdir()
         (self.root / ".runtime/oxidized").rmdir()
@@ -254,7 +301,7 @@ class BackendRuntimeTests(unittest.TestCase):
         (self.root / ".runtime").symlink_to(target, target_is_directory=True)
 
         with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
-            deploy_backend.prepare_runtime(self.config, self.root)
+            deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
 
     def test_development_mode_does_not_require_or_mount_known_hosts(self):
         known_hosts = self.root / ".runtime/oxidized/ssh/known_hosts"
@@ -268,7 +315,11 @@ class BackendRuntimeTests(unittest.TestCase):
             )
         )
 
-        compose_file = deploy_backend.prepare_runtime(config, self.root)
+        compose_file = deploy_backend.prepare_runtime(
+            config,
+            self.root,
+            self.ui_urls,
+        )
         service = yaml.safe_load(compose_file.read_text(encoding="utf-8"))[
             "services"
         ]["backend"]
@@ -291,7 +342,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
 
         with self.assertRaisesRegex(RuntimeError, "escaped"):
-            deploy_backend.prepare_runtime(config, self.root)
+            deploy_backend.prepare_runtime(config, self.root, self.ui_urls)
 
     @patch("scripts.deploy_backend.wait_healthy")
     @patch("scripts.deploy_backend.compose")
@@ -324,6 +375,84 @@ class BackendRuntimeTests(unittest.TestCase):
 
 
 class AtlasDeploymentOrderTests(unittest.TestCase):
+    def test_openbao_gate_validates_deployer_and_backend_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deployer = root / "deployer.json"
+            backend = root / "backend.json"
+            monitoring = root / "monitoring.json"
+            deployer.write_text("{}\n", encoding="utf-8")
+            backend.write_text("{}\n", encoding="utf-8")
+            monitoring.write_text("{}\n", encoding="utf-8")
+            client = Mock()
+            client.seal_status.return_value = {
+                "initialized": True,
+                "sealed": False,
+            }
+            client.login_from_identity.side_effect = [
+                "deployer-token",
+                "backend-token",
+                "monitoring-token",
+            ]
+            with (
+                patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_BACKEND_IDENTITY_FILE",
+                    backend,
+                ),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_MONITORING_IDENTITY_FILE",
+                    monitoring,
+                ),
+                patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
+                patch.object(deploy_atlas, "header"),
+                patch.object(deploy_atlas, "ok"),
+            ):
+                deploy_atlas.verify_openbao_ready()
+
+            self.assertEqual(
+                client.login_from_identity.call_args_list,
+                [call(deployer), call(backend), call(monitoring)],
+            )
+            self.assertEqual(
+                client.revoke_self.call_args_list,
+                [call("deployer-token"), call("backend-token"), call("monitoring-token")],
+            )
+
+    def test_openbao_gate_has_actionable_backend_reconcile_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            deployer = root / "deployer.json"
+            backend = root / "backend.json"
+            deployer.write_text("{}\n", encoding="utf-8")
+            backend.write_text("{}\n", encoding="utf-8")
+            client = Mock()
+            client.seal_status.return_value = {
+                "initialized": True,
+                "sealed": False,
+            }
+            client.login_from_identity.side_effect = [
+                "deployer-token",
+                OpenBaoAuthenticationError("HTTP 400"),
+            ]
+            with (
+                patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_BACKEND_IDENTITY_FILE",
+                    backend,
+                ),
+                patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
+                patch.object(deploy_atlas, "header"),
+            ):
+                with self.assertRaisesRegex(
+                    RuntimeError,
+                    "Reconcile Atlas backend roles",
+                ):
+                    deploy_atlas.verify_openbao_ready()
+
     def test_backend_runs_after_oxidized_and_before_proxy(self):
         order = []
         args = SimpleNamespace(prepare_only=False, verbose=False)
@@ -344,6 +473,10 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                 side_effect=lambda _: order.append("oxidized"),
             ),
             patch(
+                "scripts.deploy_atlas.deploy_zabbix",
+                side_effect=lambda _: order.append("zabbix"),
+            ),
+            patch(
                 "scripts.deploy_atlas.deploy_backend",
                 side_effect=lambda _: order.append("backend"),
             ),
@@ -358,7 +491,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
 
         self.assertEqual(
             order,
-            ["openbao", "netbox", "oxidized", "backend", "proxy"],
+            ["openbao", "netbox", "oxidized", "zabbix", "backend", "proxy"],
         )
 
 
@@ -373,6 +506,15 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("ansible-galaxy collection install", dockerfile)
         self.assertIn("COPY --chown=atlas:atlas automation", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
+
+
+class InstallerContractTests(unittest.TestCase):
+    def test_installer_requires_python_312_and_supported_ubuntu_releases(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("sys.version_info >= (3, 12)", installer)
+        self.assertIn("24.04|26.04", installer)
+        self.assertNotIn("22.04|24.04", installer)
 
 
 if __name__ == "__main__":

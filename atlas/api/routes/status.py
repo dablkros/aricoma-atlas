@@ -16,10 +16,19 @@ router = APIRouter(tags=["status"])
 )
 def platform_status(request: Request) -> PlatformStatusResponse:
     result = request.app.state.dependencies.platform_status.check()
+    settings = request.app.state.settings
+    urls = {
+        "netbox": settings.netbox_ui_url,
+        "oxidized": settings.oxidized_ui_url,
+        "zabbix": settings.zabbix_ui_url,
+    }
     return PlatformStatusResponse(
         status=result.status,
         components={
-            name: {"status": component.status}
+            name: {
+                "status": component.status,
+                "url": str(urls[name]) if name in urls and urls[name] else None,
+            }
             for name, component in result.components.items()
         },
     )

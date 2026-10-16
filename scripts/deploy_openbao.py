@@ -61,6 +61,21 @@ DEVICE_CREDENTIALS_POLICY_FILE = (
 )
 
 RUNTIME_ROLES = {
+    "atlas-monitoring-provisioner": {
+        "policy_file": (
+            ROOT
+            / "deployment"
+            / "openbao"
+            / "policies"
+            / "atlas-monitoring-provisioner.hcl"
+        ),
+        "identity_file": (
+            ROOT
+            / ".runtime"
+            / "openbao-monitoring.json"
+        ),
+        "additional_policies": [],
+    },
     "atlas-backend": {
         "policy_file": (
             ROOT
@@ -88,23 +103,6 @@ RUNTIME_ROLES = {
             ROOT
             / ".runtime"
             / "openbao-netbox.json"
-        ),
-        "additional_policies": [
-            "device-credentials-read",
-        ],
-    },
-    "checkmk-runtime": {
-        "policy_file": (
-            ROOT
-            / "deployment"
-            / "openbao"
-            / "policies"
-            / "checkmk-runtime.hcl"
-        ),
-        "identity_file": (
-            ROOT
-            / ".runtime"
-            / "openbao-checkmk.json"
         ),
         "additional_policies": [
             "device-credentials-read",
@@ -1715,7 +1713,7 @@ def main():
                 )
 
                 validate_runtime_identities(
-                    optional_roles={"atlas-backend"},
+                    optional_roles={"atlas-backend", "atlas-monitoring-provisioner"},
                 )
 
             else:

@@ -368,6 +368,25 @@ h2 {
   font-size: 0.92rem;
 }
 
+.component-link {
+  margin-left: auto;
+  padding: 0.4rem 0.52rem;
+  color: var(--navy);
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  font-size: 0.72rem;
+  font-weight: 750;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.component-link:hover,
+.component-link:focus-visible {
+  color: white;
+  background: var(--navy);
+  border-color: var(--navy);
+}
+
 .component-status {
   gap: 0.42rem;
   color: var(--ink-soft);
@@ -657,6 +676,27 @@ tbody tr:hover td {
 .action-cell {
   width: 1%;
   text-align: right;
+}
+
+.monitoring-toolbar {
+  flex-wrap: wrap;
+}
+
+.monitoring-actions {
+  display: flex;
+  gap: 0.45rem;
+}
+
+.monitoring-plan {
+  max-height: 22rem;
+  overflow: auto;
+  margin: 0 0 1rem;
+  padding: 1rem;
+  color: #dfeaff;
+  background: #10243f;
+  border-radius: 10px;
+  font: 0.78rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap;
 }
 
 .table-message {

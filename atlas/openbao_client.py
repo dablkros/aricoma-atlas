@@ -550,6 +550,19 @@ class OpenBaoClient:
         path,
         mount="atlas",
     ):
+        data, _metadata = self.kv_read_with_metadata(
+            token,
+            path,
+            mount=mount,
+        )
+        return data
+
+    def kv_read_with_metadata(
+        self,
+        token,
+        path,
+        mount="atlas",
+    ):
         response = self._request(
             "GET",
             f"{mount}/data/{path.lstrip('/')}",
@@ -562,11 +575,16 @@ class OpenBaoClient:
                 "OpenBao returned an invalid KV response"
             )
         data = envelope.get("data", {})
+        metadata = envelope.get("metadata", {})
         if not isinstance(data, dict):
             raise OpenBaoInvalidResponse(
                 "OpenBao returned invalid KV data"
             )
-        return data
+        if not isinstance(metadata, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid KV metadata"
+            )
+        return data, metadata
 
 
     def kv_write(
@@ -575,6 +593,7 @@ class OpenBaoClient:
         path,
         data,
         mount="atlas",
+        cas=None,
     ):
         self._request(
             "POST",
@@ -582,5 +601,6 @@ class OpenBaoClient:
             token=token,
             payload={
                 "data": data,
+                **({"options": {"cas": cas}} if cas is not None else {}),
             },
         )

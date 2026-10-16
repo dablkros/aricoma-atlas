@@ -34,6 +34,10 @@ from atlas.prophylaxis.platforms import (
 )
 from atlas.prophylaxis.store import ResultStoreError
 from atlas.services.errors import DependencyError
+from atlas.services.device_resolution import (
+    DeviceResolutionError as SharedResolutionError,
+    resolve_tcp_service_port,
+)
 
 
 logger = logging.getLogger("atlas.prophylaxis")
@@ -140,33 +144,13 @@ def device_target(device: dict) -> DeviceTarget:
 
 
 def resolve_service_port(services: object, default_port: int) -> int:
-    """Resolve one exact NetBox 4.7 TCP port mapping or use the platform default."""
-    if not isinstance(services, list):
-        raise InvalidServicePortError()
-    if not services:
-        return default_port
-    if len(services) != 1:
-        raise AmbiguousServicePortError()
-
-    service = services[0]
-    if not isinstance(service, dict):
-        raise InvalidServicePortError()
-    mappings = service.get("port_mappings")
-    if not isinstance(mappings, list) or not mappings:
-        raise InvalidServicePortError()
-    if len(mappings) != 1:
-        raise AmbiguousServicePortError()
-
-    mapping = mappings[0]
-    if not isinstance(mapping, str):
-        raise InvalidServicePortError()
-    protocol, separator, raw_port = mapping.partition("/")
-    if protocol != "tcp" or separator != "/" or not raw_port.isdecimal():
-        raise InvalidServicePortError()
-    port = int(raw_port)
-    if not 1 <= port <= 65535:
-        raise InvalidServicePortError()
-    return port
+    """Compatibility wrapper around the shared NetBox service resolver."""
+    try:
+        return resolve_tcp_service_port(services, default_port)
+    except SharedResolutionError as exc:
+        if exc.code == "ambiguous_service_port":
+            raise AmbiguousServicePortError() from None
+        raise InvalidServicePortError() from None
 
 
 class ProphylaxisService:

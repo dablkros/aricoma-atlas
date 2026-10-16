@@ -60,8 +60,12 @@ validate_source_repo() {
         die "Missing scripts/deploy_netbox.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/deploy_backend.py" ]] || \
         die "Missing scripts/deploy_backend.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/deploy_zabbix.py" ]] || \
+        die "Missing scripts/deploy_zabbix.py in ${source_dir}"
     [[ -f "${source_dir}/deployment/backend.yaml" ]] || \
         die "Missing deployment/backend.yaml in ${source_dir}"
+    [[ -f "${source_dir}/deployment/zabbix.yaml" ]] || \
+        die "Missing deployment/zabbix.yaml in ${source_dir}"
     [[ -f "${source_dir}/deployment/backend/Dockerfile" ]] || \
         die "Missing deployment/backend/Dockerfile in ${source_dir}"
     [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \
@@ -89,10 +93,10 @@ validate_os() {
         die "Unsupported OS: ${PRETTY_NAME:-unknown}. Atlas host bootstrap currently supports Ubuntu only."
 
     case "${VERSION_ID:-}" in
-        22.04|24.04|26.04)
+        24.04|26.04)
             ;;
         *)
-            die "Unsupported Ubuntu release: ${VERSION_ID:-unknown}. Supported releases: 22.04, 24.04, 26.04."
+            die "Unsupported Ubuntu release: ${VERSION_ID:-unknown}. Supported releases: 24.04, 26.04."
             ;;
     esac
 
@@ -292,6 +296,9 @@ install_repository() {
 
 install_python_environment() {
     header "PYTHON ENVIRONMENT"
+
+    python3 -c 'import sys; raise SystemExit(0 if sys.version_info >= (3, 12) else 1)' || \
+        die "Atlas dependencies require Python 3.12 or newer"
 
     if [[ ! -x "${VENV_DIR}/bin/python3" ]]; then
         runuser -u "$ATLAS_USER" -- \

@@ -1,7 +1,8 @@
 # Atlas device platform and credential contract
 
-Status: data model/bootstrap plus reusable Python resolver, reviewed 2026-10-02.
-NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
+Status: implemented data model, Oxidized reconciliation and Zabbix monitoring
+integration; reviewed 2026-10-16. NetBox 4.7.1 (NetBox Docker 5.1.1),
+Oxidized 0.37.0 and Zabbix 7.0.31 LTS.
 
 ## Ownership and deployment
 
@@ -9,8 +10,9 @@ NetBox 4.7.1 (NetBox Docker 5.1.1); Oxidized image 0.37.0.
 |---|---|
 | NetBox | Device identity, manufacturer, Device Type, platform, primary IP, enable flags, explicit `credential_profile` |
 | OpenBao | Usernames, passwords, enable passwords, SNMP secrets, KV v2 mount `atlas` |
-| Atlas | Declarative catalog enrichment, service mappings, credential reference resolution and validation; future orchestration |
+| Atlas | Declarative catalog enrichment, service mappings, credential resolution and reconciliation orchestration |
 | Oxidized | Configuration collection and its independent Git history |
+| Zabbix | Current monitoring state, problems and metric history for Atlas-managed hosts |
 
 `sudo atlasctl deploy` retains the existing `bootstrap_netbox.py` flow:
 
@@ -33,26 +35,50 @@ Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **
 
 The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` and the exceptional `CATALYST 3850 48PT 12 MGIG+36 GIG UPOE`; filename-only examples such as `C9500*` are insufficient. Slug patterns cover those verified aliases.
 
-**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet and 290 Juniper types: 690 total, **495 mapped / 195 unmapped**. See [complete audit including every unmapped model](platform-audit.json).
+**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet, 290 Juniper, 21 Sophos and 109 HPE Aruba switch types: 820 total, **625 mapped / 195 unmapped**. The HPE selection is intentionally limited to 68 AOS-CX and 41 AOS-Switch definitions; it does not import HPE servers, storage, AP/IAP, mobility controllers, Instant On, EdgeConnect or Comware devices. The build report contains every unmapped model.
 
 | Platform name | Slug | Mapped Device Types | Oxidized model |
 |---|---|---:|---|
 | Cisco IOS | `cisco-ios` | 20 | `ios` |
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
-| Cisco CBS | `cisco-cbs` | 21 | unsupported/unmapped |
+| Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
+| Cisco CBS250/350 | `cisco-cbs250-350` | 19 | `ciscosmb` (experimental) |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
 | Juniper Junos | `junos` | 184 | `junos` |
+| Sophos Firewall OS | `sophos-sfos` | 16 | unsupported/unmapped |
+| Sophos Access Point | `sophos-ap` | 3 | unsupported/unmapped |
+| Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
+| Aruba AOS-CX | `aruba-aos-cx` | 68 | `aoscx` |
+| Aruba AOS-Switch | `aruba-aos-switch` | 41 | `procurve` |
 
-Eight platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+Fourteen platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+
+All pinned Sophos Device Types are cataloged. XG/XGS are assigned
+`sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
+`sophos-red`. Zabbix uses an Atlas-managed Sophos SFOS template linked to the
+official generic SNMP template for firewalls; access points use the generic
+template directly. SD-RED remains inventory-only because the reviewed
+Sophos documentation describes it as centrally configured through SG UTM or
+Sophos Firewall; no direct SD-RED SNMP agent was established. None of the
+Sophos platforms receives an unverified Oxidized mapping.
+
+The HPE directory in the upstream library uses `manufacturer: HPE`, including
+Aruba-branded models, so Atlas preserves that manufacturer and uses `hpe` in
+credential paths. AOS-CX and AOS-Switch remain separate NetBox platforms and
+map to the version-pinned Oxidized `aoscx` and `procurve` models respectively.
+Both use `Network Generic Device by SNMP` in the first Zabbix integration; the
+official Zabbix 7.0 Aruba template is specific to CX 8300s and is not applied
+to every Aruba switch family. Physical-device acceptance remains required
+before enabling collection in a customer environment.
 
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 
 **Fact (high confidence, version-specific primary sources):** Oxidized 0.37.0 separates `fortigate` for FortiGate from `fortios` for other Fortinet appliances. Therefore the requested conceptual `fortios → fortios` example is intentionally corrected to **`fortios → fortigate`**. [Fortinet model notes, 0.37.0](https://github.com/ytti/oxidized/blob/0.37.0/docs/Model-Notes/Fortinet.md).
 
-**Unverified:** a generic `ciscosmb` implementation exists, but the pinned model's comment lists older Small Business series, not all CBS220/250/350 devices. Hardware FortiAnalyzer and FortiAP compatibility has not been established here. They remain unmapped for Oxidized, with an explicit validation error. No guessed `ios` fallback is used for CBS. A supported driver name is not a claim of a successful backup on physical hardware.
+**Experimental / unverified on physical CBS hardware:** both Cisco CBS platforms map explicitly to the pinned `ciscosmb` model. The model's source comment lists older Small Business series, not CBS220/250/350, so the mapping is not evidence of a successful backup on those families. It does not use an `ios` fallback. Hardware FortiAnalyzer and FortiAP compatibility has not been established; those platforms remain unmapped with an explicit validation error.
 
 Audit / dry-run commands (from the repository's Python environment):
 
@@ -81,6 +107,7 @@ Examples:
 devices/credentials/cisco/cisco-default/admin
 devices/credentials/cisco/cisco-default/snmp
 devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/sophos/sophos-default/snmp
 devices/credentials/cisco/SW-CORE-01/admin
 ```
 
@@ -131,11 +158,15 @@ SNMPv3 (authPriv shape):
 }
 ```
 
-The shape validator checks required nonempty strings. Protocol labels are stored as data; this does not assert Checkmk/driver support for every algorithm. Other SNMPv3 security levels need an explicit future schema extension.
+The shape validator checks required nonempty strings. Protocol labels are stored
+as data; this does not assert collector support for every algorithm. Zabbix
+reconciliation currently accepts SNMPv2c and explicitly reports
+`unsupported_snmp_version` for SNMPv3. Enabling authPriv/authNoPriv requires an
+explicit interface-details mapping and tests; no protocol fallback is used.
 
 ## Runtime contract and limits
 
-`atlas/device_credentials.py` is reusable by the future FastAPI layer:
+`atlas/device_credentials.py` is shared by the FastAPI and deployment layers:
 
 - `oxidized_reference(device)` ignores devices whose flag is not the boolean `true`; validates an enabled Device's platform, service mapping, explicit profile, vendor slug, name and IP.
 - `resolve_oxidized_device(device, client, token)` reads the exact `admin` path from OpenBao and validates username/password. The return object's representation hides credentials. Callers must not serialize or log its credential dictionary.
@@ -150,10 +181,14 @@ NetBox: manufacturer.slug=cisco, platform.slug=cisco-ios-xe
         credential_profile=cisco-default, oxidized_enabled=true
 Atlas:  cisco-ios-xe -> ios
 Bao:    atlas / devices/credentials/cisco/cisco-default/admin
-Future inventory consumer: name=SW-CORE-01, model=ios, credentials from Bao
+Consumers: Oxidized model=ios; Zabbix template=Cisco IOS by SNMP
 ```
 
-This change **does not implement FastAPI or automatic Oxidized inventory reconciliation**. The current `atlasctl oxidized reconcile` still reconciles its existing manually maintained private runtime inventory; it does not query NetBox. No generated secret file or NetBox-to-Oxidized writer is introduced. The runtime CSV remains a legacy beta manual workflow, not a second authoritative credential store. A future orchestrator must consume the resolver and handle inventory serialization, reloads and secret lifetimes explicitly.
+`atlasctl oxidized reconcile` and `atlasctl zabbix sync` both query NetBox as
+the source of truth and resolve only the referenced credentials from OpenBao.
+Oxidized receives an ephemeral JSON inventory; Zabbix receives a secret macro
+through its official API. Neither consumer becomes an authoritative inventory
+or credential store.
 
 ## Operator steps
 
@@ -162,7 +197,9 @@ This change **does not implement FastAPI or automatic Oxidized inventory reconci
 3. In the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel), create the real `admin` and optionally `snmp` secrets at the exact profile paths. Do not paste real secrets into Git, command history, reports or NetBox.
 4. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
 5. If legacy secrets exist at old `devices/credentials/default`, `devices/credentials/cisco` or `devices/snmp/...` paths, copy them through the authenticated OpenBao UI to the new hierarchy and verify consumers before retiring old keys. Deployment neither migrates nor overwrites secrets. The narrowed read policy only permits the new credential hierarchy.
-6. For an actual backup today, continue the documented beta manual onboarding; automatic use of the new NetBox/OpenBao reference awaits the orchestrator. Perform physical-device acceptance tests before enabling any newly verified driver family.
+6. Run `sudo atlasctl oxidized reconcile` and `sudo atlasctl zabbix sync`, then
+   perform physical-device acceptance tests before enabling any newly verified
+   driver family.
 
 ## Verification and evidence
 
@@ -170,11 +207,13 @@ Local unit tests cover repeated provisioning with no extra writes, read-only dry
 
 GitHub CI additionally tests the declared model files **inside the deployed image**, fresh NetBox provisioning, native Device platform inheritance, a manual Device override, stable IDs after redeployment and real OpenBao credential reads / missing-profile behavior. The complete existing deployment, ingress and upgrade checks remain enabled. CI results must be read from the PR; this document does not imply a test passed before it ran.
 
-Primary evidence reviewed 2026-10-02:
+Primary evidence reviewed 2026-10-16:
 
 - [Pinned community Device Type Library](https://github.com/netbox-community/devicetype-library/tree/517549215455824be5e3b89965353fd2210cc20c/device-types) — actual models/slugs and vendor datasheet links.
 - [NetBox v4.7.1 model implementation](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/dcim/models/devices.py) — native defaults and inheritance.
-- [Oxidized 0.37.0 model list](https://github.com/ytti/oxidized/blob/0.37.0/docs/Supported-OS-Types.md), [IOS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ios.rb), [NX-OS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/nxos.rb), [Junos](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/junos.rb), [CiscoSMB](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ciscosmb.rb) — source commit `3ff7335d85592993727f7dfa7a98cd70aedb87b0`.
+- [Oxidized 0.37.0 model list](https://github.com/ytti/oxidized/blob/0.37.0/docs/Supported-OS-Types.md), [AOS-CX](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/aoscx.rb), [ProCurve](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/procurve.rb), [IOS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ios.rb), [NX-OS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/nxos.rb), [Junos](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/junos.rb), [CiscoSMB](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ciscosmb.rb) — source commit `3ff7335d85592993727f7dfa7a98cd70aedb87b0`.
+- [HPE Aruba AOS-CX 10.15 supported platforms](https://www.arubanetworks.com/techdocs/AOS-CX/10.15/PDF/security_4100i-6000-6100.pdf) and [AOS-CX 10.14 platform guide](https://www.arubanetworks.com/techdocs/AOS-CX/10.14/PDF/vxlan.pdf) — reviewed switch-family OS boundary.
+- [Zabbix 7.0 Aruba CX 8300s template](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/aruba/aruba_cx8300s_snmp?at=release%2F7.0) — reason for retaining the generic SNMP template across the broader Aruba selection.
 - [Cisco Catalyst 9000 release guidance](https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-series-switches/214814-recommended-releases-for-catalyst-9200-9.html), [3850 IOS XE release notes](https://www.cisco.com/c/en/us/support/switches/catalyst-3850-series-switches/products-release-notes-list.html), [8200/8300 IOS XE releases](https://www.cisco.com/c/en/us/support/routers/catalyst-8300-series-edge-platforms/series.html).
 - [Juniper QFX5130 system overview](https://www.juniper.net/documentation/us/en/hardware/qfx5130/topics/topic-map/qfx5130-system-overview.html) — Junos OS Evolved, reason for avoiding a broad QFX rule; [QFX5200](https://www.juniper.net/documentation/product/us/en/qfx5200/), [EX4100](https://www.juniper.net/documentation/product/us/en/ex4100/), [EX4000 hardware compatibility](https://pathfinder.juniper.net/hct/product/EX4000).
 

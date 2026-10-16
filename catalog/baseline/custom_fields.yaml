@@ -1,11 +1,11 @@
 custom_fields:
-  - name: "checkmk_enabled"
+  - name: "monitoring_enabled"
     object_types:
       - "dcim.device"
     type: "boolean"
-    label: "CheckMK"
+    label: "Monitoring"
     group_name: "Monitoring"
-    description: "Device is monitored by CheckMK"
+    description: "Device is managed by the configured Atlas monitoring backend"
     required: false
     unique: false
     search_weight: 1000

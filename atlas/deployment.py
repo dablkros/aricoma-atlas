@@ -15,6 +15,7 @@ ROOT = Path(__file__).resolve().parent.parent
 NETBOX_NETWORK = "atlas-netbox-web"
 OXIDIZED_NETWORK = "atlas-oxidized-web"
 OPENBAO_NETWORK = "atlas-openbao-api"
+ZABBIX_NETWORK = "atlas-zabbix-api"
 
 
 def run(command, **kwargs):

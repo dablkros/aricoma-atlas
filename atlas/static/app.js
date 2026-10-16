@@ -7,6 +7,9 @@ const state = {
   prophylaxisDevices: [],
   prophylaxisResults: [],
   checksInProgress: new Set(),
+  monitoringDevices: [],
+  monitoringToken: "",
+  monitoringJobs: new Map(),
 };
 
 const elements = {
@@ -36,6 +39,13 @@ const elements = {
   toastRegion: document.querySelector("#toast-region"),
   prophylaxisTotal: document.querySelector("#prophylaxis-total"),
   prophylaxisTableBody: document.querySelector("#prophylaxis-table-body"),
+  monitoringToken: document.querySelector("#monitoring-token"),
+  monitoringMode: document.querySelector("#monitoring-mode"),
+  monitoringLoad: document.querySelector("#monitoring-load"),
+  monitoringBulk: document.querySelector("#monitoring-bulk"),
+  monitoringTotal: document.querySelector("#monitoring-total"),
+  monitoringPlan: document.querySelector("#monitoring-plan"),
+  monitoringTableBody: document.querySelector("#monitoring-table-body"),
 };
 
 class ApiError extends Error {
@@ -53,7 +63,12 @@ async function apiRequest(path, options = {}) {
   try {
     response = await fetch(path, {
       method: options.method || "GET",
-      headers: { Accept: "application/json" },
+      headers: {
+        Accept: "application/json",
+        ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(options.headers || {}),
+      },
+      body: options.body ? JSON.stringify(options.body) : undefined,
       credentials: "same-origin",
     });
   } catch (_error) {
@@ -77,6 +92,165 @@ async function apiRequest(path, options = {}) {
     throw new ApiError(response.status, data);
   }
   return data;
+}
+
+function monitoringHeaders() {
+  return { Authorization: `Bearer ${state.monitoringToken}` };
+}
+
+function monitoringMessage(message) {
+  const row = document.createElement("tr");
+  const cell = document.createElement("td");
+  cell.colSpan = 5;
+  cell.className = "table-message";
+  cell.textContent = message;
+  row.append(cell);
+  elements.monitoringTableBody.replaceChildren(row);
+}
+
+function renderMonitoringDevices() {
+  elements.monitoringTotal.textContent = `${state.monitoringDevices.length} devices`;
+  elements.monitoringBulk.disabled = !state.monitoringDevices.some((device) => !device.error_code);
+  if (!state.monitoringDevices.length) {
+    monitoringMessage("No monitoring-enabled devices were returned by NetBox.");
+    return;
+  }
+  const rows = state.monitoringDevices.map((device) => {
+    const row = document.createElement("tr");
+    for (const value of [device.name || `Device ${device.id}`, device.address || "—", device.platform || "—"]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    const status = document.createElement("td");
+    status.textContent = device.error_code
+      ? titleCase(device.error_code)
+      : state.monitoringJobs.get(device.id)?.status || device.provisioning_status;
+    row.append(status);
+    const action = document.createElement("td");
+    action.className = "action-cell monitoring-actions";
+    const inspectButton = document.createElement("button");
+    inspectButton.type = "button";
+    inspectButton.className = "button button-compact";
+    inspectButton.textContent = "Inspect";
+    inspectButton.disabled = Boolean(device.error_code);
+    inspectButton.addEventListener("click", () => inspectMonitoringDevice(device));
+    const applyButton = document.createElement("button");
+    applyButton.type = "button";
+    applyButton.className = "button button-compact button-primary";
+    applyButton.textContent = "Plan & reconcile";
+    applyButton.disabled = Boolean(device.error_code);
+    applyButton.addEventListener("click", () => planMonitoringDevice(device));
+    action.append(inspectButton, applyButton);
+    row.append(action);
+    return row;
+  });
+  elements.monitoringTableBody.replaceChildren(...rows);
+}
+
+async function monitoringRequest(path, options = {}) {
+  return apiRequest(path, { ...options, headers: monitoringHeaders() });
+}
+
+function showMonitoringPlan(value) {
+  elements.monitoringPlan.hidden = false;
+  elements.monitoringPlan.textContent = JSON.stringify(value, null, 2);
+}
+
+async function loadMonitoringDevices() {
+  state.monitoringToken = elements.monitoringToken.value.trim();
+  if (!state.monitoringToken) {
+    toast("Enter the monitoring operator token.", "warning");
+    return;
+  }
+  elements.monitoringLoad.disabled = true;
+  try {
+    state.monitoringDevices = await monitoringRequest("/api/monitoring/devices");
+    renderMonitoringDevices();
+  } catch (error) {
+    monitoringMessage(error.safeMessage || "Monitoring devices are unavailable.");
+    toast(error.safeMessage || "Monitoring authorization failed.", "error");
+  } finally {
+    elements.monitoringLoad.disabled = false;
+  }
+}
+
+async function inspectMonitoringDevice(device) {
+  try {
+    const result = await monitoringRequest(`/api/monitoring/devices/${device.id}/inspect`, {
+      method: "POST",
+      body: { mode: elements.monitoringMode.value },
+    });
+    showMonitoringPlan(result);
+  } catch (error) {
+    toast(error.safeMessage || "Inspection failed.", "error");
+  }
+}
+
+async function planMonitoringDevice(device) {
+  try {
+    const mode = elements.monitoringMode.value;
+    const plan = await monitoringRequest(`/api/monitoring/devices/${device.id}/plan`, {
+      method: "POST", body: { mode },
+    });
+    showMonitoringPlan(plan);
+    const changes = plan.planned_changes?.length ? plan.planned_changes.join("\n• ") : "No changes required";
+    if (!window.confirm(`Apply this current plan for ${device.name}?\n\n• ${changes}`)) return;
+    const result = await monitoringRequest(`/api/monitoring/devices/${device.id}/reconcile`, {
+      method: "POST", body: { mode, plan_id: plan.plan_id, confirmed: true },
+    });
+    state.monitoringJobs.set(device.id, result);
+    renderMonitoringDevices();
+    pollMonitoringJob(device, result.job_id);
+  } catch (error) {
+    toast(error.safeMessage || "Monitoring plan failed.", "error");
+  }
+}
+
+async function pollMonitoringJob(device, jobId) {
+  try {
+    const job = await monitoringRequest(`/api/monitoring/jobs/${jobId}`);
+    state.monitoringJobs.set(device.id, job);
+    renderMonitoringDevices();
+    showMonitoringPlan(job);
+    if (!["COMPLETED", "FAILED", "PARTIAL"].includes(job.status)) {
+      window.setTimeout(() => pollMonitoringJob(device, jobId), 1500);
+    } else {
+      toast(`${device.name}: ${titleCase(job.status)} (${titleCase(job.verification)}).`, job.status === "COMPLETED" ? "success" : "error");
+    }
+  } catch (error) {
+    toast(error.safeMessage || "Could not read monitoring job.", "error");
+  }
+}
+
+async function planAllMonitoringDevices() {
+  const devices = state.monitoringDevices.filter((device) => !device.error_code);
+  if (!devices.length) return;
+  elements.monitoringBulk.disabled = true;
+  try {
+    const mode = elements.monitoringMode.value;
+    const plans = [];
+    for (const device of devices) {
+      const plan = await monitoringRequest(`/api/monitoring/devices/${device.id}/plan`, { method: "POST", body: { mode } });
+      plans.push({ device, plan });
+    }
+    showMonitoringPlan(plans.map(({ device, plan }) => ({ device: device.name, planned_changes: plan.planned_changes })));
+    if (!window.confirm(`Apply ${plans.length} current monitoring plans?`)) return;
+    const result = await monitoringRequest("/api/monitoring/provision/bulk", {
+      method: "POST",
+      body: { plans: plans.map(({ plan }) => ({ mode, plan_id: plan.plan_id, confirmed: true })) },
+    });
+    for (const item of result.jobs) {
+      const device = devices.find((candidate) => candidate.id === item.device_id);
+      state.monitoringJobs.set(item.device_id, item);
+      pollMonitoringJob(device, item.job_id);
+    }
+    renderMonitoringDevices();
+  } catch (error) {
+    toast(error.safeMessage || "Bulk monitoring plan failed.", "error");
+  } finally {
+    elements.monitoringBulk.disabled = false;
+  }
 }
 
 function titleCase(value) {
@@ -115,20 +289,32 @@ function setPill(element, status, text = titleCase(status)) {
 }
 
 function renderPlatformStatus(payload) {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const card = document.querySelector(`[data-component="${name}"]`);
     const target = card.querySelector(".component-status");
     const componentStatus = payload.components?.[name]?.status || "unknown";
+    const componentUrl = payload.components?.[name]?.url;
     const dot = document.createElement("span");
     dot.className = `status-dot status-${statusClass(componentStatus)}`;
     dot.setAttribute("aria-hidden", "true");
     target.replaceChildren(dot, document.createTextNode(titleCase(componentStatus)));
+    const link = card.querySelector(".component-link");
+    if (link) {
+      if (componentUrl) {
+        link.href = componentUrl;
+        link.hidden = false;
+        link.setAttribute("aria-label", `Open ${card.querySelector("h3").textContent} in a new tab`);
+      } else {
+        link.removeAttribute("href");
+        link.hidden = true;
+      }
+    }
   }
   setConnection(payload.status, titleCase(payload.status));
 }
 
 function renderPlatformUnavailable() {
-  for (const name of ["atlas", "openbao", "netbox", "oxidized"]) {
+  for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const target = document.querySelector(
       `[data-component="${name}"] .component-status`,
     );
@@ -511,5 +697,7 @@ elements.refreshButton.addEventListener("click", loadDashboard);
 elements.syncButton.addEventListener("click", synchronizeInventory);
 elements.deviceFilter.addEventListener("input", renderDevices);
 elements.deviceSort.addEventListener("change", renderDevices);
+elements.monitoringLoad.addEventListener("click", loadMonitoringDevices);
+elements.monitoringBulk.addEventListener("click", planAllMonitoringDevices);
 
 loadDashboard();

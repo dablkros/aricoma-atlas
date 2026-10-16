@@ -1,0 +1,413 @@
+zabbix_export:
+  version: '7.0'
+  template_groups:
+    - uuid: 36bff6c29af64692839d077febfc7079
+      name: 'Templates/Network devices'
+  templates:
+    - uuid: 2bb7759fa19d41cdb31468c55590615c
+      template: 'Aricoma Atlas Sophos SFOS by SNMP'
+      name: 'Aricoma Atlas Sophos SFOS by SNMP'
+      description: |
+        Sophos Firewall OS monitoring maintained by Aricoma Atlas for Zabbix 7.0.
+
+        The official Network Generic Device by SNMP template supplies ICMP,
+        standard system data and interface discovery. Vendor items use numeric
+        OIDs from the official SFOS-FIREWALL-MIB tree 1.3.6.1.4.1.2604.5.
+
+        The current Sophos private MIB has no CPU-utilization object. The CPU
+        item therefore accepts the historical Sophos/Cyberoam scalar when it is
+        exposed, otherwise it averages HOST-RESOURCES-MIB hrProcessorLoad.
+        No value is fabricated when neither source is available.
+
+        CPU and NPU temperature were added in the SFOS 22.0 MIB and are disabled
+        by default for compatibility with older appliances.
+      vendor:
+        name: Aricoma
+        version: 7.0-1
+      groups:
+        - name: 'Templates/Network devices'
+      templates:
+        - name: 'Network Generic Device by SNMP'
+      items:
+        - uuid: e83047320a2c4682812981b5aab73101
+          name: 'Sophos SFOS: Device name'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.1.1.0]'
+          key: sophos.sfos.device.name
+          delay: 15m
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosDeviceName.'
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [12h]
+          tags:
+            - tag: component
+              value: system
+        - uuid: 9f998eddae904594ba899e4ea1d9090c
+          name: 'Sophos SFOS: Device type'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.1.2.0]'
+          key: sophos.sfos.device.type
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosDeviceType.'
+          inventory_link: MODEL
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: system
+        - uuid: 9a56ff04ed234ecc8cea60538edeb1c5
+          name: 'Sophos SFOS: Firmware version'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.1.3.0]'
+          key: system.hw.firmware[sfosDeviceFWVersion.0]
+          delay: 1h
+          value_type: CHAR
+          trends: '0'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosDeviceFWVersion.'
+          inventory_link: SOFTWARE
+          preprocessing:
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: system
+          triggers:
+            - uuid: 30f0d59226a5494781d8fe4c729b332f
+              expression: 'last(/Aricoma Atlas Sophos SFOS by SNMP/system.hw.firmware[sfosDeviceFWVersion.0],#1)<>last(/Aricoma Atlas Sophos SFOS by SNMP/system.hw.firmware[sfosDeviceFWVersion.0],#2) and length(last(/Aricoma Atlas Sophos SFOS by SNMP/system.hw.firmware[sfosDeviceFWVersion.0]))>0'
+              name: 'Sophos SFOS: Firmware has changed'
+              event_name: 'Sophos SFOS: Firmware has changed (new version: {ITEM.VALUE})'
+              priority: INFO
+              manual_close: 'YES'
+              tags:
+                - tag: scope
+                  value: notice
+        - uuid: 3fe8eda5573a452287320e162317c324
+          name: 'Sophos SFOS: Uptime'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.2.0]'
+          key: system.sfos.uptime[sfosUpTime.0]
+          delay: 1m
+          trends: '0'
+          units: uptime
+          description: 'MIB: SFOS-FIREWALL-MIB; hundredths of a second.'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters: ['0.01']
+          tags:
+            - tag: component
+              value: system
+        - uuid: ce5edd6bf8594453a04ed7e7176fa345
+          name: 'Sophos SFOS: Disk capacity'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.4.1.0]'
+          key: vfs.fs.total[sfosDiskCapacity.0]
+          delay: 1h
+          units: B
+          description: 'MIB: SFOS-FIREWALL-MIB; reported in MB.'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters: ['1048576']
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: storage
+        - uuid: fa457ac9f857429aba4c8cfa5aed8903
+          name: 'Sophos SFOS: Disk utilization'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.4.2.0]'
+          key: vfs.fs.pused[sfosDiskPercentUsage.0]
+          value_type: FLOAT
+          units: '%'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosDiskPercentUsage.'
+          tags:
+            - tag: component
+              value: storage
+          triggers:
+            - uuid: 73d1e52eb84a44b8b0c481d962c5da39
+              expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vfs.fs.pused[sfosDiskPercentUsage.0],5m)>{$DISK.UTIL.WARN}'
+              name: 'Sophos SFOS: Disk utilization is high'
+              event_name: 'Sophos SFOS: Disk utilization is high (over {$DISK.UTIL.WARN}% for 5m)'
+              priority: WARNING
+              dependencies:
+                - name: 'Sophos SFOS: Disk utilization is too high'
+                  expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vfs.fs.pused[sfosDiskPercentUsage.0],5m)>{$DISK.UTIL.CRIT}'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: 7a8ed939d1b14fc8bf04f54149be6686
+              expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vfs.fs.pused[sfosDiskPercentUsage.0],5m)>{$DISK.UTIL.CRIT}'
+              name: 'Sophos SFOS: Disk utilization is too high'
+              event_name: 'Sophos SFOS: Disk utilization is too high (over {$DISK.UTIL.CRIT}% for 5m)'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: fdc00ae77d5a426ebd87421d79b02294
+          name: 'Sophos SFOS: Memory capacity'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.5.1.0]'
+          key: vm.memory.total[sfosMemoryCapacity.0]
+          delay: 1h
+          units: B
+          description: 'MIB: SFOS-FIREWALL-MIB; reported in MB.'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters: ['1048576']
+            - type: DISCARD_UNCHANGED_HEARTBEAT
+              parameters: [1d]
+          tags:
+            - tag: component
+              value: memory
+        - uuid: 6451a73fda7a4bd79bb0b1980dc03e3f
+          name: 'Sophos SFOS: Memory utilization'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.5.2.0]'
+          key: vm.memory.util[sfosMemoryPercentUsage.0]
+          value_type: FLOAT
+          units: '%'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosMemoryPercentUsage.'
+          tags:
+            - tag: component
+              value: memory
+          triggers:
+            - uuid: e211ac7b78664aee9d86921ff746f3f9
+              expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vm.memory.util[sfosMemoryPercentUsage.0],5m)>{$MEMORY.UTIL.WARN}'
+              name: 'Sophos SFOS: Memory utilization is high'
+              event_name: 'Sophos SFOS: Memory utilization is high (over {$MEMORY.UTIL.WARN}% for 5m)'
+              priority: WARNING
+              dependencies:
+                - name: 'Sophos SFOS: Memory utilization is too high'
+                  expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vm.memory.util[sfosMemoryPercentUsage.0],5m)>{$MEMORY.UTIL.CRIT}'
+              tags:
+                - tag: scope
+                  value: capacity
+            - uuid: cc0ca034e52640fc8cd3002dc23d4b9d
+              expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/vm.memory.util[sfosMemoryPercentUsage.0],5m)>{$MEMORY.UTIL.CRIT}'
+              name: 'Sophos SFOS: Memory utilization is too high'
+              event_name: 'Sophos SFOS: Memory utilization is too high (over {$MEMORY.UTIL.CRIT}% for 5m)'
+              priority: HIGH
+              tags:
+                - tag: scope
+                  value: capacity
+        - uuid: 8ed626fe60194b81b766a851cc2ef16f
+          name: 'Sophos SFOS: Swap utilization'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.5.4.0]'
+          key: system.swap.pused[sfosSwapPercentUsage.0]
+          value_type: FLOAT
+          units: '%'
+          description: 'MIB: SFOS-FIREWALL-MIB; sfosSwapPercentUsage.'
+          tags:
+            - tag: component
+              value: memory
+        - uuid: 713a2761b60045e4a810173d7bdf7e6f
+          name: 'Sophos SFOS: Live users'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.2.6.0]'
+          key: sophos.sfos.live_users
+          description: 'MIB: SFOS-FIREWALL-MIB; live captive-portal users.'
+          tags:
+            - tag: component
+              value: users
+        - uuid: bbb539b55cae4efc91f05032c6fe7917
+          name: 'Sophos SFOS: CPU utilization source walk'
+          type: SNMP_AGENT
+          snmp_oid: 'walk[1.3.6.1.4.1.21067.2.1.2.2.1,1.3.6.1.2.1.25.3.3.1.2]'
+          key: sophos.sfos.cpu.walk
+          history: '0'
+          value_type: TEXT
+          trends: '0'
+          description: 'Compatibility source for legacy Sophos CPU and HOST-RESOURCES-MIB hrProcessorLoad.'
+          tags:
+            - tag: component
+              value: raw
+        - uuid: fa462d982b0b49fda0204ed1fe2ec797
+          name: 'Sophos SFOS: CPU utilization'
+          type: DEPENDENT
+          key: system.cpu.util[sophos]
+          value_type: FLOAT
+          units: '%'
+          description: 'Returns the legacy Sophos CPU scalar or the average of valid hrProcessorLoad values.'
+          preprocessing:
+            - type: JAVASCRIPT
+              parameters:
+                - |
+                  var legacy = value.match(/(?:^|\n)\.?1\.3\.6\.1\.4\.1\.21067\.2\.1\.2\.2\.1\.0\s+=\s+[^:]+:\s*([0-9]+(?:\.[0-9]+)?)/);
+                  if (legacy !== null) {
+                      return Number(legacy[1]);
+                  }
+                  var expression = /(?:^|\n)\.?1\.3\.6\.1\.2\.1\.25\.3\.3\.1\.2\.\d+\s+=\s+[^:]+:\s*([0-9]+)/g;
+                  var match;
+                  var sum = 0;
+                  var count = 0;
+                  while ((match = expression.exec(value)) !== null) {
+                      var current = Number(match[1]);
+                      if (current >= 0 && current <= 100) {
+                          sum += current;
+                          count += 1;
+                      }
+                  }
+                  if (count === 0) {
+                      throw 'No supported CPU utilization OID was returned';
+                  }
+                  return sum / count;
+          master_item:
+            key: sophos.sfos.cpu.walk
+          tags:
+            - tag: component
+              value: cpu
+          triggers:
+            - uuid: 3b0ec76932ff494db5f03de33c4189c8
+              expression: 'min(/Aricoma Atlas Sophos SFOS by SNMP/system.cpu.util[sophos],5m)>{$CPU.UTIL.CRIT}'
+              name: 'Sophos SFOS: CPU utilization is high'
+              event_name: 'Sophos SFOS: CPU utilization is high (over {$CPU.UTIL.CRIT}% for 5m)'
+              priority: WARNING
+              tags:
+                - tag: scope
+                  value: performance
+        - uuid: 947344f22d1d4660a5a7fd1b871dc4bc
+          name: 'Sophos SFOS: DNS service status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.3.8.0]'
+          key: sophos.sfos.service.status[dns]
+          valuemap:
+            name: 'Sophos SFOS service status'
+          tags:
+            - tag: component
+              value: service
+        - uuid: 930e959fcca64b85a24226c9c2a8011f
+          name: 'Sophos SFOS: IPS service status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.3.10.0]'
+          key: sophos.sfos.service.status[ips]
+          valuemap:
+            name: 'Sophos SFOS service status'
+          tags:
+            - tag: component
+              value: service
+        - uuid: 5a90bf8f2ada4ff79512774cabf51db7
+          name: 'Sophos SFOS: IPsec VPN service status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.3.15.0]'
+          key: sophos.sfos.service.status[ipsec]
+          valuemap:
+            name: 'Sophos SFOS service status'
+          tags:
+            - tag: component
+              value: service
+        - uuid: 8ab11c8ff88945b3a5d015e9f5654cf9
+          name: 'Sophos SFOS: HA status'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.4.1.0]'
+          key: sophos.sfos.ha.status
+          valuemap:
+            name: 'Sophos SFOS HA status'
+          tags:
+            - tag: component
+              value: ha
+        - uuid: b15dd7619db84c09bcc214dd6726189e
+          name: 'Sophos SFOS: Current HA state'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.4.4.0]'
+          key: sophos.sfos.ha.state[current]
+          valuemap:
+            name: 'Sophos SFOS HA state'
+          tags:
+            - tag: component
+              value: ha
+        - uuid: c8ba16d9944041079037f42ecdbf5d4e
+          name: 'Sophos SFOS: NPU temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.9.1.0]'
+          key: sensor.temp.value[sfosNPUTemperature.0]
+          status: DISABLED
+          value_type: FLOAT
+          units: °C
+          description: 'SFOS 22.0 or newer; raw value is tenths of a degree Celsius.'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters: ['0.1']
+          tags:
+            - tag: component
+              value: temperature
+        - uuid: 32306763f52d4762b9b31a406b11f2ad
+          name: 'Sophos SFOS: CPU temperature'
+          type: SNMP_AGENT
+          snmp_oid: 'get[1.3.6.1.4.1.2604.5.1.9.2.0]'
+          key: sensor.temp.value[sfosCPUTemperature.0]
+          status: DISABLED
+          value_type: FLOAT
+          units: °C
+          description: 'SFOS 22.0 or newer; raw value is tenths of a degree Celsius.'
+          preprocessing:
+            - type: MULTIPLIER
+              parameters: ['0.1']
+          tags:
+            - tag: component
+              value: temperature
+      tags:
+        - tag: class
+          value: network
+        - tag: target
+          value: firewall
+        - tag: target
+          value: sophos
+      macros:
+        - macro: '{$CPU.UTIL.CRIT}'
+          value: '90'
+        - macro: '{$DISK.UTIL.CRIT}'
+          value: '95'
+        - macro: '{$DISK.UTIL.WARN}'
+          value: '85'
+        - macro: '{$MEMORY.UTIL.CRIT}'
+          value: '95'
+        - macro: '{$MEMORY.UTIL.WARN}'
+          value: '85'
+      valuemaps:
+        - uuid: fee264da5f3246f5a6f6d09fef997be6
+          name: 'Sophos SFOS service status'
+          mappings:
+            - value: '0'
+              newvalue: untouched
+            - value: '1'
+              newvalue: stopped
+            - value: '2'
+              newvalue: initializing
+            - value: '3'
+              newvalue: running
+            - value: '4'
+              newvalue: exiting
+            - value: '5'
+              newvalue: dead
+            - value: '6'
+              newvalue: frozen
+            - value: '7'
+              newvalue: unregistered
+        - uuid: c7a781c4dbd24806880e3b54bde54a71
+          name: 'Sophos SFOS HA status'
+          mappings:
+            - value: '0'
+              newvalue: disabled
+            - value: '1'
+              newvalue: enabled
+        - uuid: 49e838adb10844d2b8b6c808cd705e8b
+          name: 'Sophos SFOS HA state'
+          mappings:
+            - value: '0'
+              newvalue: notApplicable
+            - value: '1'
+              newvalue: auxiliary
+            - value: '2'
+              newvalue: standAlone
+            - value: '3'
+              newvalue: primary
+            - value: '4'
+              newvalue: faulty
+            - value: '5'
+              newvalue: ready

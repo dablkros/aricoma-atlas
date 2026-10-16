@@ -78,6 +78,7 @@ CPU_PARSERS = {
     "cisco-ios": parse_cisco_ios_cpu,
     "cisco-ios-xe": parse_cisco_ios_cpu,
     "cisco-cbs": parse_cisco_cbs_cpu,
+    "cisco-cbs250-350": parse_cisco_cbs_cpu,
     "fortios": parse_fortios_cpu,
 }
 

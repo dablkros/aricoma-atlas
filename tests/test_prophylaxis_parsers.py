@@ -27,9 +27,16 @@ class ProphylaxisParserTests(unittest.TestCase):
             status="ok",
             raw_output=fixture("cisco_cbs_cpu.txt"),
         )
+        cbs250_350 = RawCheckResult(
+            check=CheckId.CPU_UTILIZATION,
+            platform="cisco-cbs250-350",
+            status="ok",
+            raw_output=fixture("cisco_cbs_cpu.txt"),
+        )
 
         self.assertEqual(normalize_cpu(ios).current_percent, 8.0)
         self.assertEqual(normalize_cpu(cbs).five_minute_percent, 3.0)
+        self.assertEqual(normalize_cpu(cbs250_350).five_minute_percent, 3.0)
 
     def test_fortios_structured_result_is_not_converted_to_text(self):
         raw = RawCheckResult(

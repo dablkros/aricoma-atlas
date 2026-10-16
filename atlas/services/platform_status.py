@@ -21,11 +21,12 @@ class PlatformStatus:
 class PlatformStatusService:
     """Check application dependencies without host or Docker privileges."""
 
-    def __init__(self, openbao, netbox, oxidized) -> None:
+    def __init__(self, openbao, netbox, oxidized, zabbix) -> None:
         self.dependencies = {
             "openbao": openbao,
             "netbox": netbox,
             "oxidized": oxidized,
+            "zabbix": zabbix,
         }
 
     def check(self) -> PlatformStatus:

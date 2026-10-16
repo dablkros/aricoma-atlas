@@ -6,10 +6,16 @@ platforms:
   cisco-ios-xe: {name: Cisco IOS XE, manufacturer: Cisco}
   cisco-nxos: {name: Cisco NX-OS, manufacturer: Cisco}
   cisco-cbs: {name: Cisco CBS, manufacturer: Cisco}
+  cisco-cbs250-350: {name: Cisco CBS250/350, manufacturer: Cisco}
   fortios: {name: FortiOS, manufacturer: Fortinet}
   fortiap: {name: FortiAP, manufacturer: Fortinet}
   fortianalyzer: {name: FortiAnalyzer, manufacturer: Fortinet}
   junos: {name: Juniper Junos, manufacturer: Juniper}
+  sophos-sfos: {name: Sophos Firewall OS, manufacturer: Sophos}
+  sophos-ap: {name: Sophos Access Point, manufacturer: Sophos}
+  sophos-red: {name: Sophos SD-RED, manufacturer: Sophos}
+  aruba-aos-cx: {name: Aruba AOS-CX, manufacturer: HPE}
+  aruba-aos-switch: {name: Aruba AOS-Switch, manufacturer: HPE}
 
 # Explicit fields avoid confusing filenames, display models and slugs.
 # Multiple matches to different platforms are an error, not first-match-wins.
@@ -40,8 +46,10 @@ platform_mappings:
         - 'cisco-isr4451-x'
         - 'cisco-isr4461-x'
       platform: cisco-ios-xe
-    - slugs: ['cisco-cbs220-*', 'cisco-cbs250-*', 'cisco-cbs350-*']
+    - slugs: ['cisco-cbs220-*']
       platform: cisco-cbs
+    - slugs: ['cisco-cbs250-*', 'cisco-cbs350-*']
+      platform: cisco-cbs250-350
     # No Nexus selected by the current manifest; do not assume N9K implies NX-OS (ACI).
   Fortinet:
     - slugs: ['fortinet-fg-*', 'fortinet-fgr-*', 'fortinet-fortigate-7081f', 'fortinet-fortigate-7121f']
@@ -78,6 +86,44 @@ platform_mappings:
       platform: junos
     # ACX/PTX, newer QFX (Junos OS Evolved), AP, NFX, NetScreen and SRX
     # intentionally await a separate reviewed rule. No vendor-wide fallback.
+  Sophos:
+    - slugs: ['sophos-xg-*', 'sophos-xgs-*']
+      platform: sophos-sfos
+    - slugs: ['sophos-ap6-*', 'sophos-apx*']
+      platform: sophos-ap
+    - slugs: ['sophos-sd-red-*']
+      platform: sophos-red
+  HPE:
+    - slugs:
+        - 'hpe-aruba-5420'
+        - 'hpe-aruba-6000-*'
+        - 'hpe-aruba-6100-*'
+        - 'hpe-aruba-6200f-*'
+        - 'hpe-aruba-6200m-*'
+        - 'hpe-aruba-6300f-*'
+        - 'hpe-aruba-6300m-*'
+        - 'hpe-aruba-6405*'
+        - 'hpe-aruba-6410*'
+        - 'hpe-aruba-8100-*'
+        - 'hpe-aruba-8320-*'
+        - 'hpe-aruba-8325-*'
+        - 'hpe-aruba-8360-*'
+        - 'hpe-aruba-8400'
+        - 'hpe-aruba-10000-*'
+      platform: aruba-aos-cx
+    - slugs:
+        - 'hpe-aruba-2530-*'
+        - 'hpe-aruba-2540-*'
+        - 'hpe-aruba-2620-*'
+        - 'hpe-aruba-2920-*'
+        - 'hpe-aruba-2930f-*'
+        - 'hpe-aruba-2930m-*'
+        - 'hpe-aruba-3810m-*'
+        - 'hpe-aruba-5406r-*'
+        - 'hpe-aruba-5412r-*'
+      platform: aruba-aos-switch
+    # Instant On, AP/IAP, mobility controllers, EdgeConnect and Comware are
+    # deliberately excluded until each OS family has its own reviewed contract.
 
 oxidized:
   image: docker.io/oxidized/oxidized:0.37.0
@@ -86,7 +132,14 @@ oxidized_platform_mapping:
   cisco-ios: {model: ios}
   cisco-ios-xe: {model: ios}
   cisco-nxos: {model: nxos}
+  cisco-cbs: {model: ciscosmb}
+  cisco-cbs250-350: {model: ciscosmb}
   fortios: {model: fortigate}
   junos: {model: junos}
-# CBS, FortiAP and hardware FortiAnalyzer are deliberately unmapped pending
-# driver/hardware validation. Presence of ciscosmb/fortios.rb is not that proof.
+  aruba-aos-cx: {model: aoscx}
+  aruba-aos-switch: {model: procurve}
+# CBS uses the pinned ciscosmb model, but remains experimental until each target
+# family is validated against physical hardware. FortiAP and hardware
+# FortiAnalyzer remain unmapped pending driver/hardware validation.
+# Sophos platforms are inventory/monitoring identities only; no unverified
+# Oxidized model is assigned.

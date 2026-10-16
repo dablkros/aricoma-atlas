@@ -6,6 +6,7 @@ import copy
 import ipaddress
 import os
 import re
+import secrets
 import sys
 from pathlib import Path
 
@@ -20,13 +21,19 @@ from atlas.deployment import (  # noqa: E402
     NETBOX_NETWORK,
     OPENBAO_NETWORK,
     OXIDIZED_NETWORK,
+    ZABBIX_NETWORK,
     compose,
     wait_healthy,
     write_yaml,
 )
+from atlas.proxy import (  # noqa: E402
+    load_config as load_proxy_config,
+    public_service_urls,
+)
 
 
 CONFIG_FILE = ROOT / "deployment/backend.yaml"
+MONITORING_DEFAULT_FILE = ROOT / "deployment/monitoring.default.yaml"
 IMAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
@@ -144,9 +151,19 @@ def runtime_path(config, root=ROOT):
     return Path(root) / config["runtime"]["directory"]
 
 
-def prepare_runtime(config, root=ROOT):
+def prepare_runtime(config, root=ROOT, ui_urls=None):
     root = Path(root).resolve()
     backend = config["backend"]
+    required_ui_urls = {"netbox", "oxidized", "zabbix"}
+    if not isinstance(ui_urls, dict) or set(ui_urls) != required_ui_urls:
+        raise RuntimeError(
+            "Atlas backend requires NetBox, Oxidized and Zabbix HTTPS UI URLs"
+        )
+    if any(
+        not isinstance(value, str) or not value.startswith("https://")
+        for value in ui_urls.values()
+    ):
+        raise RuntimeError("Atlas backend UI URLs must use HTTPS")
     runtime_base = root / ".runtime"
     if runtime_base.is_symlink():
         raise RuntimeError(f"Atlas runtime cannot be a symlink: {runtime_base}")
@@ -167,6 +184,52 @@ def prepare_runtime(config, root=ROOT):
         raise RuntimeError(
             "Atlas backend AppRole identity is missing or is not a regular file"
         )
+
+    monitoring_identity_file = root / ".runtime/openbao-monitoring.json"
+    if monitoring_identity_file.is_symlink() or not monitoring_identity_file.is_file():
+        raise RuntimeError(
+            "Atlas monitoring provisioner AppRole identity is missing or is not a regular file"
+        )
+
+    monitoring_directory = root / ".runtime/monitoring"
+    if monitoring_directory.is_symlink():
+        raise RuntimeError("Monitoring runtime cannot be a symlink")
+    if runtime_base.resolve() not in monitoring_directory.resolve().parents:
+        raise RuntimeError("Monitoring runtime escaped the protected runtime directory")
+    monitoring_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_directory, 0o700)
+    monitoring_jobs = monitoring_directory / "jobs"
+    if monitoring_jobs.is_symlink():
+        raise RuntimeError("Monitoring jobs directory cannot be a symlink")
+    monitoring_jobs.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_jobs, 0o700)
+    monitoring_trust = monitoring_directory / "trust"
+    if monitoring_trust.is_symlink():
+        raise RuntimeError("Monitoring trust directory cannot be a symlink")
+    monitoring_trust.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_trust, 0o700)
+
+    monitoring_config = monitoring_directory / "config.yaml"
+    if not monitoring_config.exists():
+        if not MONITORING_DEFAULT_FILE.is_file():
+            raise RuntimeError("Safe monitoring default configuration is missing")
+        monitoring_config.write_text(
+            MONITORING_DEFAULT_FILE.read_text(encoding="utf-8"),
+            encoding="utf-8",
+        )
+    if monitoring_config.is_symlink() or not monitoring_config.is_file():
+        raise RuntimeError("Monitoring configuration is not a regular file")
+    os.chmod(monitoring_config, 0o600)
+
+    monitoring_operator_token = monitoring_directory / "operator-token"
+    if not monitoring_operator_token.exists():
+        monitoring_operator_token.write_text(
+            secrets.token_urlsafe(32) + "\n",
+            encoding="utf-8",
+        )
+    if monitoring_operator_token.is_symlink() or not monitoring_operator_token.is_file():
+        raise RuntimeError("Monitoring operator token is not a regular file")
+    os.chmod(monitoring_operator_token, 0o600)
 
     known_hosts_file = root / ".runtime/oxidized/ssh/known_hosts"
     if (
@@ -208,6 +271,11 @@ def prepare_runtime(config, root=ROOT):
     )
     volumes = [
         f"{identity_file}:/run/secrets/atlas-backend.json:ro",
+        f"{monitoring_identity_file}:/run/secrets/atlas-monitoring.json:ro",
+        f"{monitoring_config}:/run/secrets/atlas-monitoring-config.yaml:ro",
+        f"{monitoring_operator_token}:/run/secrets/atlas-monitoring-operator-token:ro",
+        f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
+        f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{inventory_directory}:/run/atlas/oxidized:rw",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
     ]
@@ -239,8 +307,16 @@ def prepare_runtime(config, root=ROOT):
                         "ATLAS_LOG_LEVEL": backend["log_level"],
                         "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
                         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
+                        "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
+                        "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
+                        "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
+                        "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",
                         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
                         "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+                        "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+                        "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
+                        "ATLAS_OXIDIZED_UI_URL": ui_urls["oxidized"],
+                        "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
                         "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
@@ -264,6 +340,7 @@ def prepare_runtime(config, root=ROOT):
                         "openbao": {},
                         "netbox": {},
                         "oxidized": {},
+                        "zabbix": {},
                     },
                     "ports": [
                         f"{network['listen_address']}:{network['host_port']}:{network['container_port']}"
@@ -286,6 +363,7 @@ def prepare_runtime(config, root=ROOT):
                 "openbao": {"external": True, "name": OPENBAO_NETWORK},
                 "netbox": {"external": True, "name": NETBOX_NETWORK},
                 "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
+                "zabbix": {"external": True, "name": ZABBIX_NETWORK},
             },
         },
     )
@@ -319,7 +397,11 @@ def parse_args():
 def main():
     args = parse_args()
     config = load_config()
-    compose_file = prepare_runtime(config)
+    proxy_config = load_proxy_config()
+    compose_file = prepare_runtime(
+        config,
+        ui_urls=public_service_urls(proxy_config),
+    )
 
     if args.prepare_only:
         print("[OK] Atlas backend runtime prepared; image not built and container not started")

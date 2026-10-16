@@ -1,5 +1,6 @@
 """FastAPI application factory and ASGI entry point."""
 
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Optional
 
@@ -9,7 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
-from atlas.api.routes import health, oxidized, prophylaxis, readiness, status
+from atlas.api.routes import monitoring, health, oxidized, prophylaxis, readiness, status, zabbix
 from atlas.config import Settings, get_settings
 from atlas.logging import configure_logging
 from atlas.services.factory import DependencyServices, build_dependency_services
@@ -34,7 +35,17 @@ def create_app(
     settings = settings or get_settings()
     configure_logging(settings.log_level)
 
+    @asynccontextmanager
+    async def lifespan(app):
+        service = getattr(app.state.dependencies, "monitoring", None)
+        # Image smoke tests intentionally run read-only without runtime mounts.
+        # Production deployment pre-creates and mounts this persistent directory.
+        if service is not None and service.store.directory.is_dir():
+            service.store.recover()
+        yield
+
     application = FastAPI(
+        lifespan=lifespan,
         title=settings.app_name,
         version=settings.app_version,
         description="Aricoma Atlas network-management API",
@@ -44,11 +55,13 @@ def create_app(
 
     install_request_middleware(application)
     register_error_handlers(application)
+    application.include_router(monitoring.router, prefix=settings.api_prefix)
     application.include_router(health.router, prefix=settings.api_prefix)
     application.include_router(readiness.router, prefix=settings.api_prefix)
     application.include_router(status.router, prefix=settings.api_prefix)
     application.include_router(oxidized.router, prefix=settings.api_prefix)
     application.include_router(prophylaxis.router, prefix=settings.api_prefix)
+    application.include_router(zabbix.router, prefix=settings.api_prefix)
     application.mount(
         "/static",
         NoCacheStaticFiles(directory=STATIC_DIRECTORY),

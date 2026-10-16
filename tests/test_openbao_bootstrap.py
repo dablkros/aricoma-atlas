@@ -35,6 +35,9 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 '}\n\n'
                 'path "atlas/data/devices/credentials/*" {\n'
                 '  capabilities = ["read"]\n'
+                '}\n\n'
+                'path "atlas/data/zabbix/api" {\n'
+                '  capabilities = ["read"]\n'
                 '}'
             ),
         )
@@ -82,6 +85,15 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             ".runtime/",
             (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
         )
+
+    def test_monitoring_provisioner_policy_has_narrow_secret_permissions(self):
+        spec = deploy_openbao.RUNTIME_ROLES["atlas-monitoring-provisioner"]
+        policy = spec["policy_file"].read_text(encoding="utf-8")
+        self.assertNotIn('path "atlas/data/devices/credentials/*"', policy)
+        self.assertIn('path "atlas/data/devices/snmp/*"', policy)
+        self.assertIn('capabilities = ["create", "read", "update"]', policy)
+        for forbidden in ("delete", "sudo", "root"):
+            self.assertNotIn(forbidden, policy.lower())
 
     def test_backend_approle_has_only_its_policy_and_short_lived_tokens(self):
         with patch.object(deploy_openbao, "api_request") as api_request:
@@ -140,9 +152,9 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         self.assertEqual(
             set(deploy_openbao.RUNTIME_ROLES),
             {
+                "atlas-monitoring-provisioner",
                 "atlas-backend",
                 "netbox-runtime",
-                "checkmk-runtime",
                 "oxidized-runtime",
             },
         )
@@ -196,7 +208,13 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         ) as reconcile:
             generate.call_args.kwargs["action"]("temporary-root")
 
-        reconcile.assert_called_once_with("temporary-root", "atlas-backend")
+        self.assertEqual(
+            reconcile.call_args_list,
+            [
+                call("temporary-root", "atlas-backend"),
+                call("temporary-root", "atlas-monitoring-provisioner"),
+            ],
+        )
 
         with patch.object(
             openbao_access,
@@ -261,9 +279,9 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
     def test_existing_install_may_lack_only_the_new_backend_identity(self):
         identities = {
+            "atlas-monitoring-provisioner": None,
             "atlas-backend": None,
             "netbox-runtime": {"role_id": "netbox", "secret_id": "secret"},
-            "checkmk-runtime": {"role_id": "checkmk", "secret_id": "secret"},
             "oxidized-runtime": {"role_id": "oxidized", "secret_id": "secret"},
         }
 
@@ -273,10 +291,10 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             side_effect=[identities[name] for name in deploy_openbao.RUNTIME_ROLES],
         ), patch.object(deploy_openbao, "login_approle") as login_approle:
             deploy_openbao.validate_runtime_identities(
-                optional_roles={"atlas-backend"},
+                optional_roles={"atlas-backend", "atlas-monitoring-provisioner"},
             )
 
-        self.assertEqual(login_approle.call_count, 3)
+        self.assertEqual(login_approle.call_count, 2)
 
 
 if __name__ == "__main__":

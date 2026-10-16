@@ -1,0 +1,22 @@
+version: 1
+zabbix_version: "7.0.31"
+managed_host_group: "Aricoma Atlas"
+platform_templates:
+  cisco-ios: "Cisco IOS by SNMP"
+  cisco-ios-xe: "Cisco IOS by SNMP"
+  cisco-cbs: "Network Generic Device by SNMP"
+  cisco-cbs250-350: "Aricoma Atlas Cisco CBS250-350 by SNMP"
+  fortios: "FortiGate by SNMP"
+  junos: "Juniper by SNMP"
+  sophos-sfos: "Aricoma Atlas Sophos SFOS by SNMP"
+  sophos-ap: "Network Generic Device by SNMP"
+  aruba-aos-cx: "Network Generic Device by SNMP"
+  aruba-aos-switch: "Network Generic Device by SNMP"
+metric_keys:
+  cpu:
+    - "system.cpu.util"
+  memory:
+    - "vm.memory.util"
+  uptime:
+    - "system.hw.uptime"
+    - "system.net.uptime"

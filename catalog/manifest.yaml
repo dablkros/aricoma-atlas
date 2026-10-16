@@ -60,3 +60,42 @@ vendors:
     mode: all
     include:
       - "*.yaml"
+
+  Sophos:
+    mode: all
+    include:
+      - "*.yaml"
+
+  HPE:
+
+    aruba_aos_cx:
+      mode: patterns
+      include:
+        - "Aruba-5420.yaml"
+        - "Aruba-6000-*.yaml"
+        - "Aruba-6100-*.yaml"
+        - "Aruba-6200F-*.yaml"
+        - "Aruba-6200M-*.yaml"
+        - "Aruba-6300F-*.yaml"
+        - "Aruba-6300M-*.yaml"
+        - "Aruba-6405*.yaml"
+        - "Aruba-6410*.yaml"
+        - "Aruba-8100-*.yaml"
+        - "Aruba-8320-*.yaml"
+        - "Aruba-8325-*.yaml"
+        - "Aruba-8360-*.yaml"
+        - "Aruba-8400.yaml"
+        - "Aruba-10000-*.yaml"
+
+    aruba_aos_switch:
+      mode: patterns
+      include:
+        - "Aruba-2530-*.yaml"
+        - "Aruba-2540-*.yaml"
+        - "Aruba-2620-*.yaml"
+        - "Aruba-2920-*.yaml"
+        - "Aruba-2930F-*.yaml"
+        - "Aruba-2930M-*.yaml"
+        - "Aruba-3810M-*.yaml"
+        - "Aruba-5406R-*.yaml"
+        - "Aruba-5412R-*.yaml"
