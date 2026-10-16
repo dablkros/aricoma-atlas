@@ -302,6 +302,7 @@ aricoma-atlas/
 │
 ├── tests/
 ├── install.sh
+├── update.sh
 ├── deploy.sh
 ├── requirements.txt
 ├── .dockerignore
@@ -943,6 +944,30 @@ Po nainštalovaní možno rovnaký deployment opakovať cez:
 
 ```bash
 sudo atlasctl deploy
+```
+
+## Aktualizácia existujúcej inštalácie
+
+V source checkoute na Atlas VM možno aktualizáciu kódu, inštaláciu do
+`/opt/aricoma-atlas` a následný deployment vykonať jedným príkazom:
+
+```bash
+cd ~/aricoma-atlas
+sudo ./update.sh
+```
+
+`update.sh` aktualizuje iba aktuálnu branch voči jej nakonfigurovanému upstreamu
+a povoľuje výhradne fast-forward. Pred zmenou overí čistý source checkout a po
+aktualizácii vyžaduje presnú zhodu lokálneho a upstream commitu. Pri lokálnych
+zmenách, untracked súboroch, detached HEAD, chýbajúcom upstreame alebo
+divergovanej histórii skončí bez spustenia installera. Git operácie vykonáva ako
+vlastník source checkoutu; `install.sh` a `atlasctl deploy` zostávajú spustené
+s oprávneniami správcu.
+
+Parametre odovzdané skriptu sa posunú do deploymentu, napríklad:
+
+```bash
+sudo ./update.sh --verbose
 ```
 
 ## 5. Prevádzkové príkazy `atlasctl`
