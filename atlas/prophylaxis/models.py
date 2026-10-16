@@ -32,6 +32,12 @@ class DeviceFactsValues(BaseModel):
     os_version: str = Field(min_length=1, max_length=255)
 
 
+class OSVersionValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    os_version: str = Field(min_length=1, max_length=255)
+
+
 class CPUUtilizationValues(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -136,6 +142,7 @@ __all__ = [
     "CheckResult",
     "CollectorId",
     "DeviceFactsValues",
+    "OSVersionValues",
     "RawCheckResult",
     "RawCollectorResult",
     "SCHEMA_VERSION",

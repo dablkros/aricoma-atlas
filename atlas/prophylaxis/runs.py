@@ -1,4 +1,4 @@
-"""Asynchronous, read-only device facts collection orchestration."""
+"""Asynchronous orchestration for NetBox-selected Profylaxia checks."""
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
@@ -11,10 +11,16 @@ from atlas.prophylaxis.errors import (
     ProphylaxisExecutionError,
     UnsupportedPlatformError,
 )
-from atlas.prophylaxis.models import CheckId, DeviceFactsValues
+from atlas.prophylaxis.models import (
+    CPU_NETBOX_VALUES,
+    CheckId,
+    CPUUtilizationValues,
+    DeviceFactsValues,
+    OSVersionValues,
+)
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
-    DeviceFactsResult,
+    ProphylaxisCheckResult,
     ProphylaxisRun,
     RunSummary,
     utc_now,
@@ -28,9 +34,12 @@ from atlas.services.errors import DependencyError
 
 
 logger = logging.getLogger("atlas.prophylaxis.runs")
+OPERATION = "selected_checks"
 
 
 class DeviceFactsRunService:
+    """Run only the checks selected for each eligible NetBox device."""
+
     def __init__(
         self,
         netbox,
@@ -64,21 +73,15 @@ class DeviceFactsRunService:
         )
         self.store.save(running)
         try:
-            devices = [
-                device
-                for device in self.netbox.get_prophylaxis_devices()
-                if CheckId.DEVICE_FACTS.value
-                in selected_check_values(
-                    (device.get("custom_fields") or {}).get("profylaxia_checks")
-                    if isinstance(device.get("custom_fields"), dict)
-                    else None
-                )
-            ]
+            devices = self.netbox.get_prophylaxis_devices()
             with ThreadPoolExecutor(
                 max_workers=self.concurrency,
-                thread_name_prefix="atlas-device-facts",
+                thread_name_prefix="atlas-prophylaxis",
             ) as executor:
-                results = tuple(executor.map(self._collect_guarded, devices))
+                per_device = tuple(executor.map(self._collect_guarded, devices))
+            results = tuple(
+                result for device_results in per_device for result in device_results
+            )
             summary = self._summary(results)
             if summary.failure and not summary.success:
                 status = "FAILED"
@@ -100,7 +103,7 @@ class DeviceFactsRunService:
                 extra={
                     "event": "prophylaxis_run_completed",
                     "run_id": str(run_id),
-                    "operation": "device_facts",
+                    "operation": OPERATION,
                     "status": status,
                     **summary.model_dump(),
                 },
@@ -113,7 +116,7 @@ class DeviceFactsRunService:
                 extra={
                     "event": "prophylaxis_run_failed",
                     "run_id": str(run_id),
-                    "operation": "device_facts",
+                    "operation": OPERATION,
                     "exception_type": type(exc).__name__,
                 },
             )
@@ -130,30 +133,64 @@ class DeviceFactsRunService:
             )
         )
 
-    def _collect_guarded(self, device: dict) -> DeviceFactsResult:
+    @staticmethod
+    def _selected_checks(
+        device: dict,
+    ) -> tuple[tuple[CheckId, ...], tuple[str, ...]]:
+        fields = device.get("custom_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        raw_values = selected_check_values(fields.get("profylaxia_checks"))
+        known: list[CheckId] = []
+        unknown: list[str] = []
+        for value in sorted(raw_values):
+            normalized = (
+                CheckId.CPU_UTILIZATION.value
+                if value in CPU_NETBOX_VALUES
+                else value
+            )
+            try:
+                check_id = CheckId(normalized)
+            except ValueError:
+                unknown.append(value[:128])
+                continue
+            if check_id not in known:
+                known.append(check_id)
+        return tuple(known), tuple(unknown)
+
+    def _collect_guarded(
+        self,
+        device: dict,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
         with self._slots:
             try:
                 return self._collect(device)
             except Exception as exc:
                 device_id, name, management_ip, platform = self._identity(device)
+                known, unknown = self._selected_checks(device)
+                checks = tuple(check.value for check in known) + unknown
                 logger.warning(
                     "prophylaxis_device_failed",
                     extra={
                         "event": "prophylaxis_device_failed",
                         "device": name,
                         "platform": platform,
-                        "operation": "device_facts",
+                        "operation": OPERATION,
                         "reason_code": "unexpected_execution_error",
                         "exception_type": type(exc).__name__,
                     },
                 )
-                return DeviceFactsResult(
-                    device_id=device_id,
-                    device_name=name,
-                    management_ip=management_ip,
-                    platform=platform,
-                    status="failed",
-                    error="unexpected_execution_error",
+                return tuple(
+                    self._check_error(
+                        device_id,
+                        name,
+                        management_ip,
+                        platform,
+                        check,
+                        "failed",
+                        "unexpected_execution_error",
+                        log_event=False,
+                    )
+                    for check in checks
                 )
 
     @staticmethod
@@ -166,25 +203,59 @@ class DeviceFactsRunService:
             name = str(device_id or "unknown")
         primary = device.get("primary_ip4") or device.get("primary_ip6") or {}
         address = primary.get("address") if isinstance(primary, dict) else None
-        management_ip = address.split("/", 1)[0] if isinstance(address, str) else None
+        management_ip = (
+            address.split("/", 1)[0] if isinstance(address, str) else None
+        )
         platform_data = device.get("platform")
-        platform = platform_data.get("slug") if isinstance(platform_data, dict) else None
+        platform = (
+            platform_data.get("slug")
+            if isinstance(platform_data, dict)
+            else None
+        )
         return device_id, name.strip(), management_ip, platform
 
-    def _collect(self, device: dict) -> DeviceFactsResult:
+    def _collect(self, device: dict) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
+        known_checks, unknown_checks = self._selected_checks(device)
+        results = [
+            self._check_error(
+                device_id, name, management_ip, platform, check,
+                "skipped", "unsupported_check",
+            )
+            for check in unknown_checks
+        ]
+        if not known_checks:
+            return tuple(results)
+
         try:
             target = device_target(device)
             device_id, name, management_ip, platform = (
-                target.id,
-                target.name,
-                target.host,
-                target.platform,
+                target.id, target.name, target.host, target.platform,
             )
             profile = self.registry.resolve(target.platform)
-            collector = self.collector_registry.resolve_check(CheckId.DEVICE_FACTS)
-            if not profile.supports_collector(collector.id):
-                raise UnsupportedPlatformError()
+            plan = self.collector_registry.plan(known_checks, profile)
+        except Exception as exc:
+            status, code = self._classify_exception(exc)
+            results.extend(
+                self._check_error(
+                    device_id, name, management_ip, platform, check.value,
+                    status, code,
+                )
+                for check in known_checks
+            )
+            return tuple(results)
+
+        results.extend(
+            self._check_error(
+                device_id, name, management_ip, platform, check.value,
+                "skipped", "unsupported_check",
+            )
+            for check in plan.unsupported_checks
+        )
+        if not plan.tasks:
+            return tuple(results)
+
+        try:
             services = (
                 self.netbox.get_device_services(
                     target.id,
@@ -199,50 +270,150 @@ class DeviceFactsRunService:
                 target.credential_profile,
                 authentication=profile.authentication,
             )
-            raw = self.backend.execute(
-                host=target.host,
-                port=port,
-                profile=profile,
-                collector_id=collector.id,
-                check_id=CheckId.DEVICE_FACTS,
-                credentials=credentials,
+        except Exception as exc:
+            status, code = self._classify_exception(exc)
+            results.extend(
+                self._check_error(
+                    device_id, name, management_ip, platform, check.value,
+                    status, code,
+                )
+                for task in plan.tasks for check in task.checks
             )
+            return tuple(results)
+
+        for task in plan.tasks:
+            try:
+                raw = self.backend.execute(
+                    host=target.host,
+                    port=port,
+                    profile=profile,
+                    collector_id=task.collector.id,
+                    check_id=task.checks[0],
+                    credentials=credentials,
+                )
+            except Exception as exc:
+                status, code = self._classify_exception(exc)
+                results.extend(
+                    self._check_error(
+                        device_id, name, management_ip, platform, check.value,
+                        status, code,
+                    )
+                    for check in task.checks
+                )
+                continue
+
             if raw.status != "ok":
                 status = "skipped" if raw.status == "unsupported" else "failed"
-                return DeviceFactsResult(
-                    device_id=device_id,
-                    device_name=name,
-                    management_ip=management_ip,
-                    platform=platform,
-                    status=status,
-                    error=raw.error_code or "execution_failed",
+                results.extend(
+                    self._check_error(
+                        device_id, name, management_ip, platform, check.value,
+                        status, raw.error_code or "execution_failed",
+                    )
+                    for check in task.checks
                 )
-            facts = collector.normalize(CheckId.DEVICE_FACTS, raw)
-            if not isinstance(facts, DeviceFactsValues):
-                raise ValueError("invalid device facts normalizer")
-            return DeviceFactsResult(
+                continue
+
+            for check in task.checks:
+                try:
+                    values = task.collector.normalize(check, raw)
+                    result = self._success_result(
+                        device_id, name, management_ip, platform, check, values,
+                    )
+                except Exception as exc:
+                    status, code = self._classify_exception(exc)
+                    result = self._check_error(
+                        device_id, name, management_ip, platform, check.value,
+                        status, code,
+                    )
+                results.append(result)
+        return tuple(results)
+
+    @staticmethod
+    def _success_result(
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        check: CheckId,
+        values: CPUUtilizationValues | DeviceFactsValues | OSVersionValues,
+    ) -> ProphylaxisCheckResult:
+        if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
+            return ProphylaxisCheckResult(
+                check=check.value,
                 device_id=device_id,
                 device_name=name,
                 management_ip=management_ip,
                 platform=platform,
                 status="success",
-                facts=facts,
+                facts=values,
             )
-        except UnsupportedPlatformError as exc:
-            status, code = "skipped", exc.code
-        except DeviceValidationError as exc:
-            status, code = (
-                "skipped" if exc.category == "skipped" else "failed",
-                exc.code,
-            )
-        except (DeviceResolutionError, ProphylaxisExecutionError) as exc:
+        valid_values = (
+            check == CheckId.CPU_UTILIZATION
+            and isinstance(values, CPUUtilizationValues)
+        ) or (
+            check == CheckId.OS_VERSION and isinstance(values, OSVersionValues)
+        )
+        if not valid_values:
+            raise ValueError("collector returned an invalid normalized value")
+        return ProphylaxisCheckResult(
+            check=check.value,
+            device_id=device_id,
+            device_name=name,
+            management_ip=management_ip,
+            platform=platform,
+            status="success",
+            values=values,
+        )
+
+    @staticmethod
+    def _classify_exception(exc: Exception) -> tuple[str, str]:
+        if isinstance(exc, UnsupportedPlatformError):
+            return "skipped", exc.code
+        if isinstance(exc, DeviceValidationError):
+            status = "skipped" if exc.category == "skipped" else "failed"
+            return status, exc.code
+        if isinstance(exc, (DeviceResolutionError, ProphylaxisExecutionError)):
             status = "incomplete" if exc.code == "parse_failed" else "failed"
-            code = exc.code
-        except DependencyError:
-            status, code = "failed", "dependency_unavailable"
-        except ValueError:
-            status, code = "incomplete", "incomplete_device_facts"
-        return DeviceFactsResult(
+            return status, exc.code
+        if isinstance(exc, DependencyError):
+            return "failed", "dependency_unavailable"
+        if isinstance(exc, ValueError):
+            return "incomplete", "incomplete_collector_result"
+        raise exc
+
+    @staticmethod
+    def _check_error(
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        check: str,
+        status: str,
+        code: str,
+        *,
+        log_event: bool = True,
+    ) -> ProphylaxisCheckResult:
+        if log_event:
+            event = (
+                "prophylaxis_device_skipped"
+                if status == "skipped"
+                else "prophylaxis_device_failed"
+            )
+            log = logger.info if status == "skipped" else logger.warning
+            log(
+                event,
+                extra={
+                    "event": event,
+                    "device": name,
+                    "platform": platform,
+                    "operation": OPERATION,
+                    "check": check,
+                    "status": status,
+                    "reason_code": code,
+                },
+            )
+        return ProphylaxisCheckResult(
+            check=check,
             device_id=device_id,
             device_name=name,
             management_ip=management_ip,
@@ -252,7 +423,7 @@ class DeviceFactsRunService:
         )
 
     @staticmethod
-    def _summary(results: tuple[DeviceFactsResult, ...]) -> RunSummary:
+    def _summary(results: tuple[ProphylaxisCheckResult, ...]) -> RunSummary:
         success = sum(result.status == "success" for result in results)
         skipped = sum(result.status == "skipped" for result in results)
         failure = sum(

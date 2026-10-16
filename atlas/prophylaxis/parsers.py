@@ -7,6 +7,7 @@ from atlas.prophylaxis.errors import ParseFailedError
 from atlas.prophylaxis.models import (
     CPUUtilizationValues,
     DeviceFactsValues,
+    OSVersionValues,
     RawCollectorResult,
 )
 
@@ -192,9 +193,15 @@ def normalize_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     return parser(raw)
 
 
+def normalize_os_version(raw: RawCollectorResult) -> OSVersionValues:
+    facts = normalize_device_facts(raw)
+    return OSVersionValues(os_version=facts.os_version)
+
+
 __all__ = [
     "normalize_cpu",
     "normalize_device_facts",
+    "normalize_os_version",
     "parse_aruba_aoscx_device_facts",
     "parse_cisco_cbs_device_facts",
     "parse_cisco_cbs_cpu",

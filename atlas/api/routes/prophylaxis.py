@@ -93,7 +93,7 @@ def prophylaxis_results(
     "/runs",
     response_model=ProphylaxisRun,
     status_code=status.HTTP_202_ACCEPTED,
-    summary="Launch the trusted device_facts operation",
+    summary="Launch checks selected in NetBox",
     dependencies=[Depends(run_authorized)],
 )
 def launch_device_facts_run(
@@ -117,7 +117,7 @@ def launch_device_facts_run(
     "/runs/{run_id}",
     response_model=ProphylaxisRun,
     status_code=status.HTTP_200_OK,
-    summary="Read device_facts execution status and summary",
+    summary="Read selected-check execution status and summary",
     dependencies=[Depends(run_authorized)],
 )
 def device_facts_run(run_id: UUID, request: Request) -> ProphylaxisRun:

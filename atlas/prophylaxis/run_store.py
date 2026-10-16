@@ -113,11 +113,12 @@ class FileRunStore:
         if run.error:
             lines.extend(("", f"Run error: {run.error}"))
         if run.results:
-            lines.extend(("", "Devices:"))
+            lines.extend(("", "Checks:"))
             for result in run.results:
                 detail = result.error or "collected"
                 lines.append(
-                    f"- {result.device_name} [{result.platform or 'unknown'}]: "
+                    f"- {result.device_name} [{result.platform or 'unknown'}] "
+                    f"{result.check}: "
                     f"{result.status} ({detail})"
                 )
         return "\n".join(lines) + "\n"

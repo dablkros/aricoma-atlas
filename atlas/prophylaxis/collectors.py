@@ -8,13 +8,18 @@ from atlas.prophylaxis.models import (
     CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
+    OSVersionValues,
     RawCollectorResult,
 )
-from atlas.prophylaxis.parsers import normalize_cpu, normalize_device_facts
+from atlas.prophylaxis.parsers import (
+    normalize_cpu,
+    normalize_device_facts,
+    normalize_os_version,
+)
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
-NormalizedValues = CPUUtilizationValues | DeviceFactsValues
+NormalizedValues = CPUUtilizationValues | DeviceFactsValues | OSVersionValues
 Normalizer = Callable[[RawCollectorResult], NormalizedValues]
 
 
@@ -58,7 +63,10 @@ CPU_COLLECTOR = CollectorSpec(
 
 DEVICE_FACTS_COLLECTOR = CollectorSpec(
     id=CollectorId.DEVICE_FACTS,
-    normalizers={CheckId.DEVICE_FACTS: normalize_device_facts},
+    normalizers={
+        CheckId.DEVICE_FACTS: normalize_device_facts,
+        CheckId.OS_VERSION: normalize_os_version,
+    },
 )
 
 

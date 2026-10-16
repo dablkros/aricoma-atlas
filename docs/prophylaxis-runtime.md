@@ -74,10 +74,14 @@ cpu_temperature
 uptime
 ```
 
-V tejto iterácii sú implementované `cpu_utilization` a `device_facts`.
-`device_facts` normalizuje presne hostname, model a OS verziu. Registry vráti
-pre známu platformu a neimplementovaný check stav `unsupported`; nevydáva ho za
-connection error a nevytvára nulovú hodnotu.
+V tejto iterácii sú implementované `cpu_utilization`, `device_facts` a
+`os_version`. `device_facts` normalizuje presne hostname, model a OS verziu;
+samostatná kontrola `os_version` používa ten istý facts collector, takže pri
+spoločnom výbere nevznikne druhé pripojenie. Hromadný beh zostaví plán z
+`profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
+neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
+`unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
+hodnotu.
 
 NetBox choice set používa stabilné ID ako value a ľudský text ako label.
 Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
@@ -160,10 +164,9 @@ sudo atlasctl prophylaxis logs -f
 ```
 
 Príkaz akceptuje rovnaké voľby ako `docker compose logs`, napríklad `--tail`,
-`--since` a `-f`. Zobrazuje iba eventy `ansible_execution_failed`,
-`ansible_runner_failed`, `prophylaxis_collection_completed` a
-`prophylaxis_collection_failed`. Diagnostika môže obsahovať bezpečný
-`reason_code`, Runner status/return code, názov Ansible eventu a tasku a
+`--since` a `-f`. Zobrazuje pôvodné collection/Ansible eventy aj asynchrónne
+run a per-device eventy. Diagnostika môže obsahovať bezpečný `reason_code`,
+platformu, stav, Runner status/return code, názov Ansible eventu a tasku a
 redigovaný modulový `msg`. Pre FortiOS sa pridá aj numerický HTTP status a
 bezpečný API status, ak ich modul vráti. Credentials, traceback, stderr a raw
 výstup zariadenia sa do logu nezapisujú.

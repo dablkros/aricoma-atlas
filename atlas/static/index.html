@@ -213,14 +213,15 @@
         <div class="panel-heading devices-heading-row">
           <div>
             <p class="section-kicker">Profylaxia</p>
-            <h2 id="prophylaxis-heading">Device facts collection</h2>
+            <h2 id="prophylaxis-heading">Selected prophylaxis checks</h2>
           </div>
           <span id="prophylaxis-status" class="status-pill status-pill-neutral">IDLE</span>
         </div>
 
         <p class="panel-description">
-          Collect hostname, hardware model and operating system version from all
-          eligible NetBox devices. Results and the text report stay on the Atlas VM.
+          Run the checks selected on each eligible NetBox device. Supported checks
+          are collected once per required data source; unsupported checks are reported
+          as skipped. Results and the text report stay on the Atlas VM.
         </p>
 
         <div class="table-toolbar prophylaxis-toolbar">
@@ -231,9 +232,9 @@
           <button id="prophylaxis-run" class="button button-primary" type="button">Run Prophylaxis</button>
         </div>
         <dl class="result-summary prophylaxis-summary">
-          <div><dt>Success</dt><dd id="prophylaxis-success">0</dd></div>
-          <div><dt>Failure</dt><dd id="prophylaxis-failure">0</dd></div>
-          <div><dt>Skipped</dt><dd id="prophylaxis-skipped">0</dd></div>
+          <div><dt>Checks successful</dt><dd id="prophylaxis-success">0</dd></div>
+          <div><dt>Checks failed</dt><dd id="prophylaxis-failure">0</dd></div>
+          <div><dt>Checks skipped</dt><dd id="prophylaxis-skipped">0</dd></div>
         </dl>
         <p id="prophylaxis-report" class="prophylaxis-report">No run has been launched.</p>
       </section>

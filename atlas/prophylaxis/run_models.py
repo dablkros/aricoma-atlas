@@ -6,33 +6,43 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from atlas.prophylaxis.models import DeviceFactsValues
+from atlas.prophylaxis.models import (
+    CPUUtilizationValues,
+    DeviceFactsValues,
+    OSVersionValues,
+)
 
 
 def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
-class DeviceFactsResult(BaseModel):
+class ProphylaxisCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
-    check: Literal["device_facts"] = "device_facts"
+    check: str = Field(default="device_facts", min_length=1, max_length=128)
     device_id: int | None = Field(default=None, gt=0)
     device_name: str = Field(min_length=1, max_length=255)
     management_ip: str | None = None
     platform: str | None = None
     status: Literal["success", "failed", "incomplete", "skipped"]
     facts: DeviceFactsValues | None = None
+    values: CPUUtilizationValues | OSVersionValues | None = None
     error: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")
     def validate_payload(self):
         if self.status == "success":
-            if self.facts is None or self.error is not None:
-                raise ValueError("successful result requires complete facts")
-        elif self.facts is not None or not self.error:
+            payloads = int(self.facts is not None) + int(self.values is not None)
+            if payloads != 1 or self.error is not None:
+                raise ValueError("successful result requires one payload")
+        elif self.facts is not None or self.values is not None or not self.error:
             raise ValueError("non-success result requires only a safe error code")
         return self
+
+
+# Compatibility alias for callers importing the previous result name.
+DeviceFactsResult = ProphylaxisCheckResult
 
 
 class RunSummary(BaseModel):
@@ -49,19 +59,20 @@ class ProphylaxisRun(BaseModel):
 
     schema_version: Literal[1] = 1
     run_id: UUID
-    operation: Literal["device_facts"] = "device_facts"
+    operation: Literal["selected_checks", "device_facts"] = "selected_checks"
     status: Literal["PENDING", "RUNNING", "COMPLETED", "PARTIAL", "FAILED"]
     created_at: datetime = Field(default_factory=utc_now)
     started_at: datetime | None = None
     finished_at: datetime | None = None
     summary: RunSummary = Field(default_factory=RunSummary)
-    results: tuple[DeviceFactsResult, ...] = ()
+    results: tuple[ProphylaxisCheckResult, ...] = ()
     report_path: str
     error: str | None = Field(default=None, max_length=128)
 
 
 __all__ = [
     "DeviceFactsResult",
+    "ProphylaxisCheckResult",
     "ProphylaxisRun",
     "RunSummary",
     "utc_now",

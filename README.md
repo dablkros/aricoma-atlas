@@ -589,9 +589,9 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - explicitnú operáciu **Sync inventory**,
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
-- operátorskú operáciu **Run Prophylaxis**, ktorá asynchrónne spustí bezpečný
-  `device_facts` zber pre aktívne zariadenia s `profylaxia_enabled=true` a
-  presne zvolenou hodnotou `device_facts`,
+- operátorskú operáciu **Run Prophylaxis**, ktorá pre aktívne zariadenia s
+  `profylaxia_enabled=true` asynchrónne spustí presne kontroly vybrané v
+  `profylaxia_checks`,
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
@@ -615,7 +615,7 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
 | `POST /api/prophylaxis/devices/{id}/checks/cpu` | Vykoná jednu CPU kontrolu a uloží normalizovaný výsledok lokálne. |
 | `GET /api/prophylaxis/results?limit=50` | Vráti najnovšie lokálne uložené výsledky bez credentials a raw CLI výstupu. |
-| `POST /api/prophylaxis/runs` | Po autorizácii operator tokenom vytvorí asynchrónny `device_facts` beh a vráti `202` so stavom `PENDING`. |
+| `POST /api/prophylaxis/runs` | Po autorizácii operator tokenom vytvorí asynchrónny beh kontrol vybraných v NetBoxe a vráti `202` so stavom `PENDING`. |
 | `GET /api/prophylaxis/runs/{run_id}` | Po autorizácii vráti stav, súhrn a normalizované výsledky konkrétneho behu. |
 
 Profylaxia história je SQLite databáza v kontajneri na
@@ -626,11 +626,11 @@ reštart alebo výmenu backend kontajnera. Databáza má režim `0600`, adresár
 prekročení limitu odstránia. Neukladá sa username, password, OpenBao token ani
 raw príkazový výstup.
 
-Každý hromadný `device_facts` beh má samostatný adresár
+Každý hromadný beh vybraných kontrol má samostatný adresár
 `/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
 `result.json` a čitateľným `report.txt`. Adresáre majú režim `0700` a súbory
 `0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
-normalizované `hostname`, `model`, `os_version` a bezpečné chybové kódy.
+ID kontroly, normalizované hodnoty a bezpečné chybové kódy.
 Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbežne
 spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
 `deployment/backend.yaml` (predvolene `4`).
@@ -659,9 +659,10 @@ curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
   | python3 -m json.tool
 ```
 
-Pre nový hromadný flow musí mať cieľ v NetBoxe stav `active`,
-`profylaxia_enabled=true` a vo výbere `profylaxia_checks` hodnotu
-`device_facts`. Používa rovnaký runtime operator token ako Monitoring
+Pre hromadný flow musí mať cieľ v NetBoxe stav `active` a
+`profylaxia_enabled=true`. Atlas načíta všetky hodnoty vo výbere
+`profylaxia_checks`; implementované kontroly spustí a nepodporované zaznamená
+ako `skipped`. Používa rovnaký runtime operator token ako Monitoring
 Provisioning:
 
 ```bash
@@ -687,11 +688,13 @@ Počas checku možno sledovať filtrované bezpečné structured logy:
 sudo atlasctl prophylaxis logs --tail=100 -f
 ```
 
-Príkaz zobrazuje eventy `ansible_execution_failed`, `ansible_runner_failed`,
-`prophylaxis_collection_completed` a `prophylaxis_collection_failed`. Pri
-Ansible chybe obsahuje bezpečnú kategóriu `reason_code`, stav a návratový kód
-Runnera a názov eventu/tasku. Credentials, exception text a raw CLI output sa
-nelogujú. Celý backend stream zostáva dostupný cez `sudo atlasctl backend logs`.
+Príkaz zobrazuje pôvodné collection eventy aj asynchrónne
+`prophylaxis_run_completed`, `prophylaxis_run_failed`,
+`prophylaxis_device_failed` a `prophylaxis_device_skipped`. Pri chybe obsahuje
+bezpečnú kategóriu `reason_code`, platformu a stav; Ansible chyba navyše stav a
+návratový kód Runnera a názov eventu/tasku. Credentials, exception text a raw
+CLI output sa nelogujú. Celý backend stream zostáva dostupný cez
+`sudo atlasctl backend logs`.
 
 NetBox multiselect custom field sa z REST API číta ako zoznam objektov
 `{value, label}`. Atlas používa presnú hodnotu `value`; prijíma aj raw string
@@ -1700,8 +1703,11 @@ načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
 secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
 Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
-vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho
-`device_facts` behu; pôvodná manuálna CPU kontrola zostáva dostupná cez API.
+vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
+`profylaxia_checks`. `device_facts` a `os_version` zdieľajú jeden facts zber;
+`cpu_utilization` používa CPU collector. Nepodporované voľby sa zaznamenajú ako
+`skipped` s kódom `unsupported_check`. Pôvodná manuálna CPU kontrola zostáva
+dostupná cez API.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |

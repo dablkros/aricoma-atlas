@@ -206,7 +206,11 @@ prophylaxis_logs() {
             /"event"[[:space:]]*:[[:space:]]*"ansible_execution_failed"/ ||
             /"event"[[:space:]]*:[[:space:]]*"ansible_runner_failed"/ ||
             /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_completed"/ ||
-            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_failed"/
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_run_completed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_run_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_device_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_device_skipped"/
         '
 }
 
