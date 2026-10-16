@@ -326,13 +326,17 @@ class AnsibleBackend:
             local_tmp = private_dir / "local-tmp"
             local_tmp.mkdir(mode=0o700)
             ssh_config_file = None
-            if profile.legacy_ciphers:
+            if profile.legacy_ciphers or profile.legacy_macs:
                 ssh_config_file = home / ".ssh" / "config"
+                options = ["Host *"]
+                if profile.legacy_ciphers:
+                    options.append(
+                        "  Ciphers +" + ",".join(profile.legacy_ciphers)
+                    )
+                if profile.legacy_macs:
+                    options.append("  MACs +" + ",".join(profile.legacy_macs))
                 ssh_config_file.write_text(
-                    "Host *\n"
-                    "  Ciphers +"
-                    + ",".join(profile.legacy_ciphers)
-                    + "\n",
+                    "\n".join(options) + "\n",
                     encoding="utf-8",
                 )
                 os.chmod(ssh_config_file, 0o600)
@@ -342,6 +346,7 @@ class AnsibleBackend:
                         "event": "ansible_legacy_ssh_configured",
                         "platform": profile.slug,
                         "legacy_ciphers": list(profile.legacy_ciphers),
+                        "legacy_macs": list(profile.legacy_macs),
                     },
                 )
             environment = {

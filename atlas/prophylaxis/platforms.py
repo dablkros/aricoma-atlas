@@ -24,6 +24,7 @@ class AnsiblePlatformProfile:
     legacy_kex_algorithms: tuple[str, ...] = ()
     legacy_hostkey_algorithms: tuple[str, ...] = ()
     legacy_ciphers: tuple[str, ...] = ()
+    legacy_macs: tuple[str, ...] = ()
     telnet_fallback_service_name: str | None = None
     telnet_fallback_default_port: int = 23
 
@@ -57,6 +58,7 @@ ANSIBLE_PLATFORMS = {
             "ssh-rsa",
         ),
         legacy_ciphers=("aes128-cbc",),
+        legacy_macs=("hmac-sha1",),
         telnet_fallback_service_name="telnet",
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(
