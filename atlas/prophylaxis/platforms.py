@@ -23,6 +23,7 @@ class AnsiblePlatformProfile:
     supported_collectors: frozenset[CollectorId]
     legacy_kex_algorithms: tuple[str, ...] = ()
     legacy_hostkey_algorithms: tuple[str, ...] = ()
+    legacy_ciphers: tuple[str, ...] = ()
     telnet_fallback_service_name: str | None = None
     telnet_fallback_default_port: int = 23
 
@@ -55,6 +56,7 @@ ANSIBLE_PLATFORMS = {
             "rsa-sha2-256",
             "ssh-rsa",
         ),
+        legacy_ciphers=("aes128-cbc",),
         telnet_fallback_service_name="telnet",
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(

@@ -1728,7 +1728,9 @@ PID zo `show inventory`, pre ktorý NTC nemá `cisco_s300` šablónu.
 
 Legacy profil `cisco-ios` pridáva libssh KEX
 `diffie-hellman-group1-sha1` a host-key algoritmus `ssh-rsa` za modernejšie
-možnosti. Ostatné platformové profily tieto výnimky nepovoľujú.
+možnosti. Do dočasného SSH configu pre konkrétny Runner job pridáva aj
+`aes128-cbc`; `3des-cbc` nepovoľuje. Ostatné platformové profily tieto výnimky
+nepovoľujú.
 
 Telnet fallback sa pre `cisco-ios` aktivuje iba explicitnou TCP službou
 `telnet` na konkrétnom zariadení v NetBoxe. Atlas použije port tejto služby

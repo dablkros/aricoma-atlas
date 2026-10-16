@@ -210,6 +210,7 @@ class AnsibleBackend:
         profile: AnsiblePlatformProfile,
         *,
         transport: str | None = None,
+        ssh_config_file: Path | None = None,
     ) -> dict:
         transport = transport or profile.transport
         variables = {
@@ -247,6 +248,8 @@ class AnsibleBackend:
                 variables["ansible_libssh_hostkeys"] = ",".join(
                     profile.legacy_hostkey_algorithms
                 )
+            if ssh_config_file is not None:
+                variables["ansible_libssh_config_file"] = str(ssh_config_file)
         if transport == "https":
             variables.update(
                 {
@@ -325,6 +328,17 @@ class AnsibleBackend:
             home = self._prepare_home(private_dir)
             local_tmp = private_dir / "local-tmp"
             local_tmp.mkdir(mode=0o700)
+            ssh_config_file = None
+            if profile.legacy_ciphers:
+                ssh_config_file = private_dir / "ssh_config"
+                ssh_config_file.write_text(
+                    "Host *\n"
+                    "  Ciphers +"
+                    + ",".join(profile.legacy_ciphers)
+                    + "\n",
+                    encoding="utf-8",
+                )
+                os.chmod(ssh_config_file, 0o600)
             environment = {
                 "HOME": str(home),
                 # The Compose runtime uses the host Atlas UID, which may not
@@ -356,6 +370,7 @@ class AnsibleBackend:
                             attempt_port,
                             profile,
                             transport=transport,
+                            ssh_config_file=ssh_config_file,
                         ),
                         extravars={
                             "atlas_collector": collector_id.value,

@@ -130,9 +130,12 @@ Python requirements kolekcie neinštaluje.
 
 Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
 `diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
-modernejšími typmi kľúčov. Slabší algoritmus sa použije iba vtedy, keď
-zariadenie neponúkne spoločný modernejší algoritmus. `cisco-ios-xe`, CBS a
-Aruba profily tieto výnimky nepovoľujú.
+modernejšími typmi kľúčov. Do dočasného per-job SSH configu zároveň pridáva
+`aes128-cbc` za moderné šifry. Slabší algoritmus sa použije iba vtedy, keď
+zariadenie neponúkne spoločný modernejší algoritmus. Config sa odovzdáva cez
+`ansible_libssh_config_file` a odstráni sa spolu s dočasným Runner adresárom.
+`3des-cbc` sa nepovoľuje. `cisco-ios-xe`, CBS a Aruba profily tieto výnimky
+nepovoľujú.
 
 Telnet je pre `cisco-ios` explicitný fallback, nie predvolený transport. Atlas
 ho povolí iba vtedy, keď má konkrétne zariadenie v NetBoxe práve jednu TCP
