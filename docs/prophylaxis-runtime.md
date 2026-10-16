@@ -134,9 +134,11 @@ FortiOS modul deklaruje parameter `access_token` ako `no_log`, takže ho Ansible
 maskuje. Atlas navyše pred zápisom diagnostického `ansible_message` nahradí
 všetky hodnoty credentials a bežné token/password formáty za `[REDACTED]`.
 
-Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts`
-do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
-SSH/Netmiko transport.
+Nasadzovaný beta profil má `ssh_strict_host_keys: false`. Ansible preto pri
+Cisco a Aruba kolektoroch prijme aj neznámy SSH host key. Toto zjednodušuje
+onboarding, ale neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
+Ak sa strict režim neskôr zapne, backend skopíruje existujúci Oxidized
+`known_hosts` do dočasného Runner HOME.
 
 Nasadzovaný profil má `fortios_validate_certs: true`; FortiOS HTTPS certifikát
 sa overuje. Atlas host musí dôverovať CA, ktorá certifikát podpísala. Hodnota sa

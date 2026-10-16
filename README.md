@@ -133,6 +133,8 @@ V aktuálnom beta prostredí:
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
 - Oxidized web/API je chránený OpenBao-backed Basic Auth,
 - Oxidized má v tejto beta konfigurácii vedome nastavené `secure: false`; SSH host key sa preto neoveruje,
+- Atlas Profylaxia Ansible SSH má v beta deployment profile vedome nastavené
+  `ssh_strict_host_keys: false`; týka sa to Cisco aj Aruba kolektorov,
 - persistentný `known_hosts` a fingerprint príkazy sú iba diagnostické; pri `secure: false` pripojenie neobmedzujú.
 
 Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
@@ -147,7 +149,7 @@ Pred produkčným nasadením je potrebné doplniť minimálne:
 6. definovaný host-key rotation proces so samostatným schválením,
 7. individuálne roly alebo SSO pre administratívny web/API prístup.
 
-Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie TLS certifikátu. Vypnuté Oxidized SSH host-key verification je samostatná, explicitne zdokumentovaná bezpečnostná výnimka.
+Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie TLS certifikátu. Vypnuté Oxidized a Profylaxia SSH host-key verification sú samostatné, explicitne zdokumentované bezpečnostné výnimky.
 
 ---
 
@@ -1715,9 +1717,10 @@ backend image cez deployment.
 FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
 host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.
 
-Pre lokálny development a test je host-key verification dočasne vypnutá cez
-`ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
-explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
+Beta backend deployment nastavuje `ATLAS_SSH_STRICT_HOST_KEYS=false`, takže
+Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto
+odstraňuje onboarding blokovaný neznámym kľúčom, ale neoveruje identitu SSH
+servera a zvyšuje riziko MITM útoku.
 
 Aktuálne možnosti:
 
