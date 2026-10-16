@@ -42,8 +42,8 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | Cisco IOS | `cisco-ios` | 20 | `ios` |
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
-| Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | unsupported/unmapped |
-| Cisco CBS250/350 | `cisco-cbs250-350` | 19 | unsupported/unmapped |
+| Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
+| Cisco CBS250/350 | `cisco-cbs250-350` | 19 | `ciscosmb` (experimental) |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
@@ -78,7 +78,7 @@ Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, F
 
 **Fact (high confidence, version-specific primary sources):** Oxidized 0.37.0 separates `fortigate` for FortiGate from `fortios` for other Fortinet appliances. Therefore the requested conceptual `fortios → fortios` example is intentionally corrected to **`fortios → fortigate`**. [Fortinet model notes, 0.37.0](https://github.com/ytti/oxidized/blob/0.37.0/docs/Model-Notes/Fortinet.md).
 
-**Unverified:** a generic `ciscosmb` implementation exists, but the pinned model's comment lists older Small Business series, not all CBS220/250/350 devices. Hardware FortiAnalyzer and FortiAP compatibility has not been established here. They remain unmapped for Oxidized, with an explicit validation error. No guessed `ios` fallback is used for CBS. A supported driver name is not a claim of a successful backup on physical hardware.
+**Experimental / unverified on physical CBS hardware:** both Cisco CBS platforms map explicitly to the pinned `ciscosmb` model. The model's source comment lists older Small Business series, not CBS220/250/350, so the mapping is not evidence of a successful backup on those families. It does not use an `ios` fallback. Hardware FortiAnalyzer and FortiAP compatibility has not been established; those platforms remain unmapped with an explicit validation error.
 
 Audit / dry-run commands (from the repository's Python environment):
 

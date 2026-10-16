@@ -48,12 +48,14 @@ def backend_config(**overrides):
 class BackendConfigurationTests(unittest.TestCase):
     def test_repository_configuration_matches_package_version(self):
         config = deploy_backend.load_config(ROOT / "deployment/backend.yaml")
+        env_example = (ROOT / ".env.example").read_text(encoding="utf-8")
 
         self.assertEqual(config["backend"]["version"], __version__)
         self.assertEqual(
             config["backend"]["docker_image"],
             f"aricoma-atlas-backend:{__version__}",
         )
+        self.assertIn(f"ATLAS_APP_VERSION={__version__}", env_example.splitlines())
         self.assertFalse(config["backend"]["fortios_validate_certs"])
 
     def test_public_listen_address_is_rejected(self):
@@ -504,6 +506,15 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("ansible-galaxy collection install", dockerfile)
         self.assertIn("COPY --chown=atlas:atlas automation", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
+
+
+class InstallerContractTests(unittest.TestCase):
+    def test_installer_requires_python_312_and_supported_ubuntu_releases(self):
+        installer = (ROOT / "install.sh").read_text(encoding="utf-8")
+
+        self.assertIn("sys.version_info >= (3, 12)", installer)
+        self.assertIn("24.04|26.04", installer)
+        self.assertNotIn("22.04|24.04", installer)
 
 
 if __name__ == "__main__":

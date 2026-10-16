@@ -132,11 +132,14 @@ oxidized_platform_mapping:
   cisco-ios: {model: ios}
   cisco-ios-xe: {model: ios}
   cisco-nxos: {model: nxos}
+  cisco-cbs: {model: ciscosmb}
+  cisco-cbs250-350: {model: ciscosmb}
   fortios: {model: fortigate}
   junos: {model: junos}
   aruba-aos-cx: {model: aoscx}
   aruba-aos-switch: {model: procurve}
-# CBS, FortiAP and hardware FortiAnalyzer are deliberately unmapped pending
-# driver/hardware validation. Presence of ciscosmb/fortios.rb is not that proof.
+# CBS uses the pinned ciscosmb model, but remains experimental until each target
+# family is validated against physical hardware. FortiAP and hardware
+# FortiAnalyzer remain unmapped pending driver/hardware validation.
 # Sophos platforms are inventory/monitoring identities only; no unverified
 # Oxidized model is assigned.

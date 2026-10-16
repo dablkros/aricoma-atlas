@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.3.0-beta** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.4.0-beta** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [FortiGate monitoring provisioning P0](docs/monitoring-provisioning.md)
   s automatickým NetBox onboardingom a site-level bezpečnostnou politikou,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -80,7 +80,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.3.0-beta`
+- Atlas backend image `aricoma-atlas-backend:0.4.0-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -132,8 +132,8 @@ V aktuálnom beta prostredí:
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
 - Oxidized web/API je chránený OpenBao-backed Basic Auth,
-- Oxidized má v tejto beta konfigurácii vedome nastavené `secure: false`; SSH host key sa preto neoveruje,
-- návrat na `secure: true` vyžaduje naplnenie a správu persistentného `known_hosts`.
+- Oxidized má nastavené `secure: true` a overuje SSH host key proti persistentnému `known_hosts`,
+- nový alebo zmenený host key vyžaduje samostatné overenie fingerprintu a explicitné schválenie.
 
 Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
 
@@ -387,9 +387,9 @@ Konkrétne práva súborov a vlastníctvo runtime mountov spravuje installer/dep
 
 Cieľový host musí mať:
 
-- podporovaný Linux so `sudo`,
+- Ubuntu 24.04 alebo 26.04 so `sudo`,
 - Git,
-- Python 3.10 alebo novší a modul `venv`,
+- Python 3.12 alebo novší a modul `venv`,
 - OpenSSL CLI,
 - prístup k Docker registru a potrebným Git repozitárom,
 - pripravenú management IP, DNS a firewall pravidlá,
@@ -443,7 +443,7 @@ Overenie:
 python3 --version
 ```
 
-FastAPI 0.142.2 vyžaduje Python 3.10 alebo novší. V dokumentácii a skriptoch používaj explicitne `python3`. Na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať `NotOpenSSLWarning` kvôli LibreSSL; beta flow tým nemusí byť blokovaný, ale produkcia má používať podporovaný Python/OpenSSL stack.
+Projekt vyžaduje Python 3.12 alebo novší; túto hranicu určuje najprísnejšia pripnutá runtime závislosť (`ansible-core 2.21.5`), nie iba FastAPI. V dokumentácii a skriptoch používaj explicitne `python3`. Na staršom systémovom Pythone v macOS môže `urllib3` zobrazovať `NotOpenSSLWarning` kvôli LibreSSL; nejde o podporované release prostredie a produkcia musí používať podporovaný Python/OpenSSL stack.
 
 ## Atlas backend API — Milestone 1
 
@@ -473,7 +473,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.3.0-beta","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.0-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -528,6 +528,8 @@ POST /api/oxidized/sync
 ```
 
 Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta príslušné admin credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback credentials.
+
+Cisco platformy `cisco-cbs` a `cisco-cbs250-350` používajú explicitný Oxidized model `ciscosmb` a credential namespace `atlas/devices/credentials/cisco/<credential_profile>/admin`. Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických CBS220/250/350 zariadeniach; nepoužíva fallback na model `ios`.
 
 Spracovanie používa jedno spoločné jadro pre API aj `sudo atlasctl oxidized reconcile`:
 
@@ -2057,9 +2059,7 @@ Súbor má mode `0640` a inventárový adresár `0750`; Oxidized proces použív
 
 ## SSH host-key verification
 
-Oxidized má v tejto beta konfigurácii vypnuté host-key verification (`secure: false`). Oxidized 0.37.0 preto nastaví Net::SSH `verify_host_key: :never`. Toto odstraňuje onboarding blokovaný neznámym alebo zmeneným kľúčom, ale zároveň neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
-
-Persistentný súbor je naďalej pripravený na budúci návrat k `secure: true`:
+Oxidized má zapnuté host-key verification (`secure: true`) a používa persistentný trust store:
 
 ```text
 /opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts
@@ -2067,7 +2067,7 @@ Persistentný súbor je naďalej pripravený na budúci návrat k `secure: true`
 
 Interaktívne SSH pripojenie používateľa zapisuje do `~/.ssh/known_hosts`; tým sa automaticky nepridá trust pre Oxidized.
 
-Po opätovnom zapnutí `secure: true` použi tento acceptance flow:
+Pred prvým backupom nového zariadenia použi tento acceptance flow:
 
 1. zobraz kľúče, ktoré zariadenie aktuálne prezentuje:
 
@@ -2105,7 +2105,7 @@ sudo atlasctl status
 sudo atlasctl oxidized logs -f
 ```
 
-Pri `secure: false` obsah `known_hosts` pripojenie neobmedzuje. Príkaz `scan` trust nemení a `accept` zostáva pripravený pre budúci návrat na strict verification.
+Príkaz `scan` trust nemení. `accept` zapíše iba presný fingerprint, ktorý administrátor schválil; zmena kľúča potom skončí explicitným mismatchom a existujúci trust sa automaticky neprepíše.
 
 ## FortiGate a náhodne prešifrované ENC hodnoty
 
@@ -2577,8 +2577,8 @@ Odporúčaný release postup:
 ```bash
 git status
 python3 -m unittest discover -s tests -v
-git tag -a v0.3.0-beta -m "Aricoma Atlas v0.3.0-beta"
-git push origin v0.3.0-beta
+git tag -a v0.4.0-beta -m "Aricoma Atlas v0.4.0-beta"
+git push origin v0.4.0-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.

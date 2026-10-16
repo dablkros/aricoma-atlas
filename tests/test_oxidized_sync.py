@@ -263,6 +263,21 @@ class OxidizedSyncTests(unittest.TestCase):
                 self.assertEqual(store.current[0]["model"], model)
                 self.assertEqual(bao.calls, [("hpe", "default")])
 
+    def test_cisco_smb_platforms_use_ciscosmb_and_cisco_credentials(self):
+        for platform in ("cisco-cbs", "cisco-cbs250-350"):
+            with self.subTest(platform=platform):
+                bao = FakeOpenBao()
+                service, store, _oxidized = self.service(
+                    [device(platform=platform, vendor="cisco")],
+                    bao=bao,
+                )
+
+                result = service.sync()
+
+                self.assertEqual(result.status, "success")
+                self.assertEqual(store.current[0]["model"], "ciscosmb")
+                self.assertEqual(bao.calls, [("cisco", "default")])
+
     def test_explicit_disable_and_deleted_device_are_removed(self):
         for scenario in ("disabled", "deleted"):
             with self.subTest(scenario=scenario):

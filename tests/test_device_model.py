@@ -130,6 +130,8 @@ class PlatformTests(unittest.TestCase):
     def test_mapping_is_tied_to_deployed_image(self):
         deployment = yaml.safe_load((ROOT / "deployment/oxidized.yaml").read_text())
         self.assertEqual(deployment["oxidized"]["docker_image"], self.config["oxidized"]["image"])
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs"]["model"], "ciscosmb")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs250-350"]["model"], "ciscosmb")
         self.assertEqual(self.config["oxidized_platform_mapping"]["fortios"]["model"], "fortigate")
         self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-cx"]["model"], "aoscx")
         self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-switch"]["model"], "procurve")
@@ -386,8 +388,6 @@ class CredentialTests(unittest.TestCase):
         for field, value, message in [
             ("platform", None, "Missing NetBox platform"),
             ("platform", {"slug": "unknown"}, "No Oxidized mapping"),
-            ("platform", {"slug": "cisco-cbs"}, "No Oxidized mapping"),
-            ("platform", {"slug": "cisco-cbs250-350"}, "No Oxidized mapping"),
             ("custom_fields", {"oxidized_enabled": True}, "Missing credential_profile"),
             ("device_type", {}, "Missing manufacturer"),
             ("primary_ip4", None, "Missing or invalid primary IP"),
