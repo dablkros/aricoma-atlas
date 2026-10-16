@@ -10,6 +10,8 @@ platform_templates:
   junos: "Juniper by SNMP"
   sophos-sfos: "Aricoma Atlas Sophos SFOS by SNMP"
   sophos-ap: "Network Generic Device by SNMP"
+  aruba-aos-cx: "Network Generic Device by SNMP"
+  aruba-aos-switch: "Network Generic Device by SNMP"
 metric_keys:
   cpu:
     - "system.cpu.util"

@@ -244,6 +244,25 @@ class OxidizedSyncTests(unittest.TestCase):
         self.assertEqual(len(store.writes), 1)
         self.assertEqual(len(oxidized.calls), 1)
 
+    def test_aruba_platforms_use_explicit_oxidized_models_and_hpe_credentials(self):
+        cases = (
+            ("aruba-aos-cx", "aoscx"),
+            ("aruba-aos-switch", "procurve"),
+        )
+        for platform, model in cases:
+            with self.subTest(platform=platform):
+                bao = FakeOpenBao()
+                service, store, _oxidized = self.service(
+                    [device(platform=platform, vendor="hpe")],
+                    bao=bao,
+                )
+
+                result = service.sync()
+
+                self.assertEqual(result.status, "success")
+                self.assertEqual(store.current[0]["model"], model)
+                self.assertEqual(bao.calls, [("hpe", "default")])
+
     def test_explicit_disable_and_deleted_device_are_removed(self):
         for scenario in ("disabled", "deleted"):
             with self.subTest(scenario=scenario):

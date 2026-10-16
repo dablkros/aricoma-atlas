@@ -94,22 +94,23 @@ Deklarovaná kombinácia pre tento deployment:
 | Fortinet | 162 |
 | Juniper | 290 |
 | Sophos | 21 |
-| **Spolu** | **711** |
+| HPE Aruba switches | 109 |
+| **Spolu** | **820** |
 
 ## Component templates
 
 | Typ komponentu | Počet |
 |---|---:|
-| Console ports | 900 |
+| Console ports | 1 111 |
 | Console server ports | 5 |
-| Power ports | 360 |
-| Interfaces | 23 637 |
+| Power ports | 456 |
+| Interfaces | 27 545 |
 | Rear ports | 2 |
 | Front ports | 0 |
-| Module bays | 1 712 |
+| Module bays | 1 962 |
 | Device bays | 2 |
 | Power outlets | 4 |
-| **Spolu** | **26 622** |
+| **Spolu** | **31 087** |
 
 ---
 
@@ -665,7 +666,7 @@ zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
 | --- | --- | --- |
 | `atlasctl status` | `GET /api/status` | CLI môže navyše kontrolovať Docker, filesystem a host runtime; API zostáva bez host privileges. |
 | `atlasctl oxidized reconcile` | `POST /api/oxidized/sync` | Obe cesty používajú shared reconciliation service. |
-| `atlasctl zabbix sync` | `POST /api/zabbix/sync` | Obe cesty používajú ten istý reconciliation service. |
+| `atlasctl zabbix sync` | `POST /api/zabbix/sync` | CLI, API aj potvrdený Monitoring Provisioning používajú spoločný `ZabbixSyncService`. |
 | `atlasctl zabbix status` | `GET /api/zabbix/status` | Overí Zabbix verziu, autentifikáciu a prístup k hostom. |
 | prioritný Oxidized node | `POST /api/oxidized/devices/{name}/backup` | Požiadavka node iba zaradí; výsledok backupu spravuje Oxidized. |
 
@@ -1039,6 +1040,13 @@ Atlas reconciliation ── OpenBao SNMP secret
 Zabbix host + template + SNMP interface + ownership tags
 ```
 
+`atlasctl zabbix sync`, `POST /api/zabbix/sync` a potvrdené Monitoring
+Provisioning joby používajú spoločný `ZabbixSyncService`. Vendor driver vlastní
+iba zariadenie a SNMP desired state: FortiGate P0 používa REST API, budúce
+Cisco a ďalšie platformy môžu použiť Ansible bez vytvorenia ďalšieho Zabbix
+writeru. Zabbix časť vždy dostane normalizovanú identitu, adresu, SNMP secret,
+port, template a ownership tagy.
+
 Nasadenie používa Zabbix `7.0.31` LTS, oficiálne server/web image a samostatný
 PostgreSQL kontajner. Verzia je pripnutá v `deployment/zabbix.yaml` a mapovanie
 v `catalog/zabbix.yaml`. Zabbix server ani databáza nemajú hostom publikovaný
@@ -1050,9 +1058,17 @@ a [release note 7.0.31](https://www.zabbix.com/rn/rn7.0.31) (overené 2026-10-08
 Reconciliation používa iba aktívne NetBox zariadenia s
 `monitoring_enabled=true`. Stabilná identita je NetBox device ID v tagu
 `netbox_id`; každý vlastnený host má aj `managed_by=aricoma-atlas`. Atlas
-číta a mení iba takto označené hosty. Zariadenie odstránené z NetBoxu alebo s
+číta a mení iba takto označené hosty. Monitoring Provisioning preto bezpečne
+adoptuje hosta vytvoreného skorším `atlasctl zabbix sync` namiesto vytvorenia
+duplicity. Zariadenie odstránené z NetBoxu alebo s
 vypnutým monitoringom sa v Zabbixe deaktivuje, nemaže, aby sa zachovala
 história. Manuálne Zabbix hosty zostávajú mimo reconciliation query.
+
+Runtime používa deploymentom vytvorenú host group `Aricoma Atlas`; NetBox site
+ukladá do tagu `atlas_site`. Host group nevytvára runtime API účet, takže mu
+stačí obmedzený Zabbix `Admin` typ s explicitne povolenými host, interface,
+macro a item metódami. Privilegovaný deployment bootstrap vytvorí skupinu a
+zosúladí rolu.
 
 Centralizované mapovanie pre Zabbix 7.0 je:
 
@@ -1065,6 +1081,8 @@ Centralizované mapovanie pre Zabbix 7.0 je:
 | `junos` | `Juniper by SNMP` |
 | `sophos-sfos` | `Aricoma Atlas Sophos SFOS by SNMP` |
 | `sophos-ap` | `Network Generic Device by SNMP` |
+| `aruba-aos-cx` | `Network Generic Device by SNMP` |
+| `aruba-aos-switch` | `Network Generic Device by SNMP` |
 
 Zabbix 7.0 neobsahuje samostatný oficiálny Cisco Small Business ani Sophos
 template. Atlas preto počas deploymentu idempotentne importuje vlastné
@@ -1106,9 +1124,16 @@ stav, nie silent fallback. Názvy sú viazané na oficiálny
 a [Sophos AP6/APX SNMP dokumentáciu](https://docs.sophos.com/central/customer/help/en-us/ManageYourProducts/Wireless/AccessPoints/index.html),
 ako aj [Cisco CBS250/350 SNMP OID dokumentáciu](https://www.cisco.com/c/en/us/support/docs/smb/switches/Cisco-Business-Switching/kmgmt3636-snmpv3-common-oids-cbs350.html).
 
-SNMPv2c community sa číta z
-`atlas/devices/credentials/<manufacturer>/<credential_profile>/snmp`, vloží sa
-do Zabbix secret macro `{$SNMP_COMMUNITY}` a nikdy sa nevracia cez Atlas API.
+Aruba AOS-CX a AOS-Switch v tejto etape používajú generic SNMP template.
+Oficiálny Zabbix 7.0 Aruba template je určený pre CX 8300s, preto sa bez
+overenia OID nepriraďuje celej AOS-CX ani staršej AOS-Switch rodine.
+
+SNMPv2c community resolver najprv hľadá Atlas-generated per-device secret na
+`atlas/devices/snmp/<manufacturer>/<netbox-device-id>/monitoring`. Ak neexistuje,
+zachová pôvodný operator-managed profilový lookup na
+`atlas/devices/credentials/<manufacturer>/<credential_profile>/snmp`. Community
+sa vloží do Zabbix secret macro `{$SNMP_COMMUNITY}` a nikdy sa nevracia cez
+Atlas API.
 Napríklad profil `sophos-default` používa cestu
 `atlas/devices/credentials/sophos/sophos-default/snmp`. Zariadenie musí mať v
 NetBoxe stav `active`, Primary IP, príslušnú Sophos platformu,
@@ -1718,8 +1743,9 @@ Cisco       238
 Fortinet    162
 Juniper     290
 Sophos       21
+HPE         109
 ----------------
-Spolu       711
+Spolu       820
 ```
 
 ---
@@ -1761,7 +1787,9 @@ C8200-*
 C8300-*
 ```
 
-Fortinet, Juniper a Sophos sa v aktuálnej beta verzii vyberajú celé.
+Fortinet, Juniper a Sophos sa v aktuálnej beta verzii vyberajú celé. Z HPE sa
+vyberá iba explicitný zoznam Aruba AOS-CX a AOS-Switch rodín; servery, storage,
+AP/IAP, controllery, Instant On, EdgeConnect a Comware sa neimportujú.
 
 ---
 
@@ -1831,7 +1859,7 @@ NetBox Community Device Type Library
                 │
                 ▼
        Atlas Device Catalog
-          711 Device Types
+          820 Device Types
                 │
          ┌──────┴──────┐
          │             │
@@ -2256,7 +2284,7 @@ Príklad katalógu:
 
 ```text
 Device Types
-Existing: 711
+Existing: 820
 Missing:  0
 ```
 
@@ -2264,8 +2292,8 @@ Component templates:
 
 ```text
 TOTAL COMPONENTS
-catalog=26622
-existing=26622
+catalog=31087
+existing=31087
 missing=0
 ```
 
@@ -2354,18 +2382,18 @@ Kontroluje napríklad:
 Aktuálne overený stav:
 
 ```text
-Device Types: 711
+Device Types: 820
 ```
 
 Component coverage:
 
 ```text
-console-ports          900
+console-ports         1111
 console-server-ports     5
-power-ports            360
-interfaces           23637
+power-ports            456
+interfaces           27545
 rear-ports               2
-module-bays            1712
+module-bays            1962
 device-bays               2
 power-outlets             4
 ```

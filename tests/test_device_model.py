@@ -108,6 +108,13 @@ class PlatformTests(unittest.TestCase):
             ("Sophos", "sophos-ap6-420e", "AP6 420E", "sophos-ap"),
             ("Sophos", "sophos-apx530", "APX530", "sophos-ap"),
             ("Sophos", "sophos-sd-red-60", "SD-RED 60", "sophos-red"),
+            ("HPE", "hpe-aruba-6300f-48g-4sfp56", "Aruba 6300F-48G-4SFP56", "aruba-aos-cx"),
+            ("HPE", "hpe-aruba-8400", "Aruba 8400", "aruba-aos-cx"),
+            ("HPE", "hpe-aruba-2930f-48g-4sfpp", "Aruba 2930F-48G-4SFP+", "aruba-aos-switch"),
+            ("HPE", "hpe-aruba-5406r-zl2", "Aruba 5406R zl2", "aruba-aos-switch"),
+            ("HPE", "hpe-aruba-1930-48g", "Aruba 1930 48G", None),
+            ("HPE", "hpe-aruba-ap-635", "Aruba AP-635", None),
+            ("HPE", "hpe-a5500-48g-4sfp-hi", "A5500-48G-4SFP HI", None),
             ("Fortinet", "fortinet-fpm-7620f", "FortiGate Module 7620F", None),
             ("Cisco", "cisco-n9k-unknown", "N9K-unknown", None),
             ("Cisco", "unknown", "unknown", None),
@@ -124,6 +131,8 @@ class PlatformTests(unittest.TestCase):
         deployment = yaml.safe_load((ROOT / "deployment/oxidized.yaml").read_text())
         self.assertEqual(deployment["oxidized"]["docker_image"], self.config["oxidized"]["image"])
         self.assertEqual(self.config["oxidized_platform_mapping"]["fortios"]["model"], "fortigate")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-cx"]["model"], "aoscx")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-switch"]["model"], "procurve")
         d = device()
         d["platform"]["slug"] = "cisco-nxos"
         self.assertEqual(oxidized_reference(d).model, "nxos")
@@ -412,6 +421,8 @@ class CredentialTests(unittest.TestCase):
             ("cisco-ios-xe", "cisco", "ios"),
             ("fortios", "fortinet", "fortigate"),
             ("junos", "juniper", "junos"),
+            ("aruba-aos-cx", "hpe", "aoscx"),
+            ("aruba-aos-switch", "hpe", "procurve"),
         )
         for platform, vendor, model in cases:
             with self.subTest(platform=platform):

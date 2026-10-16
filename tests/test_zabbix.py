@@ -266,6 +266,7 @@ class FakeOpenBao:
         if (vendor, profile) not in {
             ("cisco", "default"),
             ("sophos", "default"),
+            ("hpe", "default"),
         }:
             raise AssertionError("unexpected credential lookup")
         return {"version": "2c", "community": COMMUNITY}, 7
@@ -465,6 +466,29 @@ class ZabbixSyncTests(unittest.TestCase):
         by_host = {payload["host"]: payload for payload in client.created}
         self.assertEqual(by_host["CBS350-01"]["templates"], [{"templateid": "20"}])
         self.assertEqual(by_host["CBS220-01"]["templates"], [{"templateid": "25"}])
+
+    def test_aruba_switch_platforms_use_generic_snmp_template(self):
+        devices = [
+            netbox_device(
+                id=401,
+                name="CX6300-01",
+                platform={"slug": "aruba-aos-cx"},
+                device_type={"manufacturer": {"slug": "hpe"}},
+            ),
+            netbox_device(
+                id=402,
+                name="2930F-01",
+                platform={"slug": "aruba-aos-switch"},
+                device_type={"manufacturer": {"slug": "hpe"}},
+            ),
+        ]
+
+        result, client = self.sync(devices)
+
+        self.assertEqual(result.summary.created, 2)
+        by_host = {payload["host"]: payload for payload in client.created}
+        self.assertEqual(by_host["CX6300-01"]["templates"], [{"templateid": "25"}])
+        self.assertEqual(by_host["2930F-01"]["templates"], [{"templateid": "25"}])
 
     def test_sophos_red_is_not_silently_treated_as_snmp_firewall(self):
         device = netbox_device(

@@ -14,6 +14,8 @@ platforms:
   sophos-sfos: {name: Sophos Firewall OS, manufacturer: Sophos}
   sophos-ap: {name: Sophos Access Point, manufacturer: Sophos}
   sophos-red: {name: Sophos SD-RED, manufacturer: Sophos}
+  aruba-aos-cx: {name: Aruba AOS-CX, manufacturer: HPE}
+  aruba-aos-switch: {name: Aruba AOS-Switch, manufacturer: HPE}
 
 # Explicit fields avoid confusing filenames, display models and slugs.
 # Multiple matches to different platforms are an error, not first-match-wins.
@@ -91,6 +93,37 @@ platform_mappings:
       platform: sophos-ap
     - slugs: ['sophos-sd-red-*']
       platform: sophos-red
+  HPE:
+    - slugs:
+        - 'hpe-aruba-5420'
+        - 'hpe-aruba-6000-*'
+        - 'hpe-aruba-6100-*'
+        - 'hpe-aruba-6200f-*'
+        - 'hpe-aruba-6200m-*'
+        - 'hpe-aruba-6300f-*'
+        - 'hpe-aruba-6300m-*'
+        - 'hpe-aruba-6405*'
+        - 'hpe-aruba-6410*'
+        - 'hpe-aruba-8100-*'
+        - 'hpe-aruba-8320-*'
+        - 'hpe-aruba-8325-*'
+        - 'hpe-aruba-8360-*'
+        - 'hpe-aruba-8400'
+        - 'hpe-aruba-10000-*'
+      platform: aruba-aos-cx
+    - slugs:
+        - 'hpe-aruba-2530-*'
+        - 'hpe-aruba-2540-*'
+        - 'hpe-aruba-2620-*'
+        - 'hpe-aruba-2920-*'
+        - 'hpe-aruba-2930f-*'
+        - 'hpe-aruba-2930m-*'
+        - 'hpe-aruba-3810m-*'
+        - 'hpe-aruba-5406r-*'
+        - 'hpe-aruba-5412r-*'
+      platform: aruba-aos-switch
+    # Instant On, AP/IAP, mobility controllers, EdgeConnect and Comware are
+    # deliberately excluded until each OS family has its own reviewed contract.
 
 oxidized:
   image: docker.io/oxidized/oxidized:0.37.0
@@ -101,6 +134,8 @@ oxidized_platform_mapping:
   cisco-nxos: {model: nxos}
   fortios: {model: fortigate}
   junos: {model: junos}
+  aruba-aos-cx: {model: aoscx}
+  aruba-aos-switch: {model: procurve}
 # CBS, FortiAP and hardware FortiAnalyzer are deliberately unmapped pending
 # driver/hardware validation. Presence of ciscosmb/fortios.rb is not that proof.
 # Sophos platforms are inventory/monitoring identities only; no unverified
