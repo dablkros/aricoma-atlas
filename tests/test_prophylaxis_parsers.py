@@ -188,8 +188,8 @@ class ProphylaxisParserTests(unittest.TestCase):
                 "serial_number": "FGVMEV1234567890",
                 "uptime_state": {
                     "results": {
-                        "snapshot_utc_time": 1_700_100_000,
-                        "utc_last_reboot": 1_700_000_000,
+                        "snapshot_utc_time": 1_700_100_000_000,
+                        "utc_last_reboot": 1_700_000_000_000,
                     }
                 },
             },

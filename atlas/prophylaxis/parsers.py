@@ -394,8 +394,16 @@ def parse_fortios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
         raise ParseFailedError() from None
     if reboot_value < 0 or snapshot_value < reboot_value:
         raise ParseFailedError()
+    millisecond_epoch_threshold = 100_000_000_000
+    snapshot_is_milliseconds = snapshot_value >= millisecond_epoch_threshold
+    reboot_is_milliseconds = reboot_value >= millisecond_epoch_threshold
+    if snapshot_is_milliseconds != reboot_is_milliseconds:
+        raise ParseFailedError()
+    uptime_seconds = snapshot_value - reboot_value
+    if snapshot_is_milliseconds:
+        uptime_seconds //= 1_000
     enriched = dict(data)
-    enriched["uptime_seconds"] = snapshot_value - reboot_value
+    enriched["uptime_seconds"] = uptime_seconds
     enriched.pop("uptime_state", None)
     return _device_facts(enriched)
 
