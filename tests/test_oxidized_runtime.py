@@ -71,10 +71,10 @@ class OxidizedRuntimeTests(unittest.TestCase):
     def tearDown(self):
         self.environment.stop()
 
-    def test_canonical_config_uses_jsonfile_strict_ssh_and_significant_fortigate_changes(self):
+    def test_canonical_config_uses_jsonfile_insecure_ssh_and_significant_fortigate_changes(self):
         result = deploy_oxidized.canonical_oxidized_config(config()["oxidized"])
 
-        self.assertTrue(result["input"]["ssh"]["secure"])
+        self.assertFalse(result["input"]["ssh"]["secure"])
         self.assertEqual(
             result["models"]["fortigate"]["vars"]["output_store_mode"],
             "on_significant",

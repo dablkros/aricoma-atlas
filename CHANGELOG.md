@@ -32,14 +32,14 @@ the corresponding Git tag.
 
 ### Security
 
-- Enabled strict Oxidized SSH host-key verification against the persistent
-  administrator-approved `known_hosts` trust store.
 - Runtime credentials remain in OpenBao and ephemeral/root-owned runtime
   files; they are not stored in NetBox or tracked Git files.
 - Monitoring write operations require a local bearer token and reviewed plan.
 
 ### Known limitations
 
+- Oxidized SSH host-key verification remains deliberately disabled with
+  `secure: false`; fingerprint commands are diagnostic and do not enforce trust.
 - Cisco CBS `ciscosmb` compatibility has not been accepted against physical
   CBS220/250/350 hardware.
 - FortiGate monitoring provisioning still requires the documented live-lab

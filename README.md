@@ -65,7 +65,7 @@ Definovaný clean-install flow zahŕňa:
 - zdravý Zabbix API/server/web/database stack,
 - waiting stránku namiesto chyby backendu pri nulovom inventári,
 - reload inventára cez `atlasctl oxidized reconcile`,
-- strict SSH host-key verification,
+- vedome vypnuté Oxidized SSH host-key verification (`secure: false`),
 - persistentný Oxidized `known_hosts` a Git runtime,
 - polling interval `3600` sekúnd.
 
@@ -132,8 +132,8 @@ V aktuálnom beta prostredí:
 - Nginx vyžaduje konkrétnu management IP a explicitný CIDR allowlist,
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
 - Oxidized web/API je chránený OpenBao-backed Basic Auth,
-- Oxidized má nastavené `secure: true` a overuje SSH host key proti persistentnému `known_hosts`,
-- nový alebo zmenený host key vyžaduje samostatné overenie fingerprintu a explicitné schválenie.
+- Oxidized má v tejto beta konfigurácii vedome nastavené `secure: false`; SSH host key sa preto neoveruje,
+- persistentný `known_hosts` a fingerprint príkazy sú iba diagnostické; pri `secure: false` pripojenie neobmedzujú.
 
 Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
 
@@ -147,7 +147,7 @@ Pred produkčným nasadením je potrebné doplniť minimálne:
 6. definovaný host-key rotation proces so samostatným schválením,
 7. individuálne roly alebo SSO pre administratívny web/API prístup.
 
-Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie certifikátu a nesmie vypnúť SSH host-key verification ako náhradu za správu trustu.
+Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie TLS certifikátu. Vypnuté Oxidized SSH host-key verification je samostatná, explicitne zdokumentovaná bezpečnostná výnimka.
 
 ---
 
@@ -198,7 +198,7 @@ deploy.sh / atlasctl deploy
     │      ├── persistentný runtime a Git volume
     │      ├── WAITING_FOR_INVENTORY pri 0 zariadeniach
     │      ├── ephemeral JSONFile inventory + hodinový polling
-    │      ├── strict SSH host-key verification
+    │      ├── host-key verification vypnuté (`secure: false`)
     │      └── web/API iba v internej Docker sieti
     │
     ├── 4. Atlas backend
@@ -2059,7 +2059,9 @@ Súbor má mode `0640` a inventárový adresár `0750`; Oxidized proces použív
 
 ## SSH host-key verification
 
-Oxidized má zapnuté host-key verification (`secure: true`) a používa persistentný trust store:
+Oxidized má zámerne a trvalo vypnuté host-key verification (`secure: false`). Oxidized 0.37.0 preto nastaví Net::SSH `verify_host_key: :never`. Toto odstraňuje onboarding blokovaný neznámym alebo zmeneným kľúčom, ale zároveň neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
+
+Persistentný súbor zostáva dostupný pre diagnostiku, ale pri aktuálnom kontrakte nevynucuje trust:
 
 ```text
 /opt/aricoma-atlas/.runtime/oxidized/ssh/known_hosts
@@ -2067,7 +2069,7 @@ Oxidized má zapnuté host-key verification (`secure: true`) a používa persist
 
 Interaktívne SSH pripojenie používateľa zapisuje do `~/.ssh/known_hosts`; tým sa automaticky nepridá trust pre Oxidized.
 
-Pred prvým backupom nového zariadenia použi tento acceptance flow:
+Voliteľný diagnostický flow na zobrazenie a evidenciu fingerprintu:
 
 1. zobraz kľúče, ktoré zariadenie aktuálne prezentuje:
 
@@ -2105,7 +2107,7 @@ sudo atlasctl status
 sudo atlasctl oxidized logs -f
 ```
 
-Príkaz `scan` trust nemení. `accept` zapíše iba presný fingerprint, ktorý administrátor schválil; zmena kľúča potom skončí explicitným mismatchom a existujúci trust sa automaticky neprepíše.
+Pri `secure: false` obsah `known_hosts` pripojenie neobmedzuje. Príkaz `scan` trust nemení a `accept` iba eviduje schválený fingerprint; Oxidized ho pri tomto nastavení nevynucuje.
 
 ## FortiGate a náhodne prešifrované ENC hodnoty
 
@@ -2608,7 +2610,7 @@ Nasledujúci zoznam opisuje už vydaný tag, nie aktuálny pracovný strom. `v0.
 - zdravý `WAITING_FOR_INVENTORY` stav,
 - persistentný CSV inventory, SSH trust a Git história,
 - complete CSV mapping vrátane `username`, `password` a `enable`,
-- strict SSH host-key verification,
+- vedome vypnuté SSH host-key verification (`secure: false`),
 - reconcile/reload cez `atlasctl`,
 - hodinový polling (`interval: 3600`),
 - Nginx HTTPS proxy s internou CA a CIDR allowlistom,

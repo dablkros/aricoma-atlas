@@ -44,9 +44,9 @@ early below Python 3.12.
   enable flags and `credential_profile`.
 - **Fact:** OpenBao remains the source of credentials. Runtime identity and
   materialized credential files are ignored by Git.
-- **Fact:** Oxidized uses JSONFile inventory, keeps configuration history in a
-  persistent Git volume and enforces SSH host-key verification against its
-  persistent administrator-approved `known_hosts` file.
+- **Fact:** Oxidized uses JSONFile inventory and keeps configuration history in
+  a persistent Git volume. Its beta configuration deliberately has SSH
+  host-key verification disabled with `secure: false`.
 - **Fact:** Zabbix 7.0.31 is the monitoring backend. Host provisioning is
   declarative and tested for repeat execution.
 - **Fact:** monitoring configuration files use schema v2. The prophylaxis
@@ -71,6 +71,10 @@ Primary Oxidized evidence: [ciscosmb model at 0.37.0](https://github.com/ytti/ox
 
 ## 5. Known limitations
 
+- **Accepted security exception:** Oxidized deliberately does not verify SSH
+  host keys while `secure: false` is configured. The persistent `known_hosts`
+  and fingerprint scan/accept commands are diagnostic only and do not enforce
+  trust under this contract.
 - **SHOULD FIX:** OpenBao still runs with server TLS disabled; compensate with
   host/network isolation until end-to-end TLS is implemented.
 - **SHOULD FIX:** production backend configuration has legacy FortiOS
