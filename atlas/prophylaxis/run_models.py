@@ -10,6 +10,7 @@ from atlas.prophylaxis.models import (
     CPUUtilizationValues,
     DeviceFactsValues,
     OSVersionValues,
+    UptimeValues,
 )
 
 
@@ -27,7 +28,7 @@ class ProphylaxisCheckResult(BaseModel):
     platform: str | None = None
     status: Literal["success", "failed", "incomplete", "skipped"]
     facts: DeviceFactsValues | None = None
-    values: CPUUtilizationValues | OSVersionValues | None = None
+    values: CPUUtilizationValues | OSVersionValues | UptimeValues | None = None
     error: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="after")

@@ -30,6 +30,9 @@ def test_settings(**overrides):
 
 
 class SettingsTests(unittest.TestCase):
+    def test_fortios_certificate_validation_is_disabled_by_default(self):
+        self.assertFalse(Settings(_env_file=None).fortios_validate_certs)
+
     def test_environment_variables_use_atlas_prefix(self):
         with patch.dict(
             os.environ,

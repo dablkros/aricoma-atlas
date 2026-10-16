@@ -52,7 +52,7 @@ class Settings(BaseSettings):
     ssh_strict_host_keys: bool = False
     ssh_connect_timeout: int = Field(default=10, ge=1, le=60)
     ssh_command_timeout: int = Field(default=20, ge=1, le=300)
-    fortios_validate_certs: bool = True
+    fortios_validate_certs: bool = False
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 

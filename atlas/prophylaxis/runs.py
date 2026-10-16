@@ -17,6 +17,7 @@ from atlas.prophylaxis.models import (
     CPUUtilizationValues,
     DeviceFactsValues,
     OSVersionValues,
+    UptimeValues,
 )
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
@@ -352,7 +353,12 @@ class DeviceFactsRunService:
         management_ip: str | None,
         platform: str | None,
         check: CheckId,
-        values: CPUUtilizationValues | DeviceFactsValues | OSVersionValues,
+        values: (
+            CPUUtilizationValues
+            | DeviceFactsValues
+            | OSVersionValues
+            | UptimeValues
+        ),
     ) -> ProphylaxisCheckResult:
         if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
             return ProphylaxisCheckResult(
@@ -369,6 +375,8 @@ class DeviceFactsRunService:
             and isinstance(values, CPUUtilizationValues)
         ) or (
             check == CheckId.OS_VERSION and isinstance(values, OSVersionValues)
+        ) or (
+            check == CheckId.UPTIME and isinstance(values, UptimeValues)
         )
         if not valid_values:
             raise ValueError("collector returned an invalid normalized value")

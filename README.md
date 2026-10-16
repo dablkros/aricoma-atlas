@@ -1696,7 +1696,8 @@ Reusable runtime collection vrstva je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
 CPU collector pre explicitné platformy `cisco-ios`, `cisco-ios-xe`,
 `cisco-cbs`, `cisco-cbs250-350` a `fortios`. Collector `device_facts` navyše
-podporuje `aruba-aos-cx` a zbiera iba `hostname`, `model` a `os_version`.
+podporuje `aruba-aos-cx` a zbiera `hostname`, `model`, `os_version`, sériové
+číslo a uptime v sekundách.
 Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
 výrobcu. Vrstva
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
@@ -1704,18 +1705,18 @@ secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
 Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
-`profylaxia_checks`. `device_facts` a `os_version` zdieľajú jeden facts zber;
-`cpu_utilization` používa CPU collector. Nepodporované voľby sa zaznamenajú ako
+`profylaxia_checks`. `device_facts`, `os_version` a `uptime` zdieľajú jeden
+facts collector job; `cpu_utilization` používa CPU collector. Nepodporované voľby sa zaznamenajú ako
 `skipped` s kódom `unsupported_check`. Pôvodná manuálna CPU kontrola zostáva
 dostupná cez API.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
-| `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | `cisco.ios.ios_facts`; cez Telnet NTC `show version` + `show inventory` |
-| `cisco-ios-xe` | `network_cli` | `cisco.ios.ios_facts` s minimálnym subsetom |
+| `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | NTC `show version` + `show inventory` |
+| `cisco-ios-xe` | `network_cli` | NTC `show version` + `show inventory` |
 | `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
-| `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` a explicitný parser |
-| `fortios` | `httpapi` cez HTTPS | `fortinet.fortios.fortios_monitor_fact` (`system_status`) |
+| `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
+| `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
 
 Aruba SSH/CLI modul potrebuje v backend image aj Python knižnicu Paramiko.
 Atlas ju pripína v `requirements.txt`; zmena sa prejaví až po novom zostavení
@@ -1742,8 +1743,14 @@ credentials aj dáta bez šifrovania; služba v NetBoxe preto predstavuje vedom�
 povolenie pre dané zariadenie. Telnet facts sa parsujú cez pripnuté NTC
 Templates `cisco_ios`.
 
-FortiOS má v produkčnom deployment profile zapnuté overenie certifikátu. Atlas
-host preto musí dôverovať CA, ktorá podpísala FortiGate HTTPS certifikát.
+Textový Profylaxia report pri úspešných checkoch uvádza normalizované CPU
+percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. Raw
+CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
+dostupné aj v `result.json` a API behu.
+
+FortiOS ostáva pripojený cez HTTPS API, ale beta deployment profil má
+`fortios_validate_certs: false`, aby self-signed certifikát neblokoval zber.
+Prenos je šifrovaný, identita HTTPS servera sa však neoveruje.
 
 Beta backend deployment nastavuje `ATLAS_SSH_STRICT_HOST_KEYS=false`, takže
 Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto
@@ -1752,7 +1759,7 @@ servera a zvyšuje riziko MITM útoku.
 
 Aktuálne možnosti:
 
-- `device_facts` — Device facts (`hostname`, `model`, `os_version`)
+- `device_facts` — Device identity, serial & uptime (`hostname`, `model`, `os_version`, `serial_number`, `uptime_seconds`)
 - `cpu_utilization` — CPU utilization
 - `os_version` — OS version
 - `cpu_temperature` — CPU temperature

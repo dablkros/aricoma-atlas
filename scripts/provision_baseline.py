@@ -519,8 +519,13 @@ PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES = [
     *LEGACY_PROPHYLAXIS_CHOICES[1:],
 ]
 
-STABLE_ID_PROPHYLAXIS_CHOICES = [
+DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES = [
     ["device_facts", "Device facts"],
+    *PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
+]
+
+STABLE_ID_PROPHYLAXIS_CHOICES = [
+    ["device_facts", "Device identity, serial & uptime"],
     *PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
 ]
 
@@ -540,6 +545,7 @@ def is_supported_choice_set_migration(
         in (
             LEGACY_PROPHYLAXIS_CHOICES,
             PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
+            DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
         )
         and
         desired.get("extra_choices")
@@ -639,7 +645,7 @@ def provision_choice_sets(
         ):
             print(
                 f"[MIGRATE] {name}: "
-                "legacy CPU choice -> stable check IDs"
+                "supported Atlas choice-set upgrade"
             )
 
             existing = client.patch(

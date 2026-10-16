@@ -7,8 +7,10 @@
   register: atlas_aoscx_facts
   changed_when: false
 
-- name: Prepare Aruba AOS-CX output for Atlas normalization
+- name: Prepare Aruba AOS-CX command outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      raw_output: "{{ atlas_aoscx_facts.stdout | join('\n') }}"
+      data:
+        show_system: "{{ atlas_aoscx_facts.stdout[0] }}"
+        show_version: "{{ atlas_aoscx_facts.stdout[1] }}"
 

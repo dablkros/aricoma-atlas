@@ -8,6 +8,7 @@ from atlas.prophylaxis.models import (
     DeviceFactsValues,
     OSVersionValues,
     RawCollectorResult,
+    UptimeValues,
 )
 
 
@@ -107,6 +108,16 @@ def _device_facts(values: object) -> DeviceFactsValues:
         if not isinstance(value, str) or not value.strip():
             raise ParseFailedError()
         normalized[key] = " ".join(value.split())
+    serial_number = values.get("serial_number")
+    if isinstance(serial_number, str) and serial_number.strip():
+        normalized["serial_number"] = " ".join(serial_number.split())
+    uptime_seconds = values.get("uptime_seconds")
+    if (
+        isinstance(uptime_seconds, int)
+        and not isinstance(uptime_seconds, bool)
+        and uptime_seconds >= 0
+    ):
+        normalized["uptime_seconds"] = uptime_seconds
     try:
         return DeviceFactsValues.model_validate(normalized)
     except ValueError:
@@ -115,6 +126,44 @@ def _device_facts(values: object) -> DeviceFactsValues:
 
 def parse_structured_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     return _device_facts(raw.data)
+
+
+def _duration_seconds(**parts: object) -> int:
+    multipliers = {
+        "years": 365 * 24 * 60 * 60,
+        "weeks": 7 * 24 * 60 * 60,
+        "days": 24 * 60 * 60,
+        "hours": 60 * 60,
+        "minutes": 60,
+        "seconds": 1,
+    }
+    total = 0
+    found = False
+    for name, multiplier in multipliers.items():
+        value = parts.get(name)
+        if isinstance(value, str) and value.isdigit():
+            value = int(value)
+        if isinstance(value, int) and not isinstance(value, bool) and value >= 0:
+            total += value * multiplier
+            found = True
+    if not found:
+        raise ParseFailedError()
+    return total
+
+
+def _first_text(rows: object, key: str) -> str | None:
+    if not isinstance(rows, list):
+        return None
+    return next(
+        (
+            value.strip()
+            for row in rows
+            if isinstance(row, dict)
+            and isinstance((value := row.get(key)), str)
+            and value.strip()
+        ),
+        None,
+    )
 
 
 def parse_cisco_ios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
@@ -160,6 +209,7 @@ def parse_cisco_ios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
         ),
         None,
     )
+    inventory_serial = _first_text(inventory_rows, "sn")
     hardware = version.get("hardware")
     version_model = (
         hardware[0]
@@ -168,11 +218,32 @@ def parse_cisco_ios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
         and isinstance(hardware[0], str)
         else None
     )
+    version_serials = version.get("serial")
+    version_serial = (
+        version_serials[0]
+        if isinstance(version_serials, list)
+        and version_serials
+        and isinstance(version_serials[0], str)
+        and version_serials[0].strip()
+        else None
+    )
+    serial_number = inventory_serial or version_serial
+    if serial_number is None:
+        raise ParseFailedError()
+    uptime_seconds = _duration_seconds(
+        years=version.get("uptime_years"),
+        weeks=version.get("uptime_weeks"),
+        days=version.get("uptime_days"),
+        hours=version.get("uptime_hours"),
+        minutes=version.get("uptime_minutes"),
+    )
     return _device_facts(
         {
             "hostname": version.get("hostname"),
             "model": inventory_model or version_model,
             "os_version": version.get("version"),
+            "serial_number": serial_number,
+            "uptime_seconds": uptime_seconds,
         }
     )
 
@@ -222,51 +293,119 @@ def parse_cisco_cbs_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     )
     if model_match is None:
         raise ParseFailedError()
+    serial_match = re.search(
+        r"(?im)^\s*PID:\s*\S+.*?\bSN:\s*(?P<serial>\S+)",
+        command_outputs["show_inventory"],
+    )
+    uptime_match = re.fullmatch(
+        r"\s*(?P<days>\d+)\s*,\s*(?P<hours>\d+):"
+        r"(?P<minutes>\d+):(?P<seconds>\d+)\s*",
+        str(system_rows[0].get("up_time") or ""),
+    )
+    if serial_match is None or uptime_match is None:
+        raise ParseFailedError()
     return _device_facts(
         {
             "hostname": system_rows[0].get("hostname"),
             "model": model_match.group("model"),
             "os_version": version_rows[0].get("sw_version"),
+            "serial_number": serial_match.group("serial"),
+            "uptime_seconds": _duration_seconds(**uptime_match.groupdict()),
         }
     )
 
 
 def parse_aruba_aoscx_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
-    text = raw.raw_output
-    if not isinstance(text, str):
-        raise ParseFailedError()
-    patterns = {
-        "hostname": (
-            r"(?im)^\s*Hostname\s*:\s*(\S.*?)\s*$",
-            r"(?im)^\s*System Name\s*:\s*(\S.*?)\s*$",
-        ),
-        "model": (
-            r"(?im)^\s*Product Name\s*:\s*(\S.*?)\s*$",
-            r"(?im)^\s*Platform\s*:\s*(\S.*?)\s*$",
-        ),
-        "os_version": (
-            r"(?im)^\s*Version\s*:\s*(\S.*?)\s*$",
-            r"(?im)^\s*ArubaOS-CX\s+Version\s*:\s*(\S.*?)\s*$",
-        ),
-    }
-    values = {}
-    for key, candidates in patterns.items():
-        match = next(
-            (match for pattern in candidates if (match := re.search(pattern, text))),
-            None,
-        )
-        if match is None:
+    data = raw.data
+    if not isinstance(data, dict):
+        text = raw.raw_output
+        if not isinstance(text, str):
             raise ParseFailedError()
-        values[key] = match.group(1)
-    return _device_facts(values)
+        legacy_patterns = {
+            "hostname": r"(?im)^\s*(?:Hostname|System Name)\s*:\s*(\S.*?)\s*$",
+            "model": r"(?im)^\s*(?:Product Name|Platform)\s*:\s*(\S.*?)\s*$",
+            "os_version": (
+                r"(?im)^\s*(?:Version|ArubaOS-CX Version)\s*:\s*(\S.*?)\s*$"
+            ),
+        }
+        legacy_values = {}
+        for key, pattern in legacy_patterns.items():
+            match = re.search(pattern, text)
+            if match is None:
+                raise ParseFailedError()
+            legacy_values[key] = match.group(1)
+        return _device_facts(legacy_values)
+    system_output = data.get("show_system")
+    if not isinstance(system_output, str) or not system_output.strip():
+        raise ParseFailedError()
+    try:
+        from ntc_templates.parse import parse_output
+
+        rows = parse_output(
+            platform="aruba_aoscx",
+            command="show system",
+            data=system_output,
+        )
+    except Exception:
+        raise ParseFailedError() from None
+    if not rows or not isinstance(rows[0], dict):
+        raise ParseFailedError()
+    values = rows[0]
+    serial_number = values.get("serial")
+    if not isinstance(serial_number, str) or not serial_number.strip():
+        raise ParseFailedError()
+    try:
+        uptime_seconds = _duration_seconds(
+            weeks=values.get("uptime_weeks"),
+            days=values.get("uptime_days"),
+            hours=values.get("uptime_hours"),
+            minutes=values.get("uptime_minutes"),
+        )
+    except ParseFailedError:
+        if re.search(r"(?im)^\s*Up Time\s*:\s*under a minute\s*$", system_output):
+            uptime_seconds = 0
+        else:
+            raise
+    return _device_facts(
+        {
+            "hostname": values.get("hostname"),
+            "model": values.get("product"),
+            "os_version": values.get("version"),
+            "serial_number": serial_number,
+            "uptime_seconds": uptime_seconds,
+        }
+    )
+
+
+def parse_fortios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    data = raw.data
+    if not isinstance(data, dict):
+        raise ParseFailedError()
+    uptime_state = data.get("uptime_state")
+    results = uptime_state.get("results") if isinstance(uptime_state, dict) else None
+    if not isinstance(results, dict):
+        return _device_facts(data)
+    snapshot = results.get("snapshot_utc_time")
+    reboot = results.get("utc_last_reboot")
+    try:
+        snapshot_value = int(snapshot)
+        reboot_value = int(reboot)
+    except (TypeError, ValueError):
+        raise ParseFailedError() from None
+    if reboot_value < 0 or snapshot_value < reboot_value:
+        raise ParseFailedError()
+    enriched = dict(data)
+    enriched["uptime_seconds"] = snapshot_value - reboot_value
+    enriched.pop("uptime_state", None)
+    return _device_facts(enriched)
 
 
 DEVICE_FACTS_PARSERS = {
     "cisco-ios": parse_cisco_ios_device_facts,
-    "cisco-ios-xe": parse_structured_device_facts,
+    "cisco-ios-xe": parse_cisco_ios_device_facts,
     "cisco-cbs": parse_cisco_cbs_device_facts,
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
-    "fortios": parse_structured_device_facts,
+    "fortios": parse_fortios_device_facts,
     "aruba-aos-cx": parse_aruba_aoscx_device_facts,
 }
 
@@ -286,14 +425,23 @@ def normalize_os_version(raw: RawCollectorResult) -> OSVersionValues:
     return OSVersionValues(os_version=facts.os_version)
 
 
+def normalize_uptime(raw: RawCollectorResult) -> UptimeValues:
+    facts = normalize_device_facts(raw)
+    if facts.uptime_seconds is None:
+        raise ParseFailedError()
+    return UptimeValues(uptime_seconds=facts.uptime_seconds)
+
+
 __all__ = [
     "normalize_cpu",
     "normalize_device_facts",
     "normalize_os_version",
+    "normalize_uptime",
     "parse_aruba_aoscx_device_facts",
     "parse_cisco_cbs_device_facts",
     "parse_cisco_cbs_cpu",
     "parse_cisco_ios_device_facts",
     "parse_cisco_ios_cpu",
     "parse_fortios_cpu",
+    "parse_fortios_device_facts",
 ]

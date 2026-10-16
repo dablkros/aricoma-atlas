@@ -25,7 +25,7 @@ def backend_config(**overrides):
             "environment": "production",
             "log_level": "INFO",
             "ansible_job_timeout": 120,
-            "fortios_validate_certs": True,
+            "fortios_validate_certs": False,
             "ssh_strict_host_keys": True,
             "prophylaxis_result_retention": 10000,
             "prophylaxis_concurrency": 4,
@@ -57,7 +57,7 @@ class BackendConfigurationTests(unittest.TestCase):
             f"aricoma-atlas-backend:{__version__}",
         )
         self.assertIn(f"ATLAS_APP_VERSION={__version__}", env_example.splitlines())
-        self.assertTrue(config["backend"]["fortios_validate_certs"])
+        self.assertFalse(config["backend"]["fortios_validate_certs"])
 
     def test_public_listen_address_is_rejected(self):
         config = backend_config(network={"listen_address": "0.0.0.0"})

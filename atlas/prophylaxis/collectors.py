@@ -10,16 +10,20 @@ from atlas.prophylaxis.models import (
     DeviceFactsValues,
     OSVersionValues,
     RawCollectorResult,
+    UptimeValues,
 )
 from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_os_version,
+    normalize_uptime,
 )
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
-NormalizedValues = CPUUtilizationValues | DeviceFactsValues | OSVersionValues
+NormalizedValues = (
+    CPUUtilizationValues | DeviceFactsValues | OSVersionValues | UptimeValues
+)
 Normalizer = Callable[[RawCollectorResult], NormalizedValues]
 
 
@@ -66,6 +70,7 @@ DEVICE_FACTS_COLLECTOR = CollectorSpec(
     normalizers={
         CheckId.DEVICE_FACTS: normalize_device_facts,
         CheckId.OS_VERSION: normalize_os_version,
+        CheckId.UPTIME: normalize_uptime,
     },
 )
 

@@ -74,10 +74,11 @@ cpu_temperature
 uptime
 ```
 
-V tejto iterácii sú implementované `cpu_utilization`, `device_facts` a
-`os_version`. `device_facts` normalizuje presne hostname, model a OS verziu;
-samostatná kontrola `os_version` používa ten istý facts collector, takže pri
-spoločnom výbere nevznikne druhé pripojenie. Hromadný beh zostaví plán z
+V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
+`os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
+sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
+používajú ten istý facts collector, takže pri spoločnom výbere nevznikne druhý
+collector job. Hromadný beh zostaví plán z
 `profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
 neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
 `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
@@ -91,12 +92,12 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 | NetBox platform | Connection | Network OS | `device_facts` modul |
 | --- | --- | --- | --- |
-| `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `cisco.ios.ios_facts`; Telnet `show version` + `show inventory` |
-| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_facts` |
+| `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
+| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
-| `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `arubanetworks.aoscx.aoscx_command` |
-| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
+| `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
+| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
 `show cpu utilization`. FortiOS používa monitor selector
@@ -150,6 +151,11 @@ Výstupy device facts parsujú pripnuté NTC Templates `cisco_ios`; prihlasovaci
 Telnet neprenáša prihlásenie ani dáta šifrovane, preto služba v NetBoxe slúži
 ako vedomé povolenie pre konkrétne zariadenie.
 
+Dokončený `report.txt` obsahuje pri úspešných checkoch aj normalizované
+hodnoty: CPU percentá, hostname, model, OS verziu, sériové číslo a uptime v
+sekundách. Report neobsahuje raw CLI výstup ani credentials. Rovnaké typované
+hodnoty sú uložené v `result.json` a vrátené cez API behu.
+
 ## Runtime a secrets
 
 Atlas vytvorí pre každý job jediný in-memory inventory host `atlas_target`.
@@ -174,10 +180,10 @@ onboarding, ale neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
 Ak sa strict režim neskôr zapne, backend skopíruje existujúci Oxidized
 `known_hosts` do dočasného Runner HOME.
 
-Nasadzovaný profil má `fortios_validate_certs: true`; FortiOS HTTPS certifikát
-sa overuje. Atlas host musí dôverovať CA, ktorá certifikát podpísala. Hodnota sa
-nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`.
-Interný fallback aplikácie je tiež `true`.
+Nasadzovaný beta profil má `fortios_validate_certs: false`. FortiOS sa stále
+kontaktuje cez HTTPS, ale Atlas neoveruje CA ani identitu servera. Hodnota sa
+nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`;
+interný fallback aplikácie je tiež `false`.
 
 FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na

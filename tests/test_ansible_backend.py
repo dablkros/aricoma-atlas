@@ -49,7 +49,7 @@ class AnsibleBackendTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def backend(self, runner):
+    def backend(self, runner, *, fortios_validate_certs=True):
         return AnsibleBackend(
             ROOT / "automation",
             known_hosts_file=self.known_hosts,
@@ -57,7 +57,7 @@ class AnsibleBackendTests(unittest.TestCase):
             connect_timeout=10,
             command_timeout=20,
             job_timeout=120,
-            fortios_validate_certs=True,
+            fortios_validate_certs=fortios_validate_certs,
             runner=runner,
         )
 
@@ -136,6 +136,31 @@ class AnsibleBackendTests(unittest.TestCase):
             "token-value",
         )
         self.assertNotIn("token-value", repr(call["extravars"]))
+
+    def test_fortios_can_disable_certificate_validation(self):
+        runner = CapturingRunner(
+            {
+                "schema_version": 1,
+                "check": "device_facts",
+                "platform": "fortios",
+                "status": "ok",
+                "data": {"hostname": "FGT"},
+                "raw_output": None,
+                "error_code": None,
+            }
+        )
+        profile = AnsiblePlatformRegistry().resolve("fortios")
+
+        self.backend(runner, fortios_validate_certs=False).execute(
+            host="192.0.2.20",
+            port=444,
+            profile=profile,
+            check_id=CheckId.DEVICE_FACTS,
+            credentials={"api_token": "token-value"},
+        )
+
+        host = runner.calls[0]["inventory"]["all"]["hosts"]["atlas_target"]
+        self.assertFalse(host["ansible_httpapi_validate_certs"])
 
     def test_failure_classification_covers_safe_network_categories(self):
         cases = (

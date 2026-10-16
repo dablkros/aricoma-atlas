@@ -30,12 +30,20 @@ class DeviceFactsValues(BaseModel):
     hostname: str = Field(min_length=1, max_length=255)
     model: str = Field(min_length=1, max_length=255)
     os_version: str = Field(min_length=1, max_length=255)
+    serial_number: str | None = Field(default=None, min_length=1, max_length=255)
+    uptime_seconds: int | None = Field(default=None, ge=0)
 
 
 class OSVersionValues(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     os_version: str = Field(min_length=1, max_length=255)
+
+
+class UptimeValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    uptime_seconds: int = Field(ge=0)
 
 
 class CPUUtilizationValues(BaseModel):
@@ -148,4 +156,5 @@ __all__ = [
     "SCHEMA_VERSION",
     "StoredCPUCheckResult",
     "StoredCheckResult",
+    "UptimeValues",
 ]

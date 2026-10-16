@@ -95,6 +95,36 @@ class FileRunStore:
                 raise RunStoreError() from None
 
     @staticmethod
+    def _result_detail(result) -> str:
+        if result.error:
+            return result.error
+        if result.facts is not None:
+            values = result.facts.model_dump()
+            return ", ".join(
+                f"{field}={value}"
+                for field, value in values.items()
+                if value is not None
+            )
+        if result.values is not None:
+            values = result.values.model_dump()
+            labels = {
+                "current_percent": "current",
+                "one_minute_percent": "one_minute",
+                "five_minute_percent": "five_minutes",
+            }
+            detail = []
+            for field, value in values.items():
+                if value is None:
+                    continue
+                label = labels.get(field, field)
+                if field.endswith("_percent"):
+                    detail.append(f"{label}={value:g}%")
+                else:
+                    detail.append(f"{label}={value}")
+            return ", ".join(detail) or "collected"
+        return "collected"
+
+    @staticmethod
     def _report(run: ProphylaxisRun) -> str:
         lines = [
             "Aricoma Atlas Profylaxia report",
@@ -115,7 +145,7 @@ class FileRunStore:
         if run.results:
             lines.extend(("", "Checks:"))
             for result in run.results:
-                detail = result.error or "collected"
+                detail = FileRunStore._result_detail(result)
                 lines.append(
                     f"- {result.device_name} [{result.platform or 'unknown'}] "
                     f"{result.check}: "
