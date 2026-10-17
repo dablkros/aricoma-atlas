@@ -1,10 +1,11 @@
-# Monitoring provisioning P0
+# Monitoring provisioning
 
-Atlas reconciles a NetBox-selected FortiGate into SNMPv2c monitoring in
+Atlas reconciles explicitly supported NetBox platforms into SNMPv2c monitoring in
 Zabbix. `monitor_only` reads an existing device-specific SNMP secret and changes
 only the Atlas-owned Zabbix host. `provision_and_monitor` also reconciles the
-FortiGate SNMP agent, one Atlas-owned community, and SNMP access on the
-NetBox-resolved management interface.
+device's Atlas-owned read-only community. Supported platform contracts are
+FortiOS, Cisco IOS/IOS-XE, Cisco CBS/CBS250-350, Aruba AOS-CX, and Aruba
+AOS-Switch. There is no manufacturer-wide fallback.
 
 No write endpoint accepts a management address, API token, SNMP community,
 template, or proxy from the caller. Those values come from NetBox, OpenBao,
@@ -13,8 +14,9 @@ template, or proxy from the caller. Those values come from NetBox, OpenBao,
 NetBox owns device identity, primary IPv4, platform, monitoring selection, and
 `credential_profile`. OpenBao owns operator-managed API credentials and the
 Atlas-generated device SNMP secret. The monitoring YAML contains only
-deployment safety policy. Atlas resolves and plans the desired state; FortiGate
-and Zabbix hold the reconciled runtime state.
+deployment safety policy. Atlas resolves and plans the desired state; Ansible
+executes device mutations; the network device and Zabbix hold the reconciled
+runtime state.
 
 ## Deployment
 
@@ -28,9 +30,9 @@ sudo atlasctl openbao
 
 The role creates, reads, or updates only `atlas/devices/snmp/*`. It cannot
 read operator-managed device credentials, delete secrets, or access deployment
-secrets. FortiGate API tokens are resolved through the same `atlas-backend`
+secrets. FortiGate API tokens and SSH credentials are resolved through the same `atlas-backend`
 credential service used by Profylaxia. The canonical KV v2 path for generated communities is
-`atlas/devices/snmp/fortinet/<netbox-device-id>/monitoring`.
+`atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring`.
 
 Backend deployment creates `.runtime/monitoring/config.yaml` from a safe
 default, `.runtime/monitoring/operator-token`, and a persistent SQLite job
@@ -56,34 +58,47 @@ The browser keeps it only in memory. It is required for every
 
 ## Safe operation
 
-1. In NetBox set `monitoring_enabled=true`, active status, manufacturer
-   `fortinet`, platform `fortios`, primary management IPv4, site, and
-   `credential_profile`.
-2. Assign the primary IP Address object to the management `dcim.interface`.
-3. Add an exact NetBox `fortios-api` TCP service only when the API does not use
+1. In NetBox set `monitoring_enabled=true`, active status, an explicitly
+   supported platform, primary management IPv4, site, and `credential_profile`.
+2. For FortiOS, assign the primary IP Address object to the management
+   `dcim.interface`.
+3. For FortiOS, add an exact NetBox `fortios-api` TCP service only when the API does not use
    the default port 443.
-4. Store the FortiOS API token in the existing device credential profile.
+4. Store the FortiOS API token or SSH username/password in the existing device
+   credential profile.
 5. Configure the allowed management networks and one site-level Zabbix egress
    `monitoring.source_ip`. Atlas blocks provisioning if it cannot determine it.
 6. In the Atlas UI enter the operator token, select a mode, and inspect. The
-   plan shows the API endpoint, interface, resolved VDOM, ports, source IP,
-   credential profile, and template without secret values.
+   plan shows the resolved API or SSH endpoint, applicable FortiOS context,
+   ports, source IP, credential profile, and template without secret values.
 7. Review and confirm the plan. Plans expire after 15 minutes and are rejected
    if inspected state changes.
 8. Follow the job until `COMPLETED`, `FAILED`, or `PARTIAL`. Verification
    `PENDING` means Zabbix has not returned a fresh successful `sysObjectID`.
 
-Atlas never removes customer SNMP communities. A community conflict, unmanaged
+Atlas never removes customer SNMP communities. It modifies only the
+`ATLAS-SNMP-V2C` ACL on platforms that support a source ACL. A community conflict, unmanaged
 Zabbix host collision, unexpected schema, or unsupported version stops the
 operation. An interrupted write job becomes `PARTIAL` and requires a new plan.
+
+Cisco IOS/IOS-XE and Aruba AOS-CX bind the generated community to an
+Atlas-owned source ACL. Cisco CBS uses the vendor's source-IP parameter. The
+`community.ciscosmb` collection is command-only, so Atlas performs a read
+before the guarded configuration command and verifies the state afterwards.
+Aruba AOS-Switch 16.x can create a read-only `operator restricted` community,
+but its documented community command cannot bind it to a monitoring source.
+Provisioning that platform therefore requires the explicit site policy
+`monitoring.allow_unrestricted_snmp_v2c: true`; keep it false unless a
+management VLAN ACL or firewall provides equivalent source restriction.
 
 Zabbix writes from both `atlasctl zabbix sync` and approved monitoring jobs are
 owned by the shared `ZabbixSyncService`. Runtime reconciliation uses the
 deployment-managed `Aricoma Atlas` host group and records the NetBox site in the
 `atlas_site` ownership tag. The restricted runtime API identity does not create
 host groups and does not require the Zabbix Super admin user type. Vendor
-drivers only produce device state and SNMP credentials; FortiGate REST and
-future Ansible-backed vendors feed the same Zabbix reconciliation boundary.
+drivers only produce device state and SNMP credentials; every device mutation
+is executed by the isolated `configure_monitoring.yml` Ansible playbook and
+feeds the same Zabbix reconciliation boundary.
 The sync service prefers an Atlas-generated per-device monitoring secret when
 one exists and otherwise retains the existing operator-managed SNMP profile
 lookup. Generated secret paths use
@@ -107,7 +122,8 @@ Write requests require a server-issued `plan_id` and `confirmed: true`.
 
 ## Validated contracts and limits
 
-P0 accepts FortiOS `7.0.9` and Zabbix `7.0.x` only. The management interface
+The FortiOS path accepts FortiOS `7.0.9`; the Zabbix boundary accepts `7.0.x`.
+The FortiGate management interface
 is resolved from the primary IP assignment, the API port from the shared
 `fortios-api` service resolver, and VDOM context from read-only FortiOS state.
 Ambiguous assignments or VDOMs fail closed. The FortiGate field
@@ -124,6 +140,14 @@ Primary references:
   <https://docs.fortinet.com/document/fortigate/7.0.9/cli-reference/708841/cli-configuration-commands>
 - Fortinet Ansible collection 2.6.0:
   <https://github.com/fortinet-ansible-dev/ansible-galaxy-fortios-collection/tree/2.6.0>
+- Cisco IOS SNMP resource module, cisco.ios 11.5.1:
+  <https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/ios_snmp_server_module.html>
+- Cisco CBS250/350 SNMP CLI reference (updated 2025-02-28):
+  <https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-250-cli/snmp-commands.html>
+- Aruba AOS-CX 10.13 SNMP/MIB guide:
+  <https://www.arubanetworks.com/techdocs/AOS-CX/10.13/PDF/snmp_mib.pdf>
+- Aruba AOS-Switch 16.09 management guide:
+  <https://www.arubanetworks.com/techdocs/AOS-Switch/16.09/Aruba%202530%20Management%20and%20Configuration%20Guide%20for%20ArubaOS-Switch%2016.09.pdf>
 - Zabbix 7.0 secret user macros:
   <https://www.zabbix.com/documentation/7.0/en/manual/api/reference/usermacro/object>
 - Zabbix 7.0 host interfaces:

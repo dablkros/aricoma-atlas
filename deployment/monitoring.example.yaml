@@ -11,4 +11,9 @@ fortios:
 monitoring:
   # Site-level Atlas/Zabbix egress IPv4. Never use a subnet or wildcard.
   source_ip: 10.20.30.40
+  default_snmp_port: 161
+  aruba_aoscx_vrf: default
+  # Required only for provisioning ArubaOS-Switch. Prefer network ACL/firewall
+  # filtering because that platform's community command has no source binding.
+  allow_unrestricted_snmp_v2c: false
   # proxy_name: customer-a-proxy

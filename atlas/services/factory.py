@@ -68,16 +68,6 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         zabbix,
         monitoring_secrets=MonitoringSecrets(provisioner),
     )
-    monitoring = MonitoringService(
-        netbox,
-        provisioner,
-        zabbix,
-        settings.monitoring_config_file,
-        settings.monitoring_jobs_directory,
-        credential_source=openbao,
-        zabbix_sync=zabbix_sync,
-    )
-    inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
     ansible_backend = AnsibleBackend(
         settings.ansible_project_dir,
         known_hosts_file=settings.ssh_known_hosts_file,
@@ -87,6 +77,17 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         job_timeout=settings.ansible_job_timeout,
         fortios_validate_certs=settings.fortios_validate_certs,
     )
+    monitoring = MonitoringService(
+        netbox,
+        provisioner,
+        zabbix,
+        settings.monitoring_config_file,
+        settings.monitoring_jobs_directory,
+        credential_source=openbao,
+        zabbix_sync=zabbix_sync,
+        ansible_backend=ansible_backend,
+    )
+    inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
     return DependencyServices(
         monitoring=monitoring,
         openbao=openbao,

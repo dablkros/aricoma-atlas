@@ -1,0 +1,55 @@
+---
+- name: Read the Atlas SNMP and ACL configuration on Cisco IOS
+  cisco.ios.ios_command:
+    commands:
+      - show running-config | section ^ip access-list standard ATLAS-SNMP-V2C
+      - show running-config | include ^snmp-server community
+  register: atlas_cisco_ios_snmp
+  no_log: true
+
+- name: Derive Cisco IOS compliance without returning configuration
+  ansible.builtin.set_fact:
+    atlas_cisco_ios_acl_owned: >-
+      {{ (atlas_cisco_ios_snmp.stdout[0] | default('')) | length == 0 or
+         'remark Managed by Aricoma Atlas' in (atlas_cisco_ios_snmp.stdout[0] | default('')) }}
+    atlas_monitoring_compliant: >-
+      {{ ('snmp-server community ' ~ atlas_snmp_community ~ ' RO ATLAS-SNMP-V2C')
+         in (atlas_cisco_ios_snmp.stdout[1] | default('')) and
+         ('remark Managed by Aricoma Atlas') in (atlas_cisco_ios_snmp.stdout[0] | default('')) and
+         ('permit host ' ~ atlas_monitoring_source_ips[0])
+         in (atlas_cisco_ios_snmp.stdout[0] | default('')) }}
+  no_log: true
+
+- name: Reject an ACL name already owned by another configuration
+  ansible.builtin.assert:
+    that: atlas_cisco_ios_acl_owned | bool
+    fail_msg: atlas_snmp_acl_conflict
+    quiet: true
+
+- name: Configure the Atlas-owned Cisco IOS source ACL
+  cisco.ios.ios_config:
+    parents: ip access-list standard ATLAS-SNMP-V2C
+    lines: "{{ ['remark Managed by Aricoma Atlas'] + (atlas_monitoring_source_ips | map('regex_replace', '^(.*)$', 'permit host \\1') | list) }}"
+    match: exact
+    replace: block
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  no_log: true
+
+- name: Configure the Cisco IOS read-only SNMP community
+  cisco.ios.ios_config:
+    lines:
+      - "snmp-server community {{ atlas_snmp_community }} RO ATLAS-SNMP-V2C"
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  no_log: true
+
+- name: Record Cisco IOS configuration intent
+  ansible.builtin.set_fact:
+    atlas_monitoring_actions: ['Configure Atlas SNMPv2c community and source ACL']
+    atlas_monitoring_compliant: true
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool

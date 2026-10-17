@@ -9,8 +9,8 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
 - **Atlas FastAPI backend 0.4.0-beta** zostavený a spustený v samostatnom kontajneri,
-- plánovaný a potvrdený [FortiGate monitoring provisioning P0](docs/monitoring-provisioning.md)
-  s automatickým NetBox onboardingom a site-level bezpečnostnou politikou,
+- plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
+  pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,
@@ -1109,10 +1109,11 @@ Zabbix host + template + SNMP interface + ownership tags
 
 `atlasctl zabbix sync`, `POST /api/zabbix/sync` a potvrdené Monitoring
 Provisioning joby používajú spoločný `ZabbixSyncService`. Vendor driver vlastní
-iba zariadenie a SNMP desired state: FortiGate P0 používa REST API, budúce
-Cisco a ďalšie platformy môžu použiť Ansible bez vytvorenia ďalšieho Zabbix
-writeru. Zabbix časť vždy dostane normalizovanú identitu, adresu, SNMP secret,
-port, template a ownership tagy.
+iba zariadenie a SNMP desired state. Atlas plánuje a validuje zmenu; izolovaný
+Ansible monitoring playbook vykonáva mutácie pre FortiOS, Cisco IOS/IOS-XE,
+Cisco CBS a Aruba AOS-CX/AOS-Switch bez ďalšieho Zabbix writeru. Zabbix časť
+vždy dostane normalizovanú identitu, adresu, SNMP secret, port, template a
+ownership tagy.
 
 Nasadenie používa Zabbix `7.0.31` LTS, oficiálne server/web image a samostatný
 PostgreSQL kontajner. Verzia je pripnutá v `deployment/zabbix.yaml` a mapovanie
@@ -1232,7 +1233,7 @@ GET  /api/zabbix/status
 GET  /api/zabbix/hosts
 GET  /api/zabbix/problems
 GET  /api/devices/{device_id}/monitoring
-GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d
+GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d|30d
 ```
 
 `sudo atlasctl zabbix credentials` je explicitná privilegovaná operácia: cez
@@ -1242,7 +1243,7 @@ ticketov. Operations UI preberá validované HTTPS originy z `.runtime/proxy.yam
 a pri kartách NetBox, Oxidized a Zabbix zobrazí odkaz **Open** do novej karty.
 
 Metrika sa hľadá podľa centralizovaného item-key prefixu, nie podľa nestabilného
-`itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` používa
+`itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` a `30d` používajú
 `trend.get`. API vracia normalizované body `{timestamp, value}` určené pre
 vlastný Atlas graf, nie embed celého Zabbix frontendu.
 

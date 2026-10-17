@@ -8,6 +8,7 @@ from atlas.prophylaxis.ansible_backend import (
     _failure_context,
     _failure_from_event,
 )
+from atlas.monitoring.ansible import MonitoringAnsibleBackend
 from atlas.prophylaxis.errors import (
     AnsibleContentError,
     AuthenticationFailedError,
@@ -161,6 +162,54 @@ class AnsibleBackendTests(unittest.TestCase):
 
         host = runner.calls[0]["inventory"]["all"]["hosts"]["atlas_target"]
         self.assertFalse(host["ansible_httpapi_validate_certs"])
+
+    def test_monitoring_playbook_keeps_community_out_of_inventory_and_extravars(self):
+        class MonitoringRunner:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                kwargs["event_handler"](
+                    {
+                        "event": "runner_on_ok",
+                        "event_data": {
+                            "task": "atlas_monitoring : ATLAS_MONITORING_RESULT",
+                            "res": {
+                                "ansible_facts": {
+                                    "atlas_monitoring_result": {
+                                        "schema_version": 1,
+                                        "platform": "cisco-ios-xe",
+                                        "compliant": True,
+                                        "actions": [],
+                                    }
+                                }
+                            },
+                        },
+                    }
+                )
+                return SimpleNamespace(status="successful", rc=0)
+
+        runner = MonitoringRunner()
+        shared = self.backend(runner)
+        profile = AnsiblePlatformRegistry().resolve("cisco-ios-xe")
+        result = MonitoringAnsibleBackend(shared).execute(
+            host="192.0.2.30",
+            port=22,
+            profile=profile,
+            credentials={"username": "admin", "password": "device-secret"},
+            operation="inspect",
+            options={"snmp_port": 161, "source_ips": ["192.0.2.5"]},
+            secret={"community": "SnmpSecretValue"},
+        )
+
+        call = runner.calls[0]
+        self.assertTrue(result["compliant"])
+        self.assertEqual(call["playbook"], "playbooks/configure_monitoring.yml")
+        self.assertNotIn("SnmpSecretValue", repr(call["inventory"]))
+        self.assertNotIn("SnmpSecretValue", repr(call["extravars"]))
+        self.assertEqual(call["envvars"]["ATLAS_SNMP_COMMUNITY"], "SnmpSecretValue")
+        self.assertTrue(call["suppress_env_files"])
 
     def test_failure_classification_covers_safe_network_categories(self):
         cases = (

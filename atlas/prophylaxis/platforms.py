@@ -121,6 +121,18 @@ ANSIBLE_PLATFORMS = {
         module_family="arubanetworks.aoscx.aoscx_command",
         supported_collectors=FACTS_ONLY,
     ),
+    "aruba-aos-switch": AnsiblePlatformProfile(
+        slug="aruba-aos-switch",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        ansible_connection="ansible.netcommon.network_cli",
+        ansible_network_os="arubanetworks.aos_switch.arubaoss",
+        authentication="ssh",
+        collection="arubanetworks.aos_switch",
+        module_family="arubanetworks.aos_switch.arubaoss_command",
+        supported_collectors=frozenset(),
+    ),
 }
 
 

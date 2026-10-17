@@ -6,7 +6,12 @@ import time
 
 from atlas.device_credentials import DeviceValidationError, credential_path
 from atlas.integrations.zabbix import ZabbixAPIError
-from atlas.monitoring.fortigate import DRIVERS
+from atlas.monitoring.ansible import MonitoringAnsibleBackend
+from atlas.monitoring.fortigate import FortiGateMonitoringDriver
+from atlas.monitoring.network import (
+    AnsibleNetworkMonitoringDriver,
+    FortiAnsibleConfigurator,
+)
 from atlas.monitoring.models import (
     MonitoringError,
     device_reference,
@@ -16,6 +21,8 @@ from atlas.monitoring.models import (
 )
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.monitoring.store import JobStore
+from atlas.prophylaxis.errors import UnsupportedPlatformError
+from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.services.errors import DependencyError
 from atlas.services.device_resolution import (
     DeviceResolutionError,
@@ -39,6 +46,8 @@ class MonitoringService:
         driver_factory=None,
         credential_source=None,
         zabbix_sync=None,
+        ansible_backend=None,
+        platform_registry=None,
     ):
         self.netbox, self.openbao, self.zabbix = netbox, openbao, zabbix
         # Read operator-managed admin credentials through the same resolver
@@ -52,6 +61,10 @@ class MonitoringService:
         self.store = JobStore(directory)
         self.secrets = MonitoringSecrets(openbao)
         self.driver_factory = driver_factory
+        self.ansible_backend = (
+            MonitoringAnsibleBackend(ansible_backend) if ansible_backend else None
+        )
+        self.platform_registry = platform_registry or AnsiblePlatformRegistry()
 
     def list_devices(self):
         config = load_config(self.config_file)
@@ -64,10 +77,7 @@ class MonitoringService:
                 options = self._resolve_options(device, raw, config)
                 result.append({**asdict(device), "monitoring_enabled": True,
                     "provisioning_status": "READY_TO_INSPECT", "zabbix_status": "NOT_INSPECTED",
-                    "resolved": {"api_endpoint": f"https://{device.address}:{options['https_port']}",
-                        "management_interface": options["interface"],
-                        "snmp_port": options["snmp_port"],
-                        "monitoring_source_ip": options["source_ips"][0]}})
+                    "resolved": self._public_resolved(device, options)})
             except MonitoringError as exc:
                 result.append({"id": raw.get("id"), "name": raw.get("name"), "monitoring_enabled": True,
                                "error_code": exc.code, "provisioning_status": "BLOCKED"})
@@ -76,6 +86,16 @@ class MonitoringService:
     def _resolve_options(self, device, raw, config):
         # The allowlist is checked before any device-oriented NetBox lookup.
         ensure_device_network_allowed(device, config)
+        try:
+            profile = self.platform_registry.resolve(device.platform)
+        except UnsupportedPlatformError:
+            raise MonitoringError("unsupported_monitoring_driver") from None
+        if device.platform != "fortios":
+            return site_options(
+                device,
+                config,
+                ssh_port=profile.default_port,
+            )
         try:
             services = self.netbox.get_device_services(device.id, "fortios-api")
             https_port = resolve_tcp_service_port(
@@ -88,6 +108,58 @@ class MonitoringService:
         except DeviceResolutionError:
             raise MonitoringError("management_interface_unresolved") from None
         return site_options(device, config, https_port=https_port, interface=interface)
+
+    @staticmethod
+    def _public_resolved(device, options):
+        resolved = {
+            "snmp_port": options["snmp_port"],
+            "monitoring_source_ip": options["source_ips"][0],
+        }
+        if device.platform == "fortios":
+            resolved.update(
+                {
+                    "api_endpoint": f"https://{device.address}:{options['https_port']}",
+                    "management_interface": options["interface"],
+                    "vdom": options.get("vdom", options["default_vdom"]),
+                }
+            )
+        else:
+            resolved["ssh_endpoint"] = f"{device.address}:{options['ssh_port']}"
+        return resolved
+
+    def _driver(self, device, options, credentials, secret):
+        if self.driver_factory is not None:
+            credential = (
+                credentials["api_token"]
+                if device.platform == "fortios"
+                else credentials
+            )
+            return self.driver_factory(device, options, credential)
+        if self.ansible_backend is None:
+            raise MonitoringError("ansible_monitoring_not_configured", 503)
+        profile = self.platform_registry.resolve(device.platform)
+        if device.platform == "fortios":
+            configurator = FortiAnsibleConfigurator(
+                device,
+                options,
+                credentials,
+                profile,
+                self.ansible_backend,
+            )
+            return FortiGateMonitoringDriver(
+                device,
+                options,
+                credentials["api_token"],
+                configurator=configurator,
+            )
+        return AnsibleNetworkMonitoringDriver(
+            device,
+            options,
+            credentials,
+            profile,
+            self.ansible_backend,
+            secret,
+        )
 
     @staticmethod
     def fingerprint(value):
@@ -109,18 +181,28 @@ class MonitoringService:
         if device.id != device_id:
             raise MonitoringError("netbox_identity_mismatch", 502)
         options = self._resolve_options(device, raw, config)
+        if (
+            mode == "provision_and_monitor"
+            and device.platform == "aruba-aos-switch"
+            and not options.get("allow_unrestricted_snmp_v2c")
+        ):
+            raise MonitoringError("unrestricted_snmp_v2c_not_allowed")
         self.openbao.check_ready()  # Sealed or unauthenticated => no downstream write.
         stored = self.secrets.read(device)
         if stored is None and mode == "monitor_only":
             raise MonitoringError("snmp_credentials_missing")
         secret, version = stored if stored else (None, 0)
+        profile = self.platform_registry.resolve(device.platform)
         credentials = self.credential_source.get_device_credentials(
-            device.vendor, device.profile, authentication="api_token"
+            device.vendor, device.profile, authentication=profile.authentication
         )
-        factory = self.driver_factory or DRIVERS[(device.vendor, device.platform)]
-        driver = factory(device, options, credentials["api_token"])
+        driver = self._driver(device, options, credentials, secret)
         driver.resolve_vdom()
-        if secret is not None and secret.get("vdom") != options["vdom"]:
+        if (
+            device.platform == "fortios"
+            and secret is not None
+            and secret.get("vdom") != options["vdom"]
+        ):
             raise MonitoringError("snmp_community_conflict", 409)
         driver.check_schema()
         state = driver.inspect()
@@ -135,13 +217,11 @@ class MonitoringService:
                   "monitoring_sources": options["source_ips"], "verification": "PENDING",
                   "device_configuration": "NOT_CHANGED" if mode == "monitor_only" else "INSPECTED",
                   "zabbix_status": "EXISTS" if remote["host"] else "MISSING",
-                  "resolved": {"api_endpoint": f"https://{device.address}:{options['https_port']}",
-                    "management_interface": options["interface"], "vdom": options["vdom"],
-                    "snmp_port": options["snmp_port"], "monitoring_source_ip": options["source_ips"][0],
+                  "resolved": {**self._public_resolved(device, options),
                     "zabbix_template": template, "credential_profile": device.profile,
                     "credential_reference": credential_path(device.vendor, device.profile)}}
         fingerprint = self.fingerprint({"device": asdict(device), "config": config, "options": options,
-            "secret": secret, "version": version, "fortigate": state, "zabbix": remote, "mode": mode})
+            "secret": secret, "version": version, "device_state": state, "zabbix": remote, "mode": mode})
         return public, fingerprint, (device, options, config, secret, version, driver, state, zabbix)
 
     def plan(self, device_id, mode):

@@ -1,0 +1,31 @@
+---
+- name: Read Aruba AOS-Switch SNMP communities
+  arubanetworks.aos_switch.arubaoss_command:
+    commands:
+      - show running-config | include snmp-server community
+  register: atlas_aruba_aos_switch_snmp
+  no_log: true
+
+- name: Derive Aruba AOS-Switch compliance without returning configuration
+  ansible.builtin.set_fact:
+    atlas_monitoring_compliant: >-
+      {{ ('snmp-server community ' ~ atlas_snmp_community ~ ' operator restricted')
+         in (atlas_aruba_aos_switch_snmp.stdout[0] | default('')) }}
+  no_log: true
+
+- name: Configure the read-only AOS-Switch SNMP community
+  arubanetworks.aos_switch.arubaoss_config:
+    lines:
+      - "snmp-server community {{ atlas_snmp_community }} operator restricted"
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  no_log: true
+
+- name: Record AOS-Switch configuration intent
+  ansible.builtin.set_fact:
+    atlas_monitoring_actions: ['Configure unrestricted-source Aruba AOS-Switch SNMPv2c community']
+    atlas_monitoring_compliant: true
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool

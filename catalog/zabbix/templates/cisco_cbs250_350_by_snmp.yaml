@@ -77,6 +77,8 @@ zabbix_export:
           key: 'cisco.cbs.cpu.util[lastSecond]'
           value_type: FLOAT
           units: '%'
+          history: 35d
+          trends: 365d
           description: 'Cisco-documented CPU utilization during the last second.'
           tags:
             - tag: component
@@ -88,6 +90,8 @@ zabbix_export:
           key: 'cisco.cbs.cpu.util[lastMinute]'
           value_type: FLOAT
           units: '%'
+          history: 35d
+          trends: 365d
           description: 'Cisco-documented CPU utilization during the last minute.'
           tags:
             - tag: component
@@ -99,6 +103,8 @@ zabbix_export:
           key: 'system.cpu.util[cisco-cbs]'
           value_type: FLOAT
           units: '%'
+          history: 35d
+          trends: 365d
           description: 'Cisco-documented CPU utilization during the last five minutes; canonical Atlas CPU metric.'
           tags:
             - tag: component
@@ -118,6 +124,8 @@ zabbix_export:
           snmp_oid: 'get[1.3.6.1.4.1.9.6.1.101.53.15.1.10.1]'
           key: 'sensor.temp.value[rlPhdUnitEnvParamTempSensorValue.1]'
           value_type: FLOAT
+          history: 35d
+          trends: 365d
           description: 'Cisco-documented current chassis temperature sensor value; the source does not specify the unit or scale.'
           tags:
             - tag: component

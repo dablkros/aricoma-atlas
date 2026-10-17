@@ -12,6 +12,7 @@ from atlas.api.main import create_app
 from atlas.config import Settings
 from atlas.monitoring.fortigate import FortiGateMonitoringDriver
 from atlas.monitoring.models import Device, MonitoringError, device_reference, load_config, site_options
+from atlas.monitoring.network import AnsibleNetworkMonitoringDriver
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.monitoring.store import JobStore
 from atlas.monitoring.service import MonitoringService
@@ -50,6 +51,33 @@ class MonitoringModelTests(unittest.TestCase):
         ):
             with self.subTest(code=code), self.assertRaisesRegex(MonitoringError, code):
                 device_reference(raw_device(**change))
+
+    def test_netbox_reference_accepts_only_explicit_vendor_platform_pairs(self):
+        pairs = (
+            ("fortinet", "fortios"),
+            ("cisco", "cisco-ios"),
+            ("cisco", "cisco-ios-xe"),
+            ("cisco", "cisco-cbs"),
+            ("cisco", "cisco-cbs250-350"),
+            ("hpe", "aruba-aos-cx"),
+            ("hpe", "aruba-aos-switch"),
+        )
+        for vendor, platform in pairs:
+            with self.subTest(vendor=vendor, platform=platform):
+                device = device_reference(
+                    raw_device(
+                        device_type={"manufacturer": {"slug": vendor}},
+                        platform={"slug": platform},
+                    )
+                )
+                self.assertEqual((device.vendor, device.platform), (vendor, platform))
+        with self.assertRaisesRegex(MonitoringError, "unsupported_monitoring_driver"):
+            device_reference(
+                raw_device(
+                    device_type={"manufacturer": {"slug": "hpe"}},
+                    platform={"slug": "cisco-ios"},
+                )
+            )
 
     def test_site_policy_has_no_device_inventory_and_is_allowlisted(self):
         device = device_reference(raw_device())
@@ -118,6 +146,36 @@ class MonitoringSecretTests(unittest.TestCase):
         args, kwargs = service.client.kv_write.call_args
         self.assertEqual(args[:2], ("runtime-token", "devices/snmp/fortinet/42/monitoring"))
         self.assertEqual(kwargs["cas"], 0)
+
+    def test_cisco_cbs_secret_uses_documented_twenty_character_limit(self):
+        service = Mock()
+        stored = {
+            "version": "2c",
+            "community": "B" * 20,
+            "managed_by": "atlas",
+            "device_id": "43",
+        }
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            (stored, {"version": 1}),
+        ]
+        service._authenticated.side_effect = lambda callback: callback("runtime-token")
+        device = Device(
+            43,
+            "cbs-1",
+            "10.0.0.11",
+            "cisco",
+            "cisco-cbs250-350",
+            "edge",
+            "ba",
+        )
+
+        value, _version = MonitoringSecrets(service).ensure(device)
+
+        self.assertEqual(len(value["community"]), 20)
+        payload = service.client.kv_write.call_args.args[2]
+        self.assertEqual(len(payload["community"]), 20)
+        self.assertNotIn("community_id", payload)
 
 
 class FortiGateDriverTests(unittest.TestCase):
@@ -188,6 +246,37 @@ class FortiGateDriverTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(MonitoringError, "management_interface_unresolved"):
             self.driver.resolve_vdom()
+
+
+class AnsibleNetworkMonitoringDriverTests(unittest.TestCase):
+    def test_write_intent_is_persisted_before_runner_can_fail(self):
+        backend = Mock()
+        backend.execute.side_effect = [
+            {"compliant": False, "actions": []},
+            MonitoringError("connection_timeout", 503),
+        ]
+        device = Device(
+            50,
+            "ios-1",
+            "10.0.0.50",
+            "cisco",
+            "cisco-ios-xe",
+            "edge",
+            "ba",
+        )
+        driver = AnsibleNetworkMonitoringDriver(
+            device,
+            {"ssh_port": 22, "snmp_port": 161, "source_ips": ["10.0.0.5"]},
+            {"username": "admin", "password": "secret"},
+            SimpleNamespace(slug="cisco-ios-xe"),
+            backend,
+        )
+        changes = []
+
+        with self.assertRaisesRegex(MonitoringError, "connection_timeout"):
+            driver.configure({"community": "A" * 32}, changes.append)
+
+        self.assertEqual(changes, ["Configure Atlas SNMPv2c policy"])
 
 
 class JobStoreTests(unittest.TestCase):

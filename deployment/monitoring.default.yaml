@@ -9,6 +9,11 @@ fortios:
   default_snmp_port: 161
   tls_verify: true
   lab_tls_exception: false
-monitoring: {}
+monitoring:
+  default_snmp_port: 161
+  aruba_aoscx_vrf: default
+  # AOS-Switch 16.x cannot bind an SNMPv2c community to one source address.
+  # Keep this false unless the management network provides equivalent filtering.
+  allow_unrestricted_snmp_v2c: false
 # Set monitoring.source_ip to the Atlas/Zabbix egress IPv4 when deployment
 # cannot determine and generate it safely.

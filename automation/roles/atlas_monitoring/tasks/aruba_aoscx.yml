@@ -1,0 +1,65 @@
+---
+- name: Read Aruba AOS-CX SNMP and ACL configuration
+  arubanetworks.aoscx.aoscx_command:
+    commands:
+      - show running-config
+  register: atlas_aruba_aoscx_snmp
+  no_log: true
+
+- name: Derive Aruba AOS-CX compliance without returning configuration
+  ansible.builtin.set_fact:
+    atlas_aruba_aoscx_acl_owned: >-
+      {{ 'access-list ip ATLAS-SNMP-V2C' not in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) or
+         'comment Managed by Aricoma Atlas' in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) }}
+    atlas_monitoring_compliant: >-
+      {{ ('snmp-server vrf ' ~ atlas_aruba_aoscx_vrf) in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) and
+         ('snmp-server community ' ~ atlas_snmp_community) in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) and
+         'access-list ipv4 ATLAS-SNMP-V2C' in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) and
+         'comment Managed by Aricoma Atlas' in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) and
+         ('permit any ' ~ atlas_monitoring_source_ips[0] ~ '/32 any')
+         in (atlas_aruba_aoscx_snmp.stdout[0] | default('')) }}
+  no_log: true
+
+- name: Reject an AOS-CX ACL name already owned by another configuration
+  ansible.builtin.assert:
+    that: atlas_aruba_aoscx_acl_owned | bool
+    fail_msg: atlas_snmp_acl_conflict
+    quiet: true
+
+- name: Configure the Atlas-owned AOS-CX source ACL
+  arubanetworks.aoscx.aoscx_config:
+    parents: access-list ip ATLAS-SNMP-V2C
+    lines: "{{ ['10 comment Managed by Aricoma Atlas'] + (atlas_monitoring_source_ips | map('regex_replace', '^(.*)$', '20 permit any \\1/32 any') | list) }}"
+    match: exact
+    replace: block
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  no_log: true
+
+- name: Configure the source-restricted AOS-CX SNMP community
+  arubanetworks.aoscx.aoscx_config:
+    parents: "snmp-server community {{ atlas_snmp_community }}"
+    lines:
+      - access-level ro
+      - access-list ipv4 ATLAS-SNMP-V2C
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  no_log: true
+
+- name: Enable SNMP in the selected AOS-CX VRF
+  arubanetworks.aoscx.aoscx_config:
+    lines:
+      - "snmp-server vrf {{ atlas_aruba_aoscx_vrf }}"
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+
+- name: Record AOS-CX configuration intent
+  ansible.builtin.set_fact:
+    atlas_monitoring_actions: ['Configure source-restricted Aruba AOS-CX SNMPv2c community']
+    atlas_monitoring_compliant: true
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool

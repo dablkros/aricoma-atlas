@@ -20,22 +20,45 @@ class MonitoringSecrets:
             if exc.reason == "secret_not_found":
                 return None
             raise
-        if (data.get("version") != "2c" or data.get("managed_by") != "atlas"
+        invalid = (data.get("version") != "2c" or data.get("managed_by") != "atlas"
                 or data.get("device_id") != str(device.id)
                 or not isinstance(data.get("community"), str)
                 or not 1 <= len(data["community"]) <= 35
-                or any(c not in string.ascii_letters + string.digits for c in data["community"])
-                or type(data.get("community_id")) is not int or not 1 <= data["community_id"] <= 4294967295):
+                or any(c not in string.ascii_letters + string.digits for c in data["community"]))
+        if device.platform == "fortios":
+            invalid = invalid or (
+                type(data.get("community_id")) is not int
+                or not 1 <= data["community_id"] <= 4294967295
+                or not isinstance(data.get("vdom"), str)
+            )
+        if device.platform in {"cisco-cbs", "cisco-cbs250-350"}:
+            invalid = invalid or len(data.get("community", "")) > 20
+        if invalid:
             raise MonitoringError("invalid_monitoring_secret")
         return data, metadata["version"]
 
-    def ensure(self, device, community_id, options):
+    def ensure(self, device, community_id=None, options=None):
         existing = self.read(device)
         if existing:
             return existing
-        data = {"version": "2c", "community": "".join(secrets.choice(string.ascii_letters + string.digits) for _ in range(32)),
-                "managed_by": "atlas", "device_id": str(device.id),
-                "community_id": community_id, "vdom": options["vdom"]}
+        length = 20 if device.platform in {"cisco-cbs", "cisco-cbs250-350"} else 32
+        data = {
+            "version": "2c",
+            "community": "".join(
+                secrets.choice(string.ascii_letters + string.digits)
+                for _ in range(length)
+            ),
+            "managed_by": "atlas",
+            "device_id": str(device.id),
+        }
+        if device.platform == "fortios":
+            if (
+                type(community_id) is not int
+                or not isinstance(options, dict)
+                or not isinstance(options.get("vdom"), str)
+            ):
+                raise MonitoringError("invalid_monitoring_secret")
+            data.update({"community_id": community_id, "vdom": options["vdom"]})
         try:
             self.service._authenticated(lambda token: self.service.client.kv_write(
                 token, self.path(device), data, mount="atlas", cas=0))

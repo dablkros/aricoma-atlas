@@ -155,7 +155,12 @@ class ZabbixMonitoringService:
         item = self._metric_item(hostid, metric)
         if item is None:
             return {"metric": metric, "unit": "", "value": None, "points": []}
-        durations = {"1h": 3600, "24h": 86400, "7d": 604800}
+        durations = {
+            "1h": 3600,
+            "24h": 86400,
+            "7d": 604800,
+            "30d": 2592000,
+        }
         if window not in durations:
             raise ValueError("unsupported_window")
         now = int(time.time())
@@ -169,7 +174,7 @@ class ZabbixMonitoringService:
         }
         try:
             client = self.zabbix.client()
-            if window == "7d":
+            if window in {"7d", "30d"}:
                 rows = client.trend_get(params)
                 points = [
                     MetricPoint(int(row["clock"]), float(row["value_avg"]))

@@ -12,3 +12,5 @@ collections:
     version: 2.6.0
   - name: arubanetworks.aoscx
     version: 4.5.2
+  - name: arubanetworks.aos_switch
+    version: 1.7.0

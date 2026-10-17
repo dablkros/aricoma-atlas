@@ -629,6 +629,16 @@ class ZabbixDeploymentTests(unittest.TestCase):
             {graph["name"] for graph in document["zabbix_export"]["graphs"]},
             {"Cisco CBS: CPU utilization", "Cisco CBS: Temperature"},
         )
+        graph_keys = {
+            item["item"]["key"]
+            for graph in document["zabbix_export"]["graphs"]
+            for item in graph["graph_items"]
+        }
+        by_key = {item["key"]: item for item in template["items"]}
+        self.assertTrue(graph_keys)
+        for key in graph_keys:
+            self.assertEqual(by_key[key]["history"], "35d")
+            self.assertEqual(by_key[key]["trends"], "365d")
 
         def collect_uuids(value):
             if isinstance(value, dict):
@@ -925,7 +935,7 @@ class MetricServiceTests(unittest.TestCase):
         service = ZabbixMonitoringService(FakeZabbixService(client))
 
         history = service.metric("50", "cpu", "1h")
-        trend = service.metric("50", "cpu", "7d")
+        trend = service.metric("50", "cpu", "30d")
 
         self.assertEqual(history["value"], 23.5)
         self.assertEqual(history["points"], [MetricPoint(90, 20.0)])
@@ -1022,7 +1032,7 @@ class ZabbixApiTests(unittest.TestCase):
         sync = client.post("/api/zabbix/sync")
         device = client.get("/api/devices/123/monitoring")
         metric = client.get(
-            "/api/devices/123/monitoring/metrics/cpu?window=7d"
+            "/api/devices/123/monitoring/metrics/cpu?window=30d"
         )
 
         self.assertEqual(status.json()["version"], "7.0.31")
@@ -1030,7 +1040,7 @@ class ZabbixApiTests(unittest.TestCase):
         self.assertEqual(device.json()["status"], "up")
         self.assertEqual(device.json()["metrics"]["cpu"], 23.5)
         self.assertEqual(metric.json()["points"][0]["value"], 20.0)
-        self.assertEqual(monitoring.last_window, "7d")
+        self.assertEqual(monitoring.last_window, "30d")
         serialized = "".join(
             response.text for response in (status, sync, device, metric)
         )
