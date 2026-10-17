@@ -703,6 +703,50 @@ tbody tr:hover td {
   gap: 0.45rem;
 }
 
+.monitoring-activity {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  margin: 0 0 1rem;
+  padding: 0.85rem 1rem;
+  color: #385675;
+  background: var(--blue-soft);
+  border: 1px solid #bfd2e5;
+  border-radius: 10px;
+}
+
+.monitoring-activity[hidden] {
+  display: none;
+}
+
+.monitoring-activity strong {
+  display: block;
+  color: var(--ink);
+  font-size: 0.84rem;
+}
+
+.monitoring-activity p,
+.monitoring-status-detail {
+  margin: 0.2rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.monitoring-spinner {
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  border: 2px solid #a9c3dc;
+  border-top-color: var(--navy);
+  border-radius: 50%;
+  animation: spin 700ms linear infinite;
+}
+
+.monitoring-status {
+  min-width: 180px;
+}
+
 .monitoring-plan {
   max-height: 22rem;
   overflow: auto;
@@ -754,6 +798,7 @@ tbody tr:hover td {
 }
 
 .toast-success { border-left-color: var(--healthy); }
+.toast-info { border-left-color: var(--navy); }
 .toast-warning { border-left-color: var(--warning); }
 .toast-error { border-left-color: var(--danger); }
 

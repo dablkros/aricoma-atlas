@@ -1,6 +1,8 @@
 version: 2
 allowed_device_networks:
   - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
 fortios:
   default_vdom: root
   default_https_port: 443

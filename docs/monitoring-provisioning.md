@@ -36,9 +36,11 @@ credential service used by Profylaxia. The canonical KV v2 path for generated co
 
 Backend deployment creates `.runtime/monitoring/config.yaml` from a safe
 default, `.runtime/monitoring/operator-token`, and a persistent SQLite job
-directory. The default permits only TEST-NET-1 and has no monitoring source IP.
-Build the site policy from `deployment/monitoring.example.yaml`, then redeploy
-the backend. Schema v1 is rejected with
+directory. The default permits the three RFC1918 private IPv4 ranges but has no
+monitoring source IP, so provisioning remains blocked until the operator sets
+`monitoring.source_ip`. Narrow `allowed_device_networks` to the customer
+management ranges when they are known. Existing runtime configuration is never
+overwritten; update it explicitly and redeploy the backend. Schema v1 is rejected with
 `monitoring_configuration_v1_migration_required`; it is never deleted or
 silently reinterpreted.
 
@@ -119,6 +121,13 @@ GET  /api/monitoring/jobs/{job_id}
 ```
 
 Write requests require a server-issued `plan_id` and `confirmed: true`.
+
+The Operations UI shows the active job stage and posts an immediate notification
+when inspection or reconciliation starts. A completed Zabbix configuration with
+verification `PENDING` is displayed as waiting for the first SNMP sample, not as
+a fully verified success. The browser continues polling for up to two minutes;
+after that the operator can use **Check verification** without repeating device
+or Zabbix configuration.
 
 ## Validated contracts and limits
 

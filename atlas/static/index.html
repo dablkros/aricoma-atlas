@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261016-1">
-    <script src="/static/app.js?v=20261016-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261017-1">
+    <script src="/static/app.js?v=20261017-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -243,7 +243,7 @@
         <div class="panel-heading devices-heading-row">
           <div>
             <p class="section-kicker">Monitoring provisioning</p>
-            <h2 id="monitoring-heading">NetBox to FortiGate and Zabbix</h2>
+            <h2 id="monitoring-heading">NetBox to devices and Zabbix</h2>
           </div>
           <p id="monitoring-total" class="device-total">Authorization required</p>
         </div>
@@ -265,6 +265,13 @@
           </div>
           <button id="monitoring-load" class="button button-secondary" type="button">Load devices</button>
           <button id="monitoring-bulk" class="button button-primary" type="button" disabled>Plan all</button>
+        </div>
+        <div id="monitoring-activity" class="monitoring-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span>
+          <div>
+            <strong id="monitoring-activity-title">Monitoring operation in progress</strong>
+            <p id="monitoring-activity-detail">Atlas is preparing the operation.</p>
+          </div>
         </div>
         <pre id="monitoring-plan" class="monitoring-plan" hidden></pre>
         <div class="table-wrap">

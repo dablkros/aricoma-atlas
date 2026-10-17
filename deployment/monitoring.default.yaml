@@ -1,8 +1,11 @@
 version: 2
-# TEST-NET-1 is intentionally non-routable. Replace it with explicit customer
-# management ranges before provisioning can contact a device.
+# Permit private enterprise management ranges by default. Public, loopback,
+# link-local, multicast, and unspecified destinations remain outside this list.
+# Narrow these ranges when the customer management networks are known.
 allowed_device_networks:
-  - 192.0.2.0/24
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
 fortios:
   default_vdom: root
   default_https_port: 443

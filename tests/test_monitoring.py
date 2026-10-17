@@ -26,6 +26,9 @@ from atlas.services.device_resolution import (
 )
 
 
+ROOT = Path(__file__).resolve().parent.parent
+
+
 def raw_device(**overrides):
     value = {
         "id": 42,
@@ -42,6 +45,13 @@ def raw_device(**overrides):
 
 
 class MonitoringModelTests(unittest.TestCase):
+    def test_deployment_policies_cover_all_private_ipv4_ranges(self):
+        expected = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+        for name in ("monitoring.default.yaml", "monitoring.example.yaml"):
+            with self.subTest(name=name):
+                config = load_config(ROOT / "deployment" / name)
+                self.assertEqual(config["allowed_device_networks"], expected)
+
     def test_netbox_reference_requires_exact_active_fortios_contract(self):
         device = device_reference(raw_device())
         self.assertEqual((device.id, device.address, device.profile), (42, "10.0.0.10", "edge"))

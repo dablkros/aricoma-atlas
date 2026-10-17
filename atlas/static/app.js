@@ -9,6 +9,8 @@ const state = {
   monitoringDevices: [],
   monitoringToken: "",
   monitoringJobs: new Map(),
+  monitoringBusy: new Map(),
+  monitoringPolling: new Set(),
 };
 
 const elements = {
@@ -49,8 +51,14 @@ const elements = {
   monitoringBulk: document.querySelector("#monitoring-bulk"),
   monitoringTotal: document.querySelector("#monitoring-total"),
   monitoringPlan: document.querySelector("#monitoring-plan"),
+  monitoringActivity: document.querySelector("#monitoring-activity"),
+  monitoringActivityTitle: document.querySelector("#monitoring-activity-title"),
+  monitoringActivityDetail: document.querySelector("#monitoring-activity-detail"),
   monitoringTableBody: document.querySelector("#monitoring-table-body"),
 };
+
+const MONITORING_TERMINAL = new Set(["COMPLETED", "FAILED", "PARTIAL"]);
+const MONITORING_VERIFICATION_TIMEOUT_MS = 120000;
 
 class ApiError extends Error {
   constructor(status, data) {
@@ -112,6 +120,74 @@ function monitoringMessage(message) {
   elements.monitoringTableBody.replaceChildren(row);
 }
 
+function monitoringPresentation(job) {
+  if (!job) return null;
+  if (job.status === "INSPECTING") {
+    return { label: "Inspecting", detail: "Reading device and Zabbix state.", tone: "neutral" };
+  }
+  if (job.status === "PLANNING") {
+    return { label: "Planning", detail: "Calculating safe changes.", tone: "neutral" };
+  }
+  if (job.status === "PENDING") {
+    return { label: "Queued", detail: "Atlas accepted the job.", tone: "neutral" };
+  }
+  if (job.status === "VALIDATING") {
+    return { label: "Validating", detail: "Checking the approved plan and current state.", tone: "neutral" };
+  }
+  if (job.status === "CONFIGURING_DEVICE") {
+    return { label: "Configuring device", detail: "Applying and reading back the SNMP policy.", tone: "neutral" };
+  }
+  if (job.status === "CONFIGURING_ZABBIX") {
+    return { label: "Configuring Zabbix", detail: "Creating or updating the monitored host.", tone: "neutral" };
+  }
+  if (job.status === "VERIFYING") {
+    return { label: "Verifying", detail: "Waiting for a fresh SNMP sysObjectID sample.", tone: "degraded" };
+  }
+  if (job.status === "COMPLETED" && job.verification === "VERIFIED") {
+    return { label: "Verified", detail: "Zabbix collected a fresh SNMP sample.", tone: "healthy" };
+  }
+  if (job.status === "COMPLETED" && job.verification === "PENDING") {
+    return { label: "Waiting for SNMP data", detail: "Zabbix is configured; the first successful sample is still pending.", tone: "degraded" };
+  }
+  if (job.status === "PARTIAL") {
+    return { label: "Partially applied", detail: titleCase(job.error_code || "operation stopped"), tone: "unhealthy" };
+  }
+  if (job.status === "FAILED") {
+    return { label: "Failed", detail: titleCase(job.error_code || "operation failed"), tone: "unhealthy" };
+  }
+  return { label: titleCase(job.status), detail: titleCase(job.current_step || "processing"), tone: "neutral" };
+}
+
+function renderMonitoringActivity() {
+  const busy = [...state.monitoringBusy.entries()].map(([deviceId, status]) => ({ deviceId, status }));
+  const polling = [...state.monitoringPolling].map((deviceId) => ({
+    deviceId,
+    status: state.monitoringJobs.get(deviceId),
+  }));
+  const active = busy.length ? busy : polling;
+  if (!active.length) {
+    elements.monitoringActivity.hidden = true;
+    return;
+  }
+  const current = active[0];
+  const device = state.monitoringDevices.find((candidate) => candidate.id === current.deviceId);
+  const presentation = monitoringPresentation(current.status);
+  elements.monitoringActivityTitle.textContent = active.length === 1
+    ? `${device?.name || `Device ${current.deviceId}`}: ${presentation.label}`
+    : `${active.length} monitoring operations in progress`;
+  elements.monitoringActivityDetail.textContent = active.length === 1
+    ? presentation.detail
+    : "Atlas is processing the selected devices and will report each result.";
+  elements.monitoringActivity.hidden = false;
+}
+
+function setMonitoringBusy(deviceId, status = null) {
+  if (status) state.monitoringBusy.set(deviceId, { status });
+  else state.monitoringBusy.delete(deviceId);
+  renderMonitoringDevices();
+  renderMonitoringActivity();
+}
+
 function renderMonitoringDevices() {
   elements.monitoringTotal.textContent = `${state.monitoringDevices.length} devices`;
   elements.monitoringBulk.disabled = !state.monitoringDevices.some((device) => !device.error_code);
@@ -127,9 +203,24 @@ function renderMonitoringDevices() {
       row.append(cell);
     }
     const status = document.createElement("td");
-    status.textContent = device.error_code
-      ? titleCase(device.error_code)
-      : state.monitoringJobs.get(device.id)?.status || device.provisioning_status;
+    const currentJob = state.monitoringBusy.get(device.id) || state.monitoringJobs.get(device.id);
+    const presentation = monitoringPresentation(currentJob);
+    if (device.error_code) {
+      status.textContent = titleCase(device.error_code);
+    } else if (presentation) {
+      const wrapper = document.createElement("div");
+      wrapper.className = "monitoring-status";
+      const pill = document.createElement("span");
+      pill.className = `status-pill status-pill-${presentation.tone}`;
+      pill.textContent = presentation.label;
+      const detail = document.createElement("p");
+      detail.className = "monitoring-status-detail";
+      detail.textContent = presentation.detail;
+      wrapper.append(pill, detail);
+      status.append(wrapper);
+    } else {
+      status.textContent = titleCase(device.provisioning_status);
+    }
     row.append(status);
     const action = document.createElement("td");
     action.className = "action-cell monitoring-actions";
@@ -137,15 +228,39 @@ function renderMonitoringDevices() {
     inspectButton.type = "button";
     inspectButton.className = "button button-compact";
     inspectButton.textContent = "Inspect";
-    inspectButton.disabled = Boolean(device.error_code);
+    const operationActive = state.monitoringBusy.has(device.id) || state.monitoringPolling.has(device.id);
+    inspectButton.disabled = Boolean(device.error_code) || operationActive;
     inspectButton.addEventListener("click", () => inspectMonitoringDevice(device));
     const applyButton = document.createElement("button");
     applyButton.type = "button";
     applyButton.className = "button button-compact button-primary";
     applyButton.textContent = "Plan & reconcile";
-    applyButton.disabled = Boolean(device.error_code);
+    applyButton.disabled = Boolean(device.error_code) || operationActive;
     applyButton.addEventListener("click", () => planMonitoringDevice(device));
     action.append(inspectButton, applyButton);
+    const savedJob = state.monitoringJobs.get(device.id);
+    if (
+      savedJob?.status === "COMPLETED"
+      && savedJob.verification === "PENDING"
+      && !state.monitoringPolling.has(device.id)
+    ) {
+      const verifyButton = document.createElement("button");
+      verifyButton.type = "button";
+      verifyButton.className = "button button-compact";
+      verifyButton.textContent = "Check verification";
+      verifyButton.addEventListener("click", () => {
+        state.monitoringPolling.add(device.id);
+        renderMonitoringDevices();
+        renderMonitoringActivity();
+        toast(`${device.name}: checking for a fresh SNMP sample.`, "info");
+        pollMonitoringJob(
+          device,
+          savedJob.job_id,
+          Date.now() + MONITORING_VERIFICATION_TIMEOUT_MS,
+        );
+      });
+      action.append(verifyButton);
+    }
     row.append(action);
     return row;
   });
@@ -180,18 +295,24 @@ async function loadMonitoringDevices() {
 }
 
 async function inspectMonitoringDevice(device) {
+  setMonitoringBusy(device.id, "INSPECTING");
+  toast(`${device.name}: inspection started.`, "info");
   try {
     const result = await monitoringRequest(`/api/monitoring/devices/${device.id}/inspect`, {
       method: "POST",
       body: { mode: elements.monitoringMode.value },
     });
     showMonitoringPlan(result);
+    toast(`${device.name}: inspection completed.`, "success");
   } catch (error) {
     toast(error.safeMessage || "Inspection failed.", "error");
+  } finally {
+    setMonitoringBusy(device.id);
   }
 }
 
 async function planMonitoringDevice(device) {
+  setMonitoringBusy(device.id, "PLANNING");
   try {
     const mode = elements.monitoringMode.value;
     const plan = await monitoringRequest(`/api/monitoring/devices/${device.id}/plan`, {
@@ -199,30 +320,52 @@ async function planMonitoringDevice(device) {
     });
     showMonitoringPlan(plan);
     const changes = plan.planned_changes?.length ? plan.planned_changes.join("\n• ") : "No changes required";
-    if (!window.confirm(`Apply this current plan for ${device.name}?\n\n• ${changes}`)) return;
+    if (!window.confirm(`Apply this current plan for ${device.name}?\n\n• ${changes}`)) {
+      setMonitoringBusy(device.id);
+      return;
+    }
     const result = await monitoringRequest(`/api/monitoring/devices/${device.id}/reconcile`, {
       method: "POST", body: { mode, plan_id: plan.plan_id, confirmed: true },
     });
+    state.monitoringBusy.delete(device.id);
     state.monitoringJobs.set(device.id, result);
+    state.monitoringPolling.add(device.id);
     renderMonitoringDevices();
-    pollMonitoringJob(device, result.job_id);
+    renderMonitoringActivity();
+    toast(`${device.name}: reconciliation started.`, "info");
+    pollMonitoringJob(device, result.job_id, Date.now() + MONITORING_VERIFICATION_TIMEOUT_MS);
   } catch (error) {
     toast(error.safeMessage || "Monitoring plan failed.", "error");
+    setMonitoringBusy(device.id);
   }
 }
 
-async function pollMonitoringJob(device, jobId) {
+async function pollMonitoringJob(device, jobId, verificationDeadline) {
   try {
     const job = await monitoringRequest(`/api/monitoring/jobs/${jobId}`);
     state.monitoringJobs.set(device.id, job);
     renderMonitoringDevices();
+    renderMonitoringActivity();
     showMonitoringPlan(job);
-    if (!["COMPLETED", "FAILED", "PARTIAL"].includes(job.status)) {
-      window.setTimeout(() => pollMonitoringJob(device, jobId), 1500);
+    const waitingForVerification = job.status === "COMPLETED" && job.verification === "PENDING";
+    if (!MONITORING_TERMINAL.has(job.status) || (waitingForVerification && Date.now() < verificationDeadline)) {
+      window.setTimeout(() => pollMonitoringJob(device, jobId, verificationDeadline), waitingForVerification ? 3000 : 1500);
     } else {
-      toast(`${device.name}: ${titleCase(job.status)} (${titleCase(job.verification)}).`, job.status === "COMPLETED" ? "success" : "error");
+      state.monitoringPolling.delete(device.id);
+      renderMonitoringDevices();
+      renderMonitoringActivity();
+      if (job.status === "COMPLETED" && job.verification === "VERIFIED") {
+        toast(`${device.name}: monitoring verified by a fresh SNMP sample.`, "success");
+      } else if (waitingForVerification) {
+        toast(`${device.name}: Zabbix is configured, but the first SNMP sample is still pending.`, "warning");
+      } else {
+        toast(`${device.name}: ${titleCase(job.status)} (${titleCase(job.error_code)}).`, "error");
+      }
     }
   } catch (error) {
+    state.monitoringPolling.delete(device.id);
+    renderMonitoringDevices();
+    renderMonitoringActivity();
     toast(error.safeMessage || "Could not read monitoring job.", "error");
   }
 }
@@ -231,6 +374,7 @@ async function planAllMonitoringDevices() {
   const devices = state.monitoringDevices.filter((device) => !device.error_code);
   if (!devices.length) return;
   elements.monitoringBulk.disabled = true;
+  toast(`Preparing monitoring plans for ${devices.length} devices.`, "info");
   try {
     const mode = elements.monitoringMode.value;
     const plans = [];
@@ -247,9 +391,12 @@ async function planAllMonitoringDevices() {
     for (const item of result.jobs) {
       const device = devices.find((candidate) => candidate.id === item.device_id);
       state.monitoringJobs.set(item.device_id, item);
-      pollMonitoringJob(device, item.job_id);
+      state.monitoringPolling.add(item.device_id);
+      pollMonitoringJob(device, item.job_id, Date.now() + MONITORING_VERIFICATION_TIMEOUT_MS);
     }
     renderMonitoringDevices();
+    renderMonitoringActivity();
+    toast(`${result.jobs.length} monitoring jobs started.`, "info");
   } catch (error) {
     toast(error.safeMessage || "Bulk monitoring plan failed.", "error");
   } finally {

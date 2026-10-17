@@ -641,7 +641,7 @@ spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261016-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261017-1' \
   | grep -i '^cache-control:'
 ```
 
