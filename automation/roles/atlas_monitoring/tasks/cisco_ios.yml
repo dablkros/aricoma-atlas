@@ -16,8 +16,12 @@
       {{ ('snmp-server community ' ~ atlas_snmp_community ~ ' RO ATLAS-SNMP-V2C')
          in (atlas_cisco_ios_snmp.stdout[1] | default('')) and
          ('remark Managed by Aricoma Atlas') in (atlas_cisco_ios_snmp.stdout[0] | default('')) and
-         ('permit host ' ~ atlas_monitoring_source_ips[0])
-         in (atlas_cisco_ios_snmp.stdout[0] | default('')) }}
+         ((('permit host ' ~ atlas_monitoring_source_ips[0])
+           in ((atlas_cisco_ios_snmp.stdout[0] | default('')).splitlines()
+               | map('trim') | list)) or
+          (('permit ' ~ atlas_monitoring_source_ips[0])
+           in ((atlas_cisco_ios_snmp.stdout[0] | default('')).splitlines()
+               | map('trim') | list))) }}
   no_log: true
 
 - name: Reject an ACL name already owned by another configuration

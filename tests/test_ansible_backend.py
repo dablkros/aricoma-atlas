@@ -3,6 +3,9 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from jinja2.nativetypes import NativeEnvironment
+import yaml
+
 from atlas.prophylaxis.ansible_backend import (
     AnsibleBackend,
     _failure_context,
@@ -210,6 +213,63 @@ class AnsibleBackendTests(unittest.TestCase):
         self.assertNotIn("SnmpSecretValue", repr(call["extravars"]))
         self.assertEqual(call["envvars"]["ATLAS_SNMP_COMMUNITY"], "SnmpSecretValue")
         self.assertTrue(call["suppress_env_files"])
+
+    def test_cisco_ios_compliance_accepts_both_acl_host_renderings(self):
+        tasks = yaml.safe_load(
+            (
+                ROOT
+                / "automation"
+                / "roles"
+                / "atlas_monitoring"
+                / "tasks"
+                / "cisco_ios.yml"
+            ).read_text(encoding="utf-8")
+        )
+        facts = next(
+            task["ansible.builtin.set_fact"]
+            for task in tasks
+            if task.get("name")
+            == "Derive Cisco IOS compliance without returning configuration"
+        )
+        template = NativeEnvironment().from_string(
+            facts["atlas_monitoring_compliant"]
+        )
+        community_output = (
+            "snmp-server community SnmpSecretValue RO ATLAS-SNMP-V2C"
+        )
+
+        for permit_line in (
+            " permit host 10.200.200.10",
+            " permit 10.200.200.10",
+        ):
+            with self.subTest(permit_line=permit_line):
+                compliant = template.render(
+                    atlas_snmp_community="SnmpSecretValue",
+                    atlas_monitoring_source_ips=["10.200.200.10"],
+                    atlas_cisco_ios_snmp={
+                        "stdout": [
+                            "ip access-list standard ATLAS-SNMP-V2C\n"
+                            " remark Managed by Aricoma Atlas\n"
+                            f"{permit_line}\n!",
+                            community_output,
+                        ]
+                    },
+                )
+                self.assertIs(compliant, True)
+
+        non_compliant = template.render(
+            atlas_snmp_community="SnmpSecretValue",
+            atlas_monitoring_source_ips=["10.200.200.10"],
+            atlas_cisco_ios_snmp={
+                "stdout": [
+                    "ip access-list standard ATLAS-SNMP-V2C\n"
+                    " remark Managed by Aricoma Atlas\n"
+                    " permit 10.200.200.100\n!",
+                    community_output,
+                ]
+            },
+        )
+        self.assertIs(non_compliant, False)
 
     def test_failure_classification_covers_safe_network_categories(self):
         cases = (
