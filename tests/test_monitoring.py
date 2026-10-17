@@ -17,6 +17,7 @@ from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.monitoring.store import JobStore
 from atlas.monitoring.service import MonitoringService
 from atlas.monitoring.zabbix import KEY, OID, MonitoringZabbix
+from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.services.errors import DependencyError
 from atlas.services.device_resolution import (
     DeviceResolutionError,
@@ -308,6 +309,7 @@ class MonitoringServiceTests(unittest.TestCase):
     def test_resolution_uses_service_port_and_blocks_network_before_lookups(self):
         service = object.__new__(MonitoringService)
         service.netbox = Mock()
+        service.platform_registry = AnsiblePlatformRegistry()
         service.netbox.get_device_services.return_value = [{"port_mappings": ["tcp/444"]}]
         service.netbox.get.side_effect = [
             {"address": "10.0.0.10/24", "assigned_object_type": "dcim.interface",
