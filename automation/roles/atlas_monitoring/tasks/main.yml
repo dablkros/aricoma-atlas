@@ -1,0 +1,36 @@
+---
+- name: Validate the Atlas monitoring execution contract
+  ansible.builtin.assert:
+    that:
+      - atlas_schema_version | int == 1
+      - atlas_monitoring_operation in ['inspect', 'configure']
+      - atlas_platform in atlas_monitoring_platform_tasks
+      - (atlas_snmp_port | int) >= 1
+      - (atlas_snmp_port | int) <= 65535
+      - atlas_monitoring_source_ips is iterable
+      - (atlas_monitoring_source_ips | length) == 1
+      - atlas_snmp_community | length > 0
+    quiet: true
+  no_log: true
+
+- name: Enforce explicit opt-in for unrestricted AOS-Switch SNMPv2c
+  ansible.builtin.assert:
+    that:
+      - atlas_platform != 'aruba-aos-switch' or atlas_monitoring_operation == 'inspect' or atlas_allow_unrestricted_snmp_v2c | bool
+    fail_msg: unrestricted_snmp_v2c_not_allowed
+    quiet: true
+
+- name: Initialize monitoring result
+  ansible.builtin.set_fact:
+    atlas_monitoring_actions: []
+
+- name: Execute the platform-specific SNMP workflow
+  ansible.builtin.include_tasks: "{{ atlas_monitoring_platform_tasks[atlas_platform] }}"
+
+- name: ATLAS_MONITORING_RESULT
+  ansible.builtin.set_fact:
+    atlas_monitoring_result:
+      schema_version: 1
+      platform: "{{ atlas_platform }}"
+      compliant: "{{ atlas_monitoring_compliant | bool }}"
+      actions: "{{ atlas_monitoring_actions }}"

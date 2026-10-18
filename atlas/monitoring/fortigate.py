@@ -5,10 +5,11 @@ from atlas.monitoring.models import MonitoringError
 
 
 class FortiGateMonitoringDriver:
-    def __init__(self, device, options, token, requester=None):
+    def __init__(self, device, options, token, requester=None, configurator=None):
         self.device, self.options = device, options
         self.token = token
         self.requester = requester or requests
+        self.configurator = configurator
         self.base = f"https://{device.address}:{options['https_port']}/api/v2/cmdb/"
 
     def request(self, method, resource, payload=None, schema=False, vdom="resolved"):
@@ -193,6 +194,17 @@ class FortiGateMonitoringDriver:
         return next(i for i in range(1, 1000000) if i not in taken)
 
     def configure(self, secret, changed):
+        if self.configurator is not None:
+            self.check_schema()
+            planned = self.plan(self.inspect(), secret)
+            if not planned:
+                return
+            # Persist write intent before Runner starts. A timeout may mean
+            # that FortiOS accepted one or more CMDB requests.
+            for action in planned:
+                changed(action)
+            self.configurator.configure(secret)
+            return
         self.check_schema()
         # Re-read immediately before each write; never replace whole tables.
         state = self.inspect()

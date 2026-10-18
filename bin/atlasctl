@@ -21,6 +21,7 @@ die() { printf '[ERROR] %s\n' "$*" >&2; exit 1; }
 usage() {
     cat <<'EOF'
 Usage:
+  sudo atlasctl configure [--site-file FILE] [--check] [--force]
   sudo atlasctl deploy [deploy_atlas.py options]
   sudo atlasctl status
   sudo atlasctl openbao
@@ -37,6 +38,7 @@ Usage:
   sudo atlasctl proxy logs [docker compose logs options]
 
 Commands:
+  configure             Create proxy, TLS and monitoring site configuration.
   deploy                Deploy or reconcile the full Atlas stack.
   status                Show Atlas container and Oxidized inventory state.
   openbao               Open the interactive OpenBao access helper.
@@ -118,6 +120,17 @@ run_python_as_atlas() {
     cd "$ATLAS_ROOT"
     exec runuser -u "$ATLAS_USER" -- env "${env_args[@]}" \
         "$PYTHON" "$script" "$@"
+}
+
+configure_site() {
+    local script="${ATLAS_ROOT}/scripts/configure_site.py"
+    [[ -f "$script" ]] || die "Atlas site configurator is missing"
+    cd "$ATLAS_ROOT"
+    exec "$PYTHON" "$script" \
+        --target-root "$ATLAS_ROOT" \
+        --owner "$ATLAS_USER" \
+        --group "$ATLAS_GROUP" \
+        "$@"
 }
 
 show_status() {
@@ -206,7 +219,11 @@ prophylaxis_logs() {
             /"event"[[:space:]]*:[[:space:]]*"ansible_execution_failed"/ ||
             /"event"[[:space:]]*:[[:space:]]*"ansible_runner_failed"/ ||
             /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_completed"/ ||
-            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_failed"/
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_collection_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_run_completed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_run_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_device_failed"/ ||
+            /"event"[[:space:]]*:[[:space:]]*"prophylaxis_device_skipped"/
         '
 }
 
@@ -227,6 +244,10 @@ main() {
 
     local command=${1:-}
     case "$command" in
+        configure)
+            shift
+            configure_site "$@"
+            ;;
         deploy)
             shift
             [[ -f "$PROXY_CONFIG" ]] || \

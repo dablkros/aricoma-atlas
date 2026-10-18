@@ -1,6 +1,8 @@
 version: 2
 allowed_device_networks:
   - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
 fortios:
   default_vdom: root
   default_https_port: 443
@@ -9,6 +11,21 @@ fortios:
   lab_tls_exception: false
   # ca_bundle: /run/atlas/monitoring/trust/fortigate-ca.pem
 monitoring:
-  # Site-level Atlas/Zabbix egress IPv4. Never use a subnet or wildcard.
-  source_ip: 10.20.30.40
-  # proxy_name: customer-a-proxy
+  # Select the expected VM/SNAT source by target management network. Linux
+  # routing may select different local addresses for different destinations.
+  egress_profiles:
+    primary-management:
+      device_networks:
+        - 10.0.0.0/8
+      source_ip: 10.20.30.40
+      # proxy_name: customer-a-proxy
+    secondary-management:
+      device_networks:
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      source_ip: 10.20.30.40
+  default_snmp_port: 161
+  aruba_aoscx_vrf: default
+  # Required only for provisioning ArubaOS-Switch. Prefer network ACL/firewall
+  # filtering because that platform's community command has no source binding.
+  allow_unrestricted_snmp_v2c: false

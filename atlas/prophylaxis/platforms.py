@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from atlas.prophylaxis.models import CheckId
+from atlas.prophylaxis.models import CheckId, CollectorId
 
 
 AuthenticationType = Literal["ssh", "api_token"]
@@ -20,13 +20,31 @@ class AnsiblePlatformProfile:
     authentication: AuthenticationType
     collection: str
     module_family: str
-    supported_checks: frozenset[CheckId]
+    supported_collectors: frozenset[CollectorId]
+    preferred_collectors: tuple[tuple[CheckId, CollectorId], ...] = ()
+    legacy_kex_algorithms: tuple[str, ...] = ()
+    legacy_hostkey_algorithms: tuple[str, ...] = ()
+    legacy_ciphers: tuple[str, ...] = ()
+    legacy_macs: tuple[str, ...] = ()
+    telnet_fallback_service_name: str | None = None
+    telnet_fallback_default_port: int = 23
 
-    def supports(self, check_id: CheckId) -> bool:
-        return check_id in self.supported_checks
+    def supports_collector(self, collector_id: CollectorId) -> bool:
+        return collector_id in self.supported_collectors
+
+    def preferred_collector(self, check_id: CheckId) -> CollectorId | None:
+        return dict(self.preferred_collectors).get(check_id)
 
 
-CPU_ONLY = frozenset({CheckId.CPU_UTILIZATION})
+CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
+FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS})
+CBS_COLLECTORS = frozenset({
+    CollectorId.CPU_USAGE,
+    CollectorId.DEVICE_FACTS,
+    CollectorId.SNMP_SYSTEM,
+})
+ARUBA_CX_COLLECTORS = frozenset({CollectorId.DEVICE_FACTS, CollectorId.SNMP_SYSTEM})
+SNMP_CPU_PREFERENCE = ((CheckId.CPU_UTILIZATION, CollectorId.SNMP_SYSTEM),)
 
 ANSIBLE_PLATFORMS = {
     "cisco-ios": AnsiblePlatformProfile(
@@ -39,7 +57,20 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
+        legacy_kex_algorithms=("diffie-hellman-group1-sha1",),
+        legacy_hostkey_algorithms=(
+            "ssh-ed25519",
+            "ecdsa-sha2-nistp521",
+            "ecdsa-sha2-nistp384",
+            "ecdsa-sha2-nistp256",
+            "rsa-sha2-512",
+            "rsa-sha2-256",
+            "ssh-rsa",
+        ),
+        legacy_ciphers=("aes128-cbc",),
+        legacy_macs=("hmac-sha1",),
+        telnet_fallback_service_name="telnet",
     ),
     "cisco-ios-xe": AnsiblePlatformProfile(
         slug="cisco-ios-xe",
@@ -51,7 +82,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
     ),
     "cisco-cbs": AnsiblePlatformProfile(
         slug="cisco-cbs",
@@ -63,7 +94,8 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CBS_COLLECTORS,
+        preferred_collectors=SNMP_CPU_PREFERENCE,
     ),
     "cisco-cbs250-350": AnsiblePlatformProfile(
         slug="cisco-cbs250-350",
@@ -75,7 +107,8 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CBS_COLLECTORS,
+        preferred_collectors=SNMP_CPU_PREFERENCE,
     ),
     "fortios": AnsiblePlatformProfile(
         slug="fortios",
@@ -87,7 +120,31 @@ ANSIBLE_PLATFORMS = {
         authentication="api_token",
         collection="fortinet.fortios",
         module_family="fortinet.fortios.fortios_monitor_fact",
-        supported_checks=CPU_ONLY,
+        supported_collectors=CPU_AND_FACTS,
+    ),
+    "aruba-aos-cx": AnsiblePlatformProfile(
+        slug="aruba-aos-cx",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        ansible_connection="ansible.netcommon.network_cli",
+        ansible_network_os="arubanetworks.aoscx.aoscx",
+        authentication="ssh",
+        collection="arubanetworks.aoscx",
+        module_family="arubanetworks.aoscx.aoscx_command",
+        supported_collectors=ARUBA_CX_COLLECTORS,
+    ),
+    "aruba-aos-switch": AnsiblePlatformProfile(
+        slug="aruba-aos-switch",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        ansible_connection="ansible.netcommon.network_cli",
+        ansible_network_os="arubanetworks.aos_switch.arubaoss",
+        authentication="ssh",
+        collection="arubanetworks.aos_switch",
+        module_family="arubanetworks.aos_switch.arubaoss_command",
+        supported_collectors=frozenset(),
     ),
 }
 

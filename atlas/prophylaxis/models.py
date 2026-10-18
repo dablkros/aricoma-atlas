@@ -9,13 +9,57 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 SCHEMA_VERSION = 1
 CPU_NETBOX_VALUES = frozenset({"cpu_utilization", "CPU utilization"})
+CHECK_VALUE_ALIASES = {
+    "CPU utilization": "cpu_utilization",
+    "Memory utilization": "memory_utilization",
+    "Temperature": "cpu_temperature",
+}
 
 
 class CheckId(StrEnum):
+    DEVICE_FACTS = "device_facts"
     CPU_UTILIZATION = "cpu_utilization"
     OS_VERSION = "os_version"
     CPU_TEMPERATURE = "cpu_temperature"
+    MEMORY_UTILIZATION = "memory_utilization"
+    FAN_HEALTH = "fan_health"
     UPTIME = "uptime"
+
+
+class CollectorId(StrEnum):
+    DEVICE_FACTS = "device_facts"
+    CPU_USAGE = "cpu_usage"
+    SNMP_SYSTEM = "snmp_system"
+
+
+class EvaluationOutcome(StrEnum):
+    PASS = "PASS"
+    FAIL = "FAIL"
+    NOT_APPLICABLE = "NOT_APPLICABLE"
+    UNKNOWN = "UNKNOWN"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
+class DeviceFactsValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    hostname: str = Field(min_length=1, max_length=255)
+    model: str = Field(min_length=1, max_length=255)
+    os_version: str = Field(min_length=1, max_length=255)
+    serial_number: str | None = Field(default=None, min_length=1, max_length=255)
+    uptime_seconds: int | None = Field(default=None, ge=0)
+
+
+class OSVersionValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    os_version: str = Field(min_length=1, max_length=255)
+
+
+class UptimeValues(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    uptime_seconds: int = Field(ge=0)
 
 
 class CPUUtilizationValues(BaseModel):
@@ -26,7 +70,64 @@ class CPUUtilizationValues(BaseModel):
     five_minute_percent: float | None = Field(default=None, ge=0, le=100)
 
 
+class HardwareSensorValue(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    index: int = Field(ge=1)
+    status_code: int | None = None
+    status_text: str
+    outcome: EvaluationOutcome
+
+
+class SystemMetricValues(BaseModel):
+    """Normalized result for metrics that can be unavailable or inconclusive."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    value: float | None = None
+    unit: Literal["percent", "celsius"] | None = None
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
+    model: str | None = Field(default=None, min_length=1, max_length=255)
+    sys_object_id: str | None = Field(default=None, min_length=1, max_length=255)
+    expected_components: int | None = Field(default=None, ge=0)
+    sensors: tuple[HardwareSensorValue, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_evaluation(self):
+        if self.outcome == EvaluationOutcome.PASS and self.reason_code is not None:
+            raise ValueError("passing metric must not contain a reason code")
+        if self.outcome != EvaluationOutcome.PASS and self.reason_code is None:
+            raise ValueError("non-passing metric requires a reason code")
+        return self
+
+
+class RawCollectorResult(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    schema_version: Literal[1] = SCHEMA_VERSION
+    collector: CollectorId
+    platform: str
+    status: Literal["ok", "error", "unsupported"]
+    data: Any | None = None
+    raw_output: str | None = None
+    error_code: str | None = None
+
+    @model_validator(mode="after")
+    def validate_payload(self):
+        if self.status == "ok":
+            if self.error_code is not None or (
+                self.data is None and self.raw_output is None
+            ):
+                raise ValueError("successful raw result requires data")
+        elif self.error_code is None or self.data is not None or self.raw_output is not None:
+            raise ValueError("non-success raw result requires only an error code")
+        return self
+
+
 class RawCheckResult(BaseModel):
+    """Legacy CPU execution contract kept for existing callers and fixtures."""
+
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     schema_version: Literal[1] = SCHEMA_VERSION
@@ -91,12 +192,21 @@ StoredCPUCheckResult = StoredCheckResult
 __all__ = [
     "CPU_CHECK_NAME",
     "CPU_NETBOX_VALUES",
+    "CHECK_VALUE_ALIASES",
     "CPUCheckResult",
     "CPUUtilizationValues",
     "CheckId",
     "CheckResult",
+    "CollectorId",
+    "EvaluationOutcome",
+    "HardwareSensorValue",
+    "DeviceFactsValues",
+    "OSVersionValues",
     "RawCheckResult",
+    "RawCollectorResult",
     "SCHEMA_VERSION",
     "StoredCPUCheckResult",
     "StoredCheckResult",
+    "SystemMetricValues",
+    "UptimeValues",
 ]

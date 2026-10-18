@@ -1,0 +1,26 @@
+---
+- name: Probe the tested Aruba AOS-CX OVA system OIDs
+  atlas_snmp_get:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port | default(161) }}"
+    community: "{{ lookup('ansible.builtin.env', 'ATLAS_SNMP_COMMUNITY') }}"
+    queries:
+      sys_object_id: 1.3.6.1.2.1.1.2.0
+      tested_cpu: 1.3.6.1.4.1.47196.4.1.1.3.22.1.0.1.1.3
+      tested_memory: 1.3.6.1.4.1.47196.4.1.1.3.22.1.0.1.1.4
+  register: atlas_snmp
+  delegate_to: localhost
+
+- name: Normalize Aruba AOS-CX SNMP collector payload
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        model: "{{ atlas_device_model | default('') }}"
+        sys_object_id: "{{ atlas_snmp.values.sys_object_id.value | default('') }}"
+        metrics:
+          cpu_one_second: "{{ atlas_snmp.values.tested_cpu }}"
+          memory: "{{ atlas_snmp.values.tested_memory }}"
+          temperature: {status: unsupported}
+          fan_1: {status: unsupported}
+          fan_2: {status: unsupported}
+          fan_3: {status: unsupported}

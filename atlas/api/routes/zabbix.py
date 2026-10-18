@@ -139,7 +139,7 @@ def device_metric(
     device_id: int,
     metric: str,
     request: Request,
-    window: str = Query(default="1h", pattern="^(1h|24h|7d)$"),
+    window: str = Query(default="1h", pattern="^(1h|24h|7d|30d)$"),
 ) -> MetricResponse:
     monitoring = request.app.state.dependencies.zabbix_monitoring
     try:

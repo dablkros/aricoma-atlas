@@ -1,14 +1,15 @@
 backend:
-  version: "0.4.0-beta"
-  docker_image: "aricoma-atlas-backend:0.4.0-beta"
+  version: "0.4.1-beta"
+  docker_image: "aricoma-atlas-backend:0.4.1-beta"
   python_base_image: "docker.io/library/python:3.13.16-slim-bookworm"
   dockerfile: "deployment/backend/Dockerfile"
   environment: "production"
   log_level: "INFO"
   ansible_job_timeout: 120
   fortios_validate_certs: false
-  ssh_strict_host_keys: true
+  ssh_strict_host_keys: false
   prophylaxis_result_retention: 10000
+  prophylaxis_concurrency: 4
 
 runtime:
   directory: ".runtime/backend"

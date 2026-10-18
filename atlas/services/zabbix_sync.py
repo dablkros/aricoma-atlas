@@ -18,7 +18,7 @@ from atlas.services.zabbix import (
     ZabbixService,
     translate_zabbix_error,
 )
-from atlas.zabbix_config import load_zabbix_config
+from atlas.zabbix_config import load_zabbix_config, required_template_names, resolve_template
 
 
 logger = logging.getLogger("atlas.zabbix.sync")
@@ -103,7 +103,9 @@ def desired_host(device: dict, openbao, config: dict, monitoring_secrets=None) -
     platform = _nested_slug(device.get("platform"))
     if not platform:
         raise DeviceValidationError("Missing platform", code="missing_platform")
-    template_name = config["platform_templates"].get(platform)
+    device_type = device.get("device_type")
+    device_type_slug = _nested_slug(device_type)
+    template_name = resolve_template(config, platform, device_type_slug or "")
     if not template_name:
         raise DeviceValidationError(
             "Unsupported monitoring platform",
@@ -132,7 +134,14 @@ def desired_host(device: dict, openbao, config: dict, monitoring_secrets=None) -
         ) from None
     try:
         generated = (
-            monitoring_secrets.read(SimpleNamespace(id=identifier, vendor=vendor))
+            monitoring_secrets.read(
+                SimpleNamespace(
+                    id=identifier,
+                    name=name.strip(),
+                    vendor=vendor,
+                    platform=platform,
+                )
+            )
             if monitoring_secrets is not None
             else None
         )
@@ -250,7 +259,7 @@ class ZabbixSyncService:
             )
             if len(groups) != 1:
                 raise ZabbixSyncFailure("managed_host_group_missing")
-            template_names = sorted(set(self.config["platform_templates"].values()))
+            template_names = list(required_template_names(self.config))
             templates = client.template_get(
                 {
                     "output": ["templateid", "host", "name"],

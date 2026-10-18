@@ -1,0 +1,26 @@
+---
+- name: Collect Cisco IOS device facts over explicit Telnet fallback
+  ansible.netcommon.telnet:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port }}"
+    user: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
+    login_prompt: "(?i)(?:username|login):\\s*$"
+    password_prompt: "(?i)password:\\s*$"
+    prompts:
+      - "[>#]\\s*$"
+    command:
+      - terminal length 0
+      - show version
+      - show inventory
+    timeout: "{{ ansible_command_timeout }}"
+  register: atlas_cisco_telnet_facts
+  changed_when: false
+  no_log: true
+
+- name: Prepare Cisco IOS Telnet device facts for Atlas
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_version: "{{ atlas_cisco_telnet_facts.output[1] }}"
+        show_inventory: "{{ atlas_cisco_telnet_facts.output[2] }}"

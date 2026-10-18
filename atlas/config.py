@@ -39,6 +39,8 @@ class Settings(BaseSettings):
     prophylaxis_results_file: Path = Path(
         "/run/atlas/prophylaxis/results.sqlite3"
     )
+    prophylaxis_runs_directory: Path = Path("/run/atlas/prophylaxis/runs")
+    prophylaxis_concurrency: int = Field(default=4, ge=1, le=32)
     prophylaxis_result_retention: int = Field(
         default=10_000,
         ge=100,
@@ -50,7 +52,7 @@ class Settings(BaseSettings):
     ssh_strict_host_keys: bool = False
     ssh_connect_timeout: int = Field(default=10, ge=1, le=60)
     ssh_command_timeout: int = Field(default=20, ge=1, le=300)
-    fortios_validate_certs: bool = True
+    fortios_validate_certs: bool = False
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
 
@@ -114,7 +116,7 @@ class Settings(BaseSettings):
             raise ValueError("runtime path must identify a file")
         return value
 
-    @field_validator("monitoring_jobs_directory")
+    @field_validator("monitoring_jobs_directory", "prophylaxis_runs_directory")
     @classmethod
     def validate_runtime_directory(cls, value: Path) -> Path:
         if not value.name or ".." in value.parts:

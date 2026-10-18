@@ -30,6 +30,9 @@ def test_settings(**overrides):
 
 
 class SettingsTests(unittest.TestCase):
+    def test_fortios_certificate_validation_is_disabled_by_default(self):
+        self.assertFalse(Settings(_env_file=None).fortios_validate_certs)
+
     def test_environment_variables_use_atlas_prefix(self):
         with patch.dict(
             os.environ,
@@ -211,11 +214,18 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261015-1", page.text)
-        self.assertIn("/static/styles.css?v=20261015-1", page.text)
+        self.assertIn("/static/app.js?v=20261018-1", page.text)
+        self.assertIn("/static/styles.css?v=20261018-1", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
-        self.assertIn("/api/prophylaxis/devices", script.text)
+        self.assertIn('id="monitoring-activity"', page.text)
+        self.assertIn('id="monitoring-bulk-preview"', page.text)
+        self.assertIn('id="monitoring-bulk-apply"', page.text)
+        self.assertIn("/api/prophylaxis/runs", script.text)
+        self.assertIn("Waiting for SNMP data", script.text)
+        self.assertIn("MONITORING_VERIFICATION_TIMEOUT_MS", script.text)
+        self.assertIn("renderMonitoringBulkPreview", script.text)
+        self.assertIn("applyAllMonitoringPlans", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)
 

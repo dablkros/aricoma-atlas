@@ -1,0 +1,57 @@
+version: 1
+
+proxy:
+  listen_address: 10.20.30.40
+  https_port: 443
+  allowed_networks:
+    - 10.20.30.0/24
+
+tls:
+  # Production: use existing and provide each service certificate/key below.
+  # LAB only: use lab_generated; Atlas creates a temporary 1-90 day CA/cert.
+  mode: existing
+  ca_certificate: ./tls/ca.crt
+
+services:
+  netbox:
+    hostname: netbox.atlas.example.internal
+    certificate: ./tls/server-fullchain.pem
+    private_key: ./tls/server.key
+  oxidized:
+    hostname: oxidized.atlas.example.internal
+    certificate: ./tls/server-fullchain.pem
+    private_key: ./tls/server.key
+  zabbix:
+    hostname: zabbix.atlas.example.internal
+    certificate: ./tls/server-fullchain.pem
+    private_key: ./tls/server.key
+
+monitoring:
+  allowed_device_networks:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+    - 192.168.0.0/16
+  # Longest-prefix match chooses the profile for each device management IP.
+  # Direct profiles are checked against Linux `ip route get` during deploy.
+  egress_profiles:
+    primary-management:
+      device_networks:
+        - 10.0.0.0/8
+      source_ip: 10.20.30.40
+      # proxy_name: customer-a-proxy
+    secondary-management:
+      device_networks:
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      source_ip: 10.20.30.40
+  default_snmp_port: 161
+  aruba_aoscx_vrf: default
+  allow_unrestricted_snmp_v2c: false
+
+fortios:
+  default_vdom: root
+  default_https_port: 443
+  default_snmp_port: 161
+  tls_verify: true
+  lab_tls_exception: false
+  # ca_bundle: ./tls/fortigate-ca.pem

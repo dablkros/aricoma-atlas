@@ -1,0 +1,19 @@
+---
+- name: Apply the existing Atlas FortiOS SNMP contract through Ansible httpapi
+  atlas_fortios_snmp:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    operation: "{{ atlas_monitoring_operation }}"
+    vdom: "{{ atlas_fortios_vdom }}"
+    interface: "{{ atlas_management_interface }}"
+    community: "{{ atlas_snmp_community }}"
+    community_id: "{{ atlas_community_id | int }}"
+    snmp_port: "{{ atlas_snmp_port | int }}"
+    source_ips: "{{ atlas_monitoring_source_ips }}"
+  register: atlas_fortios_snmp
+  no_log: true
+
+- name: Normalize the FortiOS monitoring result
+  ansible.builtin.set_fact:
+    atlas_monitoring_compliant: "{{ atlas_fortios_snmp.compliant | bool }}"
+    atlas_monitoring_actions: "{{ atlas_fortios_snmp.actions | default([]) }}"
+  no_log: true

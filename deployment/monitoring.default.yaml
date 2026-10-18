@@ -1,14 +1,22 @@
 version: 2
-# TEST-NET-1 is intentionally non-routable. Replace it with explicit customer
-# management ranges before provisioning can contact a device.
+# Permit private enterprise management ranges by default. Public, loopback,
+# link-local, multicast, and unspecified destinations remain outside this list.
+# Narrow these ranges when the customer management networks are known.
 allowed_device_networks:
-  - 192.0.2.0/24
+  - 10.0.0.0/8
+  - 172.16.0.0/12
+  - 192.168.0.0/16
 fortios:
   default_vdom: root
   default_https_port: 443
   default_snmp_port: 161
   tls_verify: true
   lab_tls_exception: false
-monitoring: {}
-# Set monitoring.source_ip to the Atlas/Zabbix egress IPv4 when deployment
-# cannot determine and generate it safely.
+monitoring:
+  default_snmp_port: 161
+  aruba_aoscx_vrf: default
+  # AOS-Switch 16.x cannot bind an SNMPv2c community to one source address.
+  # Keep this false unless the management network provides equivalent filtering.
+  allow_unrestricted_snmp_v2c: false
+# Configure one compatibility monitoring.source_ip or named egress_profiles.
+# Direct profiles must match the source selected by the Atlas host route.

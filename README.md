@@ -8,9 +8,9 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.0-beta** zostavený a spustený v samostatnom kontajneri,
-- plánovaný a potvrdený [FortiGate monitoring provisioning P0](docs/monitoring-provisioning.md)
-  s automatickým NetBox onboardingom a site-level bezpečnostnou politikou,
+- **Atlas FastAPI backend 0.4.1-beta** zostavený a spustený v samostatnom kontajneri,
+- plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
+  pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
 - spoločný **Nginx HTTPS proxy** s certifikátmi internej CA,
 - Nginx Basic Auth pre celý Oxidized web/API,
@@ -24,12 +24,14 @@ Odporúčaný clean-install workflow na novej Linux VM je:
 
 ```bash
 sudo ./install.sh
-sudo ./deploy.sh
+sudo atlasctl configure
+sudo atlasctl deploy
 ```
 
 `install.sh` pripraví nainštalovaný strom v `/opt/aricoma-atlas`, privátny runtime a administračný wrapper. `deploy.sh` následne spustí deployment z nainštalovaného stromu. Po inštalácii sa bežná prevádzka vykonáva cez:
 
 ```bash
+sudo atlasctl configure
 sudo atlasctl deploy
 sudo atlasctl status
 sudo atlasctl openbao
@@ -44,13 +46,39 @@ sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
 ```
 
-Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, DNS a TLS súbory podľa sekcie **Inštalácia a deployment na čistej VM**. Priame `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a diagnostiku.
+Pred prvým deploymentom `atlasctl configure` vytvorí z jedného validovaného
+vstupu chránené `proxy.yaml`, TLS a monitoring policy súbory. DNS záznamy a
+produkčné certifikáty zostávajú vstupom zákazníckeho prostredia. Priame
+`python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a
+diagnostiku.
 
 ---
 
 # Aktuálny stav
 
-**Posledný vydaný release:** `v0.3.0-beta`
+**Verzia tejto dokumentácie a backendu:** `v0.4.1-beta`
+
+Zmeny oproti `v0.4.0-beta` zahŕňajú Ansible monitoring onboarding, rozšírenú
+profylaxiu a Operations UI, konfiguráciu fresh VM cez `atlasctl configure`
+a správu monitoring credentials. Podrobný prehľad je v [CHANGELOG.md](CHANGELOG.md).
+
+V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
+zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
+niektorého plánu zablokuje hromadné vykonanie. Stav `COMPLETED` s verifikáciou
+`PENDING` znamená dokončenú konfiguráciu a čakanie na čerstvú SNMP vzorku zo Zabbixu.
+
+Pre CBS250/350 nastav na zariadení v NetBoxe platformu `cisco-cbs250-350`:
+tá používa vlastný template `Aricoma Atlas Cisco CBS250-350 by SNMP`.
+Platforma `cisco-cbs` zostáva generická pre CBS220/legacy CBS. Bootstrap nastavuje
+predvolenú platformu Device Types; existujúce Devices automaticky nemigruje.
+RAM CBS350 a systémové metriky testovanej Aruba CX OVA zostávajú bez overeného
+SNMP kontraktu; hranice sú uvedené v [dokumentácii systémových metrík](docs/prophylaxis-system-metrics.md).
+
+Fresh VM konfiguráciu a výber zdrojovej SNMP IP pri viacerých rozhraniach opisuje
+[site configuration](docs/site-configuration.md). Spoločný backend operator token
+sa uchováva v OpenBao na `atlas/backend`; zariadeniové SNMP secrets používajú
+`devices/credentials/<vendor>/<device-name>/snmp`. Podrobnosti vrátane migrácie
+sú v [monitoring provisioning](docs/monitoring-provisioning.md).
 
 Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
@@ -80,7 +108,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.0-beta`
+- Atlas backend image `aricoma-atlas-backend:0.4.1-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -133,6 +161,8 @@ V aktuálnom beta prostredí:
 - Nginx → backend komunikácia prebieha cez HTTP v oddelených lokálnych Docker sieťach,
 - Oxidized web/API je chránený OpenBao-backed Basic Auth,
 - Oxidized má v tejto beta konfigurácii vedome nastavené `secure: false`; SSH host key sa preto neoveruje,
+- Atlas Profylaxia Ansible SSH má v beta deployment profile vedome nastavené
+  `ssh_strict_host_keys: false`; týka sa to Cisco aj Aruba kolektorov,
 - persistentný `known_hosts` a fingerprint príkazy sú iba diagnostické; pri `secure: false` pripojenie neobmedzujú.
 
 Oxidized inventory je JSON pole generované Atlasom z NetBoxu a OpenBao. Zariadeniové credentials sa materializujú iba do ephemeral súboru `/run/atlas/oxidized/router.json`, ktorý zostáva mimo Git a je do kontajnera pripojený read-only.
@@ -147,7 +177,7 @@ Pred produkčným nasadením je potrebné doplniť minimálne:
 6. definovaný host-key rotation proces so samostatným schválením,
 7. individuálne roly alebo SSO pre administratívny web/API prístup.
 
-Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie TLS certifikátu. Vypnuté Oxidized SSH host-key verification je samostatná, explicitne zdokumentovaná bezpečnostná výnimka.
+Produkčná verzia nesmie používať `verify=False` ako náhradu za správne overenie TLS certifikátu. Vypnuté Oxidized a Profylaxia SSH host-key verification sú samostatné, explicitne zdokumentované bezpečnostné výnimky.
 
 ---
 
@@ -201,13 +231,18 @@ deploy.sh / atlasctl deploy
     │      ├── host-key verification vypnuté (`secure: false`)
     │      └── web/API iba v internej Docker sieti
     │
-    ├── 4. Atlas backend
+    ├── 4. Zabbix
+    │      ├── server, web a samostatný PostgreSQL
+    │      ├── OpenBao credentials a API integrácia
+    │      └── import Atlas-managed templates
+    │
+    ├── 5. Atlas backend
     │      ├── lokálny build z pripnutého checkoutu
     │      ├── non-root kontajner s read-only root filesystemom
     │      ├── healthcheck GET /api/health
     │      └── host bind iba 127.0.0.1:8081
     │
-    └── 5. Nginx
+    └── 6. Nginx
            ├── samostatné DNS názvy služieb
            ├── HTTPS s certifikátmi internej CA
            ├── management subnet allowlist
@@ -300,6 +335,7 @@ aricoma-atlas/
 │
 ├── tests/
 ├── install.sh
+├── update.sh
 ├── deploy.sh
 ├── requirements.txt
 ├── .dockerignore
@@ -324,12 +360,15 @@ devicetype-library/
 
 # `.runtime/`
 
-Atlas používa dva súvisiace kontexty:
+Atlas podporuje dva súvisiace kontexty:
 
 1. **bootstrap input v source checkoute** – `~/aricoma-atlas/.runtime/`,
 2. **kanonický nainštalovaný runtime** – `/opt/aricoma-atlas/.runtime/`.
 
-Pred `install.sh` sa v source checkoute pripravujú site-specific vstupy, najmä `proxy.yaml` a TLS súbory. Installer ich importuje do nainštalovaného runtime. Bežná prevádzka a `atlasctl` následne pracujú s `/opt/aricoma-atlas/.runtime/`.
+Odporúčaný fresh-install flow vytvorí site-specific súbory až v nainštalovanom
+runtime cez `sudo atlasctl configure`. Source `.runtime/proxy.yaml` a TLS súbory
+zostávajú podporované ako kompatibilný pre-install import. Bežná prevádzka a
+`atlasctl` pracujú s `/opt/aricoma-atlas/.runtime/`.
 
 Typický nainštalovaný runtime:
 
@@ -338,11 +377,18 @@ Typický nainštalovaný runtime:
 ├── proxy.yaml
 ├── tls/
 │   ├── ca.crt
-│   ├── ca.key                 # iba LAB CA, ak bola vytvorená lokálne
-│   ├── server.crt
-│   ├── server.key
-│   ├── server.csr
-│   └── server.ext
+│   ├── netbox.crt
+│   ├── netbox.key
+│   ├── oxidized.crt
+│   ├── oxidized.key
+│   ├── zabbix.crt
+│   └── zabbix.key
+├── monitoring/
+│   ├── config.yaml
+│   ├── operator-token
+│   ├── jobs/
+│   │   └── jobs.sqlite3
+│   └── trust/
 ├── proxy/
 │   └── oxidized.htpasswd
 ├── openbao-approle.json
@@ -473,7 +519,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.0-beta","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.1-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -587,9 +633,11 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - explicitnú operáciu **Sync inventory**,
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
-- samostatný zoznam aktívnych zariadení s `profylaxia_enabled=true` a zvolenou
-  kontrolou `cpu_utilization` (label `CPU utilization`),
-- explicitné tlačidlo **Run CPU check** a posledný lokálne uložený výsledok.
+- operátorskú operáciu **Run Prophylaxis**, ktorá pre aktívne zariadenia s
+  `profylaxia_enabled=true` asynchrónne spustí presne kontroly vybrané v
+  `profylaxia_checks`,
+- priebežný stav behu a súhrn `success`, `failure` a `skipped`,
+- pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
 
@@ -611,6 +659,8 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
 | `POST /api/prophylaxis/devices/{id}/checks/cpu` | Vykoná jednu CPU kontrolu a uloží normalizovaný výsledok lokálne. |
 | `GET /api/prophylaxis/results?limit=50` | Vráti najnovšie lokálne uložené výsledky bez credentials a raw CLI výstupu. |
+| `POST /api/prophylaxis/runs` | Po autorizácii operator tokenom vytvorí asynchrónny beh kontrol vybraných v NetBoxe a vráti `202` so stavom `PENDING`. |
+| `GET /api/prophylaxis/runs/{run_id}` | Po autorizácii vráti stav, súhrn a normalizované výsledky konkrétneho behu. |
 
 Profylaxia história je SQLite databáza v kontajneri na
 `/run/atlas/prophylaxis/results.sqlite3`. Deployment pripája persistentný host
@@ -620,17 +670,26 @@ reštart alebo výmenu backend kontajnera. Databáza má režim `0600`, adresár
 prekročení limitu odstránia. Neukladá sa username, password, OpenBao token ani
 raw príkazový výstup.
 
+Každý hromadný beh vybraných kontrol má samostatný adresár
+`/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
+`result.json` a čitateľným `report.txt`. Adresáre majú režim `0700` a súbory
+`0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
+ID kontroly, normalizované hodnoty a bezpečné chybové kódy.
+Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbežne
+spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
+`deployment/backend.yaml` (predvolene `4`).
+
 ### Manuálny test Profylaxia flow
 
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261007-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261017-1' \
   | grep -i '^cache-control:'
 ```
 
-Očakávaná hodnota je `Cache-Control: no-store`. Potom over zariadenia, spusti
-kontrolu podľa vráteného NetBox ID a načítaj uloženú históriu:
+Očakávaná hodnota je `Cache-Control: no-store`. Pôvodný CPU flow možno naďalej
+overiť podľa NetBox ID:
 
 ```bash
 curl -sS http://127.0.0.1:8081/api/prophylaxis/devices \
@@ -644,17 +703,42 @@ curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
   | python3 -m json.tool
 ```
 
+Pre hromadný flow musí mať cieľ v NetBoxe stav `active` a
+`profylaxia_enabled=true`. Atlas načíta všetky hodnoty vo výbere
+`profylaxia_checks`; implementované kontroly spustí a nepodporované zaznamená
+ako `skipped`. Používa rovnaký runtime operator token ako Monitoring
+Provisioning:
+
+```bash
+read -rsp 'Atlas operator token: ' OPERATOR_TOKEN
+printf '\n'
+
+RUN_ID="$(curl -sS -X POST \
+  -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+  http://127.0.0.1:8081/api/prophylaxis/runs \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin)["run_id"])')"
+
+curl -sS \
+  -H "Authorization: Bearer ${OPERATOR_TOKEN}" \
+  "http://127.0.0.1:8081/api/prophylaxis/runs/${RUN_ID}" \
+  | python3 -m json.tool
+
+unset OPERATOR_TOKEN
+```
+
 Počas checku možno sledovať filtrované bezpečné structured logy:
 
 ```bash
 sudo atlasctl prophylaxis logs --tail=100 -f
 ```
 
-Príkaz zobrazuje eventy `ansible_execution_failed`, `ansible_runner_failed`,
-`prophylaxis_collection_completed` a `prophylaxis_collection_failed`. Pri
-Ansible chybe obsahuje bezpečnú kategóriu `reason_code`, stav a návratový kód
-Runnera a názov eventu/tasku. Credentials, exception text a raw CLI output sa
-nelogujú. Celý backend stream zostáva dostupný cez `sudo atlasctl backend logs`.
+Príkaz zobrazuje pôvodné collection eventy aj asynchrónne
+`prophylaxis_run_completed`, `prophylaxis_run_failed`,
+`prophylaxis_device_failed` a `prophylaxis_device_skipped`. Pri chybe obsahuje
+bezpečnú kategóriu `reason_code`, platformu a stav; Ansible chyba navyše stav a
+návratový kód Runnera a názov eventu/tasku. Credentials, exception text a raw
+CLI output sa nelogujú. Celý backend stream zostáva dostupný cez
+`sudo atlasctl backend logs`.
 
 NetBox multiselect custom field sa z REST API číta ako zoznam objektov
 `{value, label}`. Atlas používa presnú hodnotu `value`; prijíma aj raw string
@@ -707,7 +791,31 @@ git clone <REPOSITORY_URL> aricoma-atlas
 cd aricoma-atlas
 ```
 
-## 2. Priprav site-specific TLS a proxy konfiguráciu
+## 2. Vyber first-boot site konfiguráciu
+
+Odporúčaný flow používa po inštalácii jeden validovaný konfigurátor. Pre
+interaktívne nasadenie netreba v source checkoute vopred vytvárať `.runtime`:
+
+```text
+sudo ./install.sh
+sudo atlasctl configure
+sudo atlasctl deploy
+```
+
+Pre unattended/cloud-init flow priprav jeden súbor podľa
+[`deployment/site.example.yaml`](deployment/site.example.yaml) a po inštalácii
+ho najprv over bez zápisu:
+
+```bash
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml --check
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml
+sudo atlasctl deploy
+```
+
+Kompletný field reference, TLS režimy, ochrana existujúcej konfigurácie a
+troubleshooting sú v [First-boot site configuration](docs/site-configuration.md).
+
+### Kompatibilný manuálny import pred inštaláciou
 
 DNS názvy, management IP, povolené podsiete a certifikáty sa líšia podľa zákazníka. Nie sú pevne zapísané v repozitári.
 
@@ -880,13 +988,29 @@ PY
 sudo ./install.sh
 ```
 
+Ak installer neimportoval starší source `.runtime/proxy.yaml`, vytvor kanonickú
+proxy, TLS a monitoring konfiguráciu teraz:
+
+```bash
+sudo atlasctl configure
+```
+
+Alebo deklaratívne:
+
+```bash
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml --check
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml
+```
+
 Po installeri over import runtime vstupov:
 
 ```bash
 sudo test -f /opt/aricoma-atlas/.runtime/proxy.yaml
 sudo test -f /opt/aricoma-atlas/.runtime/tls/ca.crt
-sudo test -f /opt/aricoma-atlas/.runtime/tls/server.crt
-sudo test -f /opt/aricoma-atlas/.runtime/tls/server.key
+sudo test -f /opt/aricoma-atlas/.runtime/tls/netbox.crt
+sudo test -f /opt/aricoma-atlas/.runtime/tls/oxidized.crt
+sudo test -f /opt/aricoma-atlas/.runtime/tls/zabbix.crt
+sudo test -f /opt/aricoma-atlas/.runtime/monitoring/config.yaml
 ```
 
 Súbory nekopíruj ručne do `/opt`, pokiaľ installer zlyhá. Chýbajúci import je chyba install flow, nie štandardný post-install krok.
@@ -905,9 +1029,34 @@ Po nainštalovaní možno rovnaký deployment opakovať cez:
 sudo atlasctl deploy
 ```
 
+## Aktualizácia existujúcej inštalácie
+
+V source checkoute na Atlas VM možno aktualizáciu kódu, inštaláciu do
+`/opt/aricoma-atlas` a následný deployment vykonať jedným príkazom:
+
+```bash
+cd ~/aricoma-atlas
+sudo ./update.sh
+```
+
+`update.sh` aktualizuje iba aktuálnu branch voči jej nakonfigurovanému upstreamu
+a povoľuje výhradne fast-forward. Pred zmenou overí čistý source checkout a po
+aktualizácii vyžaduje presnú zhodu lokálneho a upstream commitu. Pri lokálnych
+zmenách, untracked súboroch, detached HEAD, chýbajúcom upstreame alebo
+divergovanej histórii skončí bez spustenia installera. Git operácie vykonáva ako
+vlastník source checkoutu; `install.sh` a `atlasctl deploy` zostávajú spustené
+s oprávneniami správcu.
+
+Parametre odovzdané skriptu sa posunú do deploymentu, napríklad:
+
+```bash
+sudo ./update.sh --verbose
+```
+
 ## 5. Prevádzkové príkazy `atlasctl`
 
 ```text
+sudo atlasctl configure [--site-file FILE] [--check] [--force]
 sudo atlasctl deploy [deploy_atlas.py options]
 sudo atlasctl status
 sudo atlasctl openbao
@@ -926,6 +1075,9 @@ Význam:
 
 | Príkaz | Úloha |
 |---|---|
+| `sudo atlasctl configure` | Interaktívne vytvorí chránenú proxy, TLS a monitoring site konfiguráciu. |
+| `sudo atlasctl configure --site-file FILE --check` | Overí deklaratívny site vstup a TLS bez zápisu. |
+| `sudo atlasctl configure --site-file FILE --force` | Po explicitnej kontrole nahradí iba konfigurátorom spravované site súbory. |
 | `sudo atlasctl deploy` | Nasadí alebo zosúladí celý Atlas stack. |
 | `sudo atlasctl status` | Zobrazí stav kontajnerov, Zabbix servera a Oxidized inventára. |
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |
@@ -1044,10 +1196,11 @@ Zabbix host + template + SNMP interface + ownership tags
 
 `atlasctl zabbix sync`, `POST /api/zabbix/sync` a potvrdené Monitoring
 Provisioning joby používajú spoločný `ZabbixSyncService`. Vendor driver vlastní
-iba zariadenie a SNMP desired state: FortiGate P0 používa REST API, budúce
-Cisco a ďalšie platformy môžu použiť Ansible bez vytvorenia ďalšieho Zabbix
-writeru. Zabbix časť vždy dostane normalizovanú identitu, adresu, SNMP secret,
-port, template a ownership tagy.
+iba zariadenie a SNMP desired state. Atlas plánuje a validuje zmenu; izolovaný
+Ansible monitoring playbook vykonáva mutácie pre FortiOS, Cisco IOS/IOS-XE,
+Cisco CBS a Aruba AOS-CX/AOS-Switch bez ďalšieho Zabbix writeru. Zabbix časť
+vždy dostane normalizovanú identitu, adresu, SNMP secret, port, template a
+ownership tagy.
 
 Nasadenie používa Zabbix `7.0.31` LTS, oficiálne server/web image a samostatný
 PostgreSQL kontajner. Verzia je pripnutá v `deployment/zabbix.yaml` a mapovanie
@@ -1167,7 +1320,7 @@ GET  /api/zabbix/status
 GET  /api/zabbix/hosts
 GET  /api/zabbix/problems
 GET  /api/devices/{device_id}/monitoring
-GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d
+GET  /api/devices/{device_id}/monitoring/metrics/{metric}?window=1h|24h|7d|30d
 ```
 
 `sudo atlasctl zabbix credentials` je explicitná privilegovaná operácia: cez
@@ -1177,7 +1330,7 @@ ticketov. Operations UI preberá validované HTTPS originy z `.runtime/proxy.yam
 a pri kartách NetBox, Oxidized a Zabbix zobrazí odkaz **Open** do novej karty.
 
 Metrika sa hľadá podľa centralizovaného item-key prefixu, nie podľa nestabilného
-`itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` používa
+`itemid`. Okná `1h` a `24h` používajú `history.get`; `7d` a `30d` používajú
 `trend.get`. API vracia normalizované body `{timestamp, value}` určené pre
 vlastný Atlas graf, nie embed celého Zabbix frontendu.
 
@@ -1652,22 +1805,77 @@ catalog/baseline/
 
 ### Profylaxia checks
 
-Prvá reusable runtime collection vrstva pre CPU je popísaná v
+Reusable runtime collection vrstva je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
-explicitné platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs`,
-`cisco-cbs250-350` a `fortios`,
+CPU collector pre explicitné platformy `cisco-ios`, `cisco-ios-xe`,
+`cisco-cbs`, `cisco-cbs250-350` a `fortios`. Collector `device_facts` navyše
+podporuje `aruba-aos-cx` a zbiera `hostname`, `model`, `os_version`, sériové
+číslo a uptime v sekundách.
+Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
+výrobcu. Vrstva
 načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
 secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
-Threshold evaluation a scheduler zatiaľ nie sú súčasťou tejto vrstvy. Manuálnu
-CPU kontrolu, lokálnu históriu a frontend tlačidlo poskytuje Atlas Operations UI.
+Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
+vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
+`profylaxia_checks`. `device_facts`, `os_version` a `uptime` zdieľajú jeden
+facts collector job. Cisco CBS systémové metriky zdieľajú jeden read-only SNMP
+GET job; ostatné existujúce CPU platformy používajú pôvodný SSH/API collector.
+Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
+OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
+[Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
+manuálna CPU kontrola zostáva dostupná cez API.
 
-Pre lokálny development a test je host-key verification dočasne vypnutá cez
-`ATLAS_SSH_STRICT_HOST_KEYS=false`. Produkčný backend deployment ho nastavuje
-explicitne na `true` a zdieľa existujúci persistentný Oxidized `known_hosts`.
+| Platform slug | Transport | `device_facts` implementácia |
+| --- | --- | --- |
+| `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | NTC `show version` + `show inventory` |
+| `cisco-ios-xe` | `network_cli` | NTC `show version` + `show inventory` |
+| `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
+| `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
+| `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
+
+Aruba SSH/CLI modul potrebuje v backend image aj Python knižnicu Paramiko.
+Atlas ju pripína v `requirements.txt`; zmena sa prejaví až po novom zostavení
+backend image cez deployment.
+
+Cisco CBS facts collector posiela samostatné výstupy príkazov do pripnutého
+balíka `ntc-templates 9.3.0`. NTC šablóny `cisco_s300/show system` a
+`cisco_s300/show version` poskytujú hostname a OS verziu. Model sa parsuje ako
+PID zo `show inventory`, pre ktorý NTC nemá `cisco_s300` šablónu.
+
+Legacy profil `cisco-ios` pridáva libssh KEX
+`diffie-hellman-group1-sha1` a host-key algoritmus `ssh-rsa` za modernejšie
+možnosti. Do dočasného SSH configu pre konkrétny Runner job pridáva aj
+`aes128-cbc` a `hmac-sha1`; config načíta libssh cez dočasný
+`$HOME/.ssh/config` a `ANSIBLE_LIBSSH_CONFIG_FILE`. `3des-cbc`, skrátený SHA-1
+MAC ani MD5 varianty nepovoľuje. Ostatné platformové profily tieto výnimky
+nepovoľujú.
+
+Telnet fallback sa pre `cisco-ios` aktivuje iba explicitnou TCP službou
+`telnet` na konkrétnom zariadení v NetBoxe. Atlas použije port tejto služby
+(štandardne 23) a Telnet skúsi iba po chybe SSH vyjednávania. Zlé heslo,
+neznámy alebo zmenený SSH host key fallback nespustia. Telnet prenáša
+credentials aj dáta bez šifrovania; služba v NetBoxe preto predstavuje vedomé
+povolenie pre dané zariadenie. Telnet facts sa parsujú cez pripnuté NTC
+Templates `cisco_ios`.
+
+Textový Profylaxia report pri úspešných checkoch uvádza normalizované CPU
+percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. Raw
+CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
+dostupné aj v `result.json` a API behu.
+
+FortiOS ostáva pripojený cez HTTPS API, ale beta deployment profil má
+`fortios_validate_certs: false`, aby self-signed certifikát neblokoval zber.
+Prenos je šifrovaný, identita HTTPS servera sa však neoveruje.
+
+Beta backend deployment nastavuje `ATLAS_SSH_STRICT_HOST_KEYS=false`, takže
+Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto
+odstraňuje onboarding blokovaný neznámym kľúčom, ale neoveruje identitu SSH
+servera a zvyšuje riziko MITM útoku.
 
 Aktuálne možnosti:
 
+- `device_facts` — Device identity, serial & uptime (`hostname`, `model`, `os_version`, `serial_number`, `uptime_seconds`)
 - `cpu_utilization` — CPU utilization
 - `os_version` — OS version
 - `cpu_temperature` — CPU temperature
@@ -2546,10 +2754,10 @@ Prvá beta verzia:
 v0.1.0-beta
 ```
 
-Aktuálny tag:
+Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.3.0-beta
+v0.4.1-beta
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -2579,8 +2787,11 @@ Odporúčaný release postup:
 ```bash
 git status
 python3 -m unittest discover -s tests -v
-git tag -a v0.4.0-beta -m "Aricoma Atlas v0.4.0-beta"
-git push origin v0.4.0-beta
+# Po merge PR a úspešnom CI na konkrétnom main commite:
+git switch main
+git pull --ff-only
+git tag -a v0.4.1-beta -m "Aricoma Atlas v0.4.1-beta"
+git push origin v0.4.1-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.
@@ -2655,11 +2866,11 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 
 Ďalšie fázy projektu:
 
-- aplikačná logika nad existujúcim Atlas FastAPI skeletonom,
-- GUI/API nad existujúcim výberom NetBox zariadení a reconcile logikou,
+- rozšírenie existujúcej profylaxie a monitoring Operations UI,
+- autentifikácia a autorizácia pre verejné sprístupnenie Atlas GUI/API,
 - pending-approval evidencia a riadená rotácia SSH host keys,
 - automatická validácia prvého backupu po schválení zariadenia,
-- Zabbix alert notifications a prípadné vendor-specific custom templates,
+- Zabbix alert notifications a ďalšie overené vendor-specific templates,
 - rozšírenie Zabbix SNMPv3 podpory a Atlas monitoring dashboardu,
 - individuálne prístupy alebo SSO pre proxy,
 - centrálne logging/monitoring,

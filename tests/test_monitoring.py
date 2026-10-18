@@ -12,16 +12,21 @@ from atlas.api.main import create_app
 from atlas.config import Settings
 from atlas.monitoring.fortigate import FortiGateMonitoringDriver
 from atlas.monitoring.models import Device, MonitoringError, device_reference, load_config, site_options
+from atlas.monitoring.network import AnsibleNetworkMonitoringDriver
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.monitoring.store import JobStore
 from atlas.monitoring.service import MonitoringService
 from atlas.monitoring.zabbix import KEY, OID, MonitoringZabbix
+from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.services.errors import DependencyError
 from atlas.services.device_resolution import (
     DeviceResolutionError,
     resolve_primary_interface,
     resolve_tcp_service_port,
 )
+
+
+ROOT = Path(__file__).resolve().parent.parent
 
 
 def raw_device(**overrides):
@@ -40,6 +45,13 @@ def raw_device(**overrides):
 
 
 class MonitoringModelTests(unittest.TestCase):
+    def test_deployment_policies_cover_all_private_ipv4_ranges(self):
+        expected = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
+        for name in ("monitoring.default.yaml", "monitoring.example.yaml"):
+            with self.subTest(name=name):
+                config = load_config(ROOT / "deployment" / name)
+                self.assertEqual(config["allowed_device_networks"], expected)
+
     def test_netbox_reference_requires_exact_active_fortios_contract(self):
         device = device_reference(raw_device())
         self.assertEqual((device.id, device.address, device.profile), (42, "10.0.0.10", "edge"))
@@ -50,6 +62,46 @@ class MonitoringModelTests(unittest.TestCase):
         ):
             with self.subTest(code=code), self.assertRaisesRegex(MonitoringError, code):
                 device_reference(raw_device(**change))
+
+    def test_netbox_reference_preserves_device_type_for_template_selection(self):
+        device = device_reference(
+            raw_device(
+                device_type={
+                    "slug": "hpe-aruba-8325-48y8c",
+                    "manufacturer": {"slug": "hpe"},
+                },
+                platform={"slug": "aruba-aos-cx"},
+            )
+        )
+
+        self.assertEqual(device.device_type, "hpe-aruba-8325-48y8c")
+
+    def test_netbox_reference_accepts_only_explicit_vendor_platform_pairs(self):
+        pairs = (
+            ("fortinet", "fortios"),
+            ("cisco", "cisco-ios"),
+            ("cisco", "cisco-ios-xe"),
+            ("cisco", "cisco-cbs"),
+            ("cisco", "cisco-cbs250-350"),
+            ("hpe", "aruba-aos-cx"),
+            ("hpe", "aruba-aos-switch"),
+        )
+        for vendor, platform in pairs:
+            with self.subTest(vendor=vendor, platform=platform):
+                device = device_reference(
+                    raw_device(
+                        device_type={"manufacturer": {"slug": vendor}},
+                        platform={"slug": platform},
+                    )
+                )
+                self.assertEqual((device.vendor, device.platform), (vendor, platform))
+        with self.assertRaisesRegex(MonitoringError, "unsupported_monitoring_driver"):
+            device_reference(
+                raw_device(
+                    device_type={"manufacturer": {"slug": "hpe"}},
+                    platform={"slug": "cisco-ios"},
+                )
+            )
 
     def test_site_policy_has_no_device_inventory_and_is_allowlisted(self):
         device = device_reference(raw_device())
@@ -63,6 +115,105 @@ class MonitoringModelTests(unittest.TestCase):
                          https_port=443, interface="port1")
         with self.assertRaisesRegex(MonitoringError, "monitoring_source_ip_unresolved"):
             site_options(device, {**config, "monitoring": {}}, https_port=443, interface="port1")
+
+    def test_egress_profiles_use_longest_prefix_and_expose_selected_poller(self):
+        device = device_reference(raw_device())
+        config = {
+            "allowed_device_networks": ["10.0.0.0/8"],
+            "fortios": {
+                "default_snmp_port": 161,
+                "default_vdom": "root",
+                "tls_verify": True,
+            },
+            "monitoring": {
+                "egress_profiles": {
+                    "fallback": {
+                        "device_networks": ["10.0.0.0/8"],
+                        "source_ip": "192.0.2.10",
+                        "proxy_name": "fallback-proxy",
+                    },
+                    "bratislava": {
+                        "device_networks": ["10.0.0.0/24"],
+                        "source_ip": "198.51.100.10",
+                        "proxy_name": "bratislava-proxy",
+                    },
+                }
+            },
+        }
+
+        options = site_options(
+            device, config, https_port=443, interface="port1"
+        )
+
+        self.assertEqual(options["source_ips"], ["198.51.100.10"])
+        self.assertEqual(options["egress_profile"], "bratislava")
+        self.assertEqual(options["egress_network"], "10.0.0.0/24")
+        self.assertEqual(options["proxy_name"], "bratislava-proxy")
+        resolved = MonitoringService._public_resolved(device, options)
+        self.assertEqual(resolved["monitoring_source_ip"], "198.51.100.10")
+        self.assertEqual(resolved["egress_profile"], "bratislava")
+        self.assertEqual(resolved["egress_network"], "10.0.0.0/24")
+        self.assertEqual(resolved["proxy_name"], "bratislava-proxy")
+
+    def test_egress_profile_requires_matching_target_network(self):
+        device = device_reference(raw_device())
+        config = {
+            "allowed_device_networks": ["10.0.0.0/8"],
+            "fortios": {"default_snmp_port": 161},
+            "monitoring": {
+                "egress_profiles": {
+                    "other": {
+                        "device_networks": ["10.20.0.0/16"],
+                        "source_ip": "192.0.2.10",
+                    }
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            MonitoringError, "monitoring_egress_profile_unresolved"
+        ):
+            site_options(device, config, https_port=443, interface="port1")
+
+    def test_config_rejects_ambiguous_egress_profiles(self):
+        profiles = """
+    one: {device_networks: [10.0.0.0/24], source_ip: 192.0.2.10, proxy_name: proxy-one}
+    two: {device_networks: [10.0.0.0/24], source_ip: 198.51.100.10, proxy_name: proxy-two}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n  egress_profiles:\n"
+                + profiles,
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                MonitoringError, "monitoring_egress_profile_ambiguous"
+            ):
+                load_config(path)
+
+    def test_config_allows_route_selected_sources_without_proxies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    one: {device_networks: [10.0.0.0/24], source_ip: 192.0.2.10}\n"
+                "    two: {device_networks: [10.0.1.0/24], source_ip: 198.51.100.10}\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+            self.assertEqual(
+                config["monitoring"]["egress_profiles"]["two"]["source_ip"],
+                "198.51.100.10",
+            )
 
     def test_v1_config_requires_explicit_migration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -101,8 +252,9 @@ class MonitoringSecretTests(unittest.TestCase):
         service = Mock()
         service.read_secret_with_metadata.side_effect = [
             DependencyError("secret_not_found"),
+            DependencyError("secret_not_found"),
             ({"version": "2c", "community": "A" * 32, "managed_by": "atlas",
-              "device_id": "42", "community_id": 7,
+              "device_id": "42", "device_name": "fw-1", "community_id": 7,
               "vdom": "root"}, {"version": 1}),
         ]
         service._authenticated.side_effect = lambda callback: callback("runtime-token")
@@ -116,8 +268,100 @@ class MonitoringSecretTests(unittest.TestCase):
         callback("runtime-token")
         service.client.kv_write.assert_called_once()
         args, kwargs = service.client.kv_write.call_args
-        self.assertEqual(args[:2], ("runtime-token", "devices/snmp/fortinet/42/monitoring"))
+        self.assertEqual(
+            args[:2],
+            ("runtime-token", "devices/credentials/fortinet/fw-1/snmp"),
+        )
         self.assertEqual(kwargs["cas"], 0)
+
+    def test_legacy_monitoring_secret_is_copied_to_named_device_path(self):
+        legacy = {
+            "version": "2c",
+            "community": "A" * 32,
+            "managed_by": "atlas",
+            "device_id": "42",
+            "community_id": 7,
+            "vdom": "root",
+        }
+        migrated = {**legacy, "device_name": "fw-1"}
+        service = Mock()
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            (legacy, {"version": 3}),
+            (migrated, {"version": 1}),
+        ]
+        service._authenticated.side_effect = lambda callback: callback("runtime-token")
+        device = Device(42, "fw-1", "10.0.0.10", "fortinet", "fortios", "edge", "ba")
+
+        value, version = MonitoringSecrets(service).ensure(
+            device,
+            7,
+            {"vdom": "root"},
+        )
+
+        self.assertEqual(version, 1)
+        self.assertEqual(value["device_name"], "fw-1")
+        service.client.kv_write.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/fortinet/fw-1/snmp",
+            migrated,
+            mount="atlas",
+            cas=0,
+        )
+
+    def test_read_uses_legacy_secret_without_migrating_it(self):
+        legacy = {
+            "version": "2c",
+            "community": "A" * 32,
+            "managed_by": "atlas",
+            "device_id": "42",
+            "community_id": 7,
+            "vdom": "root",
+        }
+        service = Mock()
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            (legacy, {"version": 3}),
+        ]
+        device = Device(42, "fw-1", "10.0.0.10", "fortinet", "fortios", "edge", "ba")
+
+        value, version = MonitoringSecrets(service).read(device)
+
+        self.assertEqual(value, legacy)
+        self.assertEqual(version, 3)
+        service._authenticated.assert_not_called()
+        service.client.kv_write.assert_not_called()
+
+    def test_cisco_cbs_secret_uses_documented_twenty_character_limit(self):
+        service = Mock()
+        stored = {
+            "version": "2c",
+            "community": "B" * 20,
+            "managed_by": "atlas",
+            "device_id": "43",
+        }
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            DependencyError("secret_not_found"),
+            ({**stored, "device_name": "cbs-1"}, {"version": 1}),
+        ]
+        service._authenticated.side_effect = lambda callback: callback("runtime-token")
+        device = Device(
+            43,
+            "cbs-1",
+            "10.0.0.11",
+            "cisco",
+            "cisco-cbs250-350",
+            "edge",
+            "ba",
+        )
+
+        value, _version = MonitoringSecrets(service).ensure(device)
+
+        self.assertEqual(len(value["community"]), 20)
+        payload = service.client.kv_write.call_args.args[2]
+        self.assertEqual(len(payload["community"]), 20)
+        self.assertNotIn("community_id", payload)
 
 
 class FortiGateDriverTests(unittest.TestCase):
@@ -190,6 +434,37 @@ class FortiGateDriverTests(unittest.TestCase):
             self.driver.resolve_vdom()
 
 
+class AnsibleNetworkMonitoringDriverTests(unittest.TestCase):
+    def test_write_intent_is_persisted_before_runner_can_fail(self):
+        backend = Mock()
+        backend.execute.side_effect = [
+            {"compliant": False, "actions": []},
+            MonitoringError("connection_timeout", 503),
+        ]
+        device = Device(
+            50,
+            "ios-1",
+            "10.0.0.50",
+            "cisco",
+            "cisco-ios-xe",
+            "edge",
+            "ba",
+        )
+        driver = AnsibleNetworkMonitoringDriver(
+            device,
+            {"ssh_port": 22, "snmp_port": 161, "source_ips": ["10.0.0.5"]},
+            {"username": "admin", "password": "secret"},
+            SimpleNamespace(slug="cisco-ios-xe"),
+            backend,
+        )
+        changes = []
+
+        with self.assertRaisesRegex(MonitoringError, "connection_timeout"):
+            driver.configure({"community": "A" * 32}, changes.append)
+
+        self.assertEqual(changes, ["Configure Atlas SNMPv2c policy"])
+
+
 class JobStoreTests(unittest.TestCase):
     def test_plan_expires_and_interrupted_job_is_recovered_without_secrets(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -219,6 +494,7 @@ class MonitoringServiceTests(unittest.TestCase):
     def test_resolution_uses_service_port_and_blocks_network_before_lookups(self):
         service = object.__new__(MonitoringService)
         service.netbox = Mock()
+        service.platform_registry = AnsiblePlatformRegistry()
         service.netbox.get_device_services.return_value = [{"port_mappings": ["tcp/444"]}]
         service.netbox.get.side_effect = [
             {"address": "10.0.0.10/24", "assigned_object_type": "dcim.interface",
@@ -324,7 +600,8 @@ class MonitoringServiceTests(unittest.TestCase):
             community = "A" * 32
             openbao.read_secret_with_metadata.return_value = (
                 {"version": "2c", "community": community, "managed_by": "atlas",
-                 "device_id": "42", "community_id": 7, "vdom": "root"},
+                 "device_id": "42", "device_name": "fw-1",
+                 "community_id": 7, "vdom": "root"},
                 {"version": 2},
             )
             credential_source = Mock()

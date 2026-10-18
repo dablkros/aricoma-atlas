@@ -1,0 +1,38 @@
+---
+- name: Read Cisco CBS SNMP communities
+  community.ciscosmb.command:
+    commands:
+      - show running-config | include snmp-server community
+  register: atlas_cisco_cbs_snmp
+  no_log: true
+
+- name: Derive Cisco CBS compliance without returning configuration
+  ansible.builtin.set_fact:
+    atlas_cisco_cbs_line: >-
+      {{ 'snmp-server community ' ~ atlas_snmp_community ~ ' ro ' ~
+         atlas_monitoring_source_ips[0] ~ ' mask 255.255.255.255' }}
+    atlas_monitoring_compliant: >-
+      {{ ('snmp-server community ' ~ atlas_snmp_community ~ ' ro ' ~
+          atlas_monitoring_source_ips[0] ~ ' mask 255.255.255.255')
+         in (atlas_cisco_cbs_snmp.stdout[0] | default('')) }}
+  no_log: true
+
+- name: Configure Cisco CBS through its command-only collection
+  community.ciscosmb.command:
+    commands:
+      - configure terminal
+      - "{{ atlas_cisco_cbs_line }}"
+      - end
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool
+  changed_when: true
+  no_log: true
+
+- name: Record Cisco CBS configuration intent
+  ansible.builtin.set_fact:
+    atlas_monitoring_actions: ['Configure source-restricted Cisco CBS SNMPv2c community']
+    atlas_monitoring_compliant: true
+  when:
+    - atlas_monitoring_operation == 'configure'
+    - not atlas_monitoring_compliant | bool

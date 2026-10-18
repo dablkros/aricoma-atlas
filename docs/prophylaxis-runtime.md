@@ -1,13 +1,13 @@
 # Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Stav dokumentácie: 2026-10-08. Implementácia zachováva Atlas ako orchestrátor;
+Stav dokumentácie: 2026-10-16. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
 
 ```text
 Atlas UI/API
-  -> ProphylaxisService.run_check(device_id, check_id)
+  -> ProphylaxisService.collect(...) alebo DeviceFactsRunService
   -> existujúci NetBoxService
   -> active + profylaxia_enabled + profylaxia_checks
   -> device/IP/platform/vendor/credential_profile
@@ -16,10 +16,10 @@ Atlas UI/API
   -> AnsiblePlatformRegistry
   -> AnsibleBackend / ansible-runner
   -> read-only Ansible collection module
-  -> RawCheckResult
+  -> RawCollectorResult
   -> platform-specific Python parser
-  -> CheckResult
-  -> SQLite store / API / UI
+  -> normalizovaný check result
+  -> SQLite história alebo runs/<run_id>/{result.json,report.txt} / API / UI
 ```
 
 Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH polia
@@ -68,14 +68,21 @@ Interný kontrakt používa:
 
 ```text
 cpu_utilization
+device_facts
 os_version
 cpu_temperature
 uptime
 ```
 
-V tejto iterácii je implementovaný iba `cpu_utilization`. Registry vráti pre
-známu platformu a zatiaľ neimplementovaný check stav `unsupported`; nevydáva ho
-za connection error a nevytvára nulovú hodnotu.
+V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
+`os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
+sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
+používajú ten istý facts collector, takže pri spoločnom výbere nevznikne druhý
+collector job. Hromadný beh zostaví plán z
+`profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
+neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
+`unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
+hodnotu.
 
 NetBox choice set používa stabilné ID ako value a ľudský text ako label.
 Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
@@ -83,28 +90,71 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 ## Platform registry
 
-| NetBox platform | Connection | Network OS | Modul pre CPU |
+| NetBox platform | Connection | Network OS | `device_facts` modul |
 | --- | --- | --- | --- |
-| `cisco-ios` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
-| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `cisco.ios.ios_command` |
-| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
-| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` |
-| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `fortinet.fortios.fortios_monitor_fact` |
+| `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
+| `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
+| `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
+| `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
+| `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
+| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
 `show cpu utilization`. FortiOS používa monitor selector
 `system_resource_usage` s `resource: cpu` a API tokenom.
 
+Cisco CBS facts collector zachováva výstupy `show system`, `show version` a
+`show inventory` oddelene. Hostname a verzia sa parsujú cez pripnuté
+`ntc-templates 9.3.0` šablóny `cisco_s300`; model sa berie z explicitného PID
+v `show inventory`, pretože NTC katalóg nemá pre túto dvojicu platformy a
+príkazu šablónu.
+
 Primárne zdroje:
 
 - [Ansible Runner Python interface](https://docs.ansible.com/projects/runner/en/latest/python_interface/)
 - [ansible.netcommon 8.6.2](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/index.html)
+- [ansible.netcommon.telnet](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/telnet_module.html)
 - [ansible.utils 6.1.0](https://docs.ansible.com/projects/ansible/latest/collections/ansible/utils/index.html)
 - [cisco.ios 11.5.1](https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/index.html)
 - [community.ciscosmb 1.0.12](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/index.html)
 - [community.ciscosmb.command](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/command_module.html)
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
+- [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
+- [Paramiko 5.0.0](https://pypi.org/project/paramiko/5.0.0/)
+- [NTC Templates 9.3.0](https://github.com/networktocode/ntc-templates/tree/v9.3.0/ntc_templates/templates)
+
+Aruba `aoscx_command` používaný cez `network_cli` vyžaduje na Ansible control
+node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
+pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
+Python requirements kolekcie neinštaluje.
+
+Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
+`diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
+modernejšími typmi kľúčov. Do dočasného per-job SSH configu zároveň pridáva
+`aes128-cbc` za moderné šifry a `hmac-sha1` za moderné MAC algoritmy. Slabší
+algoritmus sa použije iba vtedy, keď zariadenie neponúkne spoločný modernejší
+algoritmus. Config sa uloží do
+dočasného `$HOME/.ssh/config` a jeho cesta sa odovzdá cez procesnú premennú
+`ANSIBLE_LIBSSH_CONFIG_FILE`; odstráni sa spolu s dočasným Runner adresárom.
+`3des-cbc`, `hmac-sha1-96` ani MD5 varianty sa nepovoľujú. `cisco-ios-xe`, CBS
+a Aruba profily tieto výnimky nepovoľujú.
+
+Telnet je pre `cisco-ios` explicitný fallback, nie predvolený transport. Atlas
+ho povolí iba vtedy, keď má konkrétne zariadenie v NetBoxe práve jednu TCP
+službu s presným názvom `telnet`; použije port tejto služby, štandardne 23.
+Fallback sa vykoná iba po `ssh_negotiation_failed`. Neaktivuje sa pri zlom
+hesle, neznámom alebo zmenenom SSH host key ani pri inom zlyhaní. Telnet úlohy
+sú read-only a zbierajú iba CPU alebo `show version` + `show inventory`.
+Výstupy device facts parsujú pripnuté NTC Templates `cisco_ios`; prihlasovacie
+údaje ostávajú v procesnom environment a Telnet task používa `no_log`.
+Telnet neprenáša prihlásenie ani dáta šifrovane, preto služba v NetBoxe slúži
+ako vedomé povolenie pre konkrétne zariadenie.
+
+Dokončený `report.txt` obsahuje pri úspešných checkoch aj normalizované
+hodnoty: CPU percentá, hostname, model, OS verziu, sériové číslo a uptime v
+sekundách. Report neobsahuje raw CLI výstup ani credentials. Rovnaké typované
+hodnoty sú uložené v `result.json` a vrátené cez API behu.
 
 ## Runtime a secrets
 
@@ -124,17 +174,16 @@ FortiOS modul deklaruje parameter `access_token` ako `no_log`, takže ho Ansible
 maskuje. Atlas navyše pred zápisom diagnostického `ansible_message` nahradí
 všetky hodnoty credentials a bežné token/password formáty za `[REDACTED]`.
 
-Pri strict host-key režime backend skopíruje existujúci Oxidized `known_hosts`
-do dočasného Runner HOME. Ansible vykoná SSH spojenie; Atlas už nemá vlastný
-SSH/Netmiko transport.
+Nasadzovaný beta profil má `ssh_strict_host_keys: false`. Ansible preto pri
+Cisco a Aruba kolektoroch prijme aj neznámy SSH host key. Toto zjednodušuje
+onboarding, ale neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
+Ak sa strict režim neskôr zapne, backend skopíruje existujúci Oxidized
+`known_hosts` do dočasného Runner HOME.
 
-Nasadzovaný profil má `fortios_validate_certs: false`, takže FortiOS HTTPS
-spojenie je šifrované, ale Atlas neoveruje identitu zariadenia podľa TLS
-certifikátu. Je to vedomý prevádzkový kompromis pre zariadenia s lokálnymi alebo
-factory certifikátmi a zvyšuje riziko MITM útoku. Hodnota sa nastavuje v
-`deployment/backend.yaml`; jej zmena sa aplikuje cez `sudo atlasctl deploy`.
-Interný fallback aplikácie zostáva `true`, aby spustenie bez deployment
-konfigurácie validáciu certifikátov nevypínalo potichu.
+Nasadzovaný beta profil má `fortios_validate_certs: false`. FortiOS sa stále
+kontaktuje cez HTTPS, ale Atlas neoveruje CA ani identitu servera. Hodnota sa
+nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`;
+interný fallback aplikácie je tiež `false`.
 
 FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
@@ -151,17 +200,16 @@ sudo atlasctl prophylaxis logs -f
 ```
 
 Príkaz akceptuje rovnaké voľby ako `docker compose logs`, napríklad `--tail`,
-`--since` a `-f`. Zobrazuje iba eventy `ansible_execution_failed`,
-`ansible_runner_failed`, `prophylaxis_collection_completed` a
-`prophylaxis_collection_failed`. Diagnostika môže obsahovať bezpečný
-`reason_code`, Runner status/return code, názov Ansible eventu a tasku a
+`--since` a `-f`. Zobrazuje pôvodné collection/Ansible eventy aj asynchrónne
+run a per-device eventy. Diagnostika môže obsahovať bezpečný `reason_code`,
+platformu, stav, Runner status/return code, názov Ansible eventu a tasku a
 redigovaný modulový `msg`. Pre FortiOS sa pridá aj numerický HTTP status a
 bezpečný API status, ak ich modul vráti. Credentials, traceback, stderr a raw
 výstup zariadenia sa do logu nezapisujú.
 
 ## Výsledok
 
-Transport vracia interný `RawCheckResult`. Python parser ho normalizuje napríklad
+Transport vracia interný `RawCollectorResult`. Python parser ho normalizuje napríklad
 na:
 
 ```json

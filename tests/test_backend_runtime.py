@@ -8,7 +8,7 @@ from unittest.mock import Mock, call, patch
 import yaml
 
 from atlas import __version__
-from atlas.openbao_client import OpenBaoAuthenticationError
+from atlas.openbao_client import OpenBaoAuthenticationError, OpenBaoNotFound
 from scripts import deploy_atlas, deploy_backend
 
 
@@ -25,9 +25,10 @@ def backend_config(**overrides):
             "environment": "production",
             "log_level": "INFO",
             "ansible_job_timeout": 120,
-            "fortios_validate_certs": True,
+            "fortios_validate_certs": False,
             "ssh_strict_host_keys": True,
             "prophylaxis_result_retention": 10000,
+            "prophylaxis_concurrency": 4,
         },
         "runtime": {
             "directory": ".runtime/backend",
@@ -99,6 +100,220 @@ class BackendConfigurationTests(unittest.TestCase):
             ):
                 deploy_backend.validate_config(backend_config(backend=values))
 
+    def test_monitoring_egress_matches_host_route_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab:\n"
+                "      device_networks: [10.255.253.0/24]\n"
+                "      source_ip: 10.99.98.200\n",
+                encoding="utf-8",
+            )
+            route_source = Mock(return_value="10.99.98.200")
+
+            deploy_backend.validate_monitoring_egress(path, route_source)
+
+            route_source.assert_called_once_with("10.255.253.1")
+
+    def test_host_route_source_reads_kernel_selected_src(self):
+        runner = Mock(
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "10.255.253.10 via 10.99.98.1 dev ens192 "
+                    "src 10.99.98.200 uid 1000\n"
+                ),
+            )
+        )
+
+        source = deploy_backend.host_route_source("10.255.253.10", runner)
+
+        self.assertEqual(source, "10.99.98.200")
+        runner.assert_called_once_with(
+            ["ip", "route", "get", "10.255.253.10"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_monitoring_egress_rejects_wrong_host_route_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab: {device_networks: [10.255.253.0/24], source_ip: 10.200.200.10}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError, "expects source 10.200.200.10.*selects 10.99.98.200"
+            ):
+                deploy_backend.validate_monitoring_egress(
+                    path, Mock(return_value="10.99.98.200")
+                )
+
+    def test_monitoring_egress_allows_multiple_route_selected_vm_addresses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8, 172.16.0.0/12]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab: {device_networks: [10.255.253.0/24], source_ip: 10.99.98.200}\n"
+                "    dc: {device_networks: [172.20.0.0/16], source_ip: 172.20.0.10}\n",
+                encoding="utf-8",
+            )
+            sources = {
+                "10.255.253.1": "10.99.98.200",
+                "172.20.0.1": "172.20.0.10",
+            }
+
+            deploy_backend.validate_monitoring_egress(
+                path, lambda target: sources[target]
+            )
+
+    def test_proxy_egress_is_not_validated_against_atlas_host_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    remote:\n"
+                "      device_networks: [10.20.0.0/16]\n"
+                "      source_ip: 10.20.0.5\n"
+                "      proxy_name: remote-proxy\n",
+                encoding="utf-8",
+            )
+            route_source = Mock()
+
+            deploy_backend.validate_monitoring_egress(path, route_source)
+
+            route_source.assert_not_called()
+
+
+class AtlasOperatorTokenTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        identity = self.root / ".runtime/openbao-approle.json"
+        identity.parent.mkdir(parents=True)
+        identity.write_text("{}\n", encoding="utf-8")
+        self.client = Mock()
+        self.client.login_from_identity.return_value = "deployment-token"
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_existing_openbao_token_is_materialized_to_private_runtime_file(self):
+        operator_token = "o" * 40
+        self.client.kv_read_with_metadata.return_value = (
+            {"operator_token": operator_token},
+            {"version": 3},
+        )
+
+        token_file = deploy_backend.sync_backend_operator_token(
+            self.root,
+            self.client,
+        )
+
+        self.assertEqual(token_file.read_text(encoding="utf-8"), operator_token + "\n")
+        self.assertEqual(os.stat(token_file).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(token_file.parent).st_mode & 0o777, 0o700)
+        self.client.kv_write.assert_not_called()
+        self.client.revoke_self.assert_called_once_with("deployment-token")
+
+    def test_existing_local_token_is_migrated_without_rotation(self):
+        operator_token = "l" * 40
+        token_file = self.root / ".runtime/monitoring/operator-token"
+        token_file.parent.mkdir(parents=True)
+        token_file.write_text(operator_token + "\n", encoding="utf-8")
+        self.client.kv_read_with_metadata.side_effect = OpenBaoNotFound("not found")
+
+        deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_called_once_with(
+            "deployment-token",
+            "backend",
+            {"operator_token": operator_token},
+            mount="atlas",
+            cas=0,
+        )
+        self.client.kv_read.assert_not_called()
+        self.assertEqual(token_file.read_text(encoding="utf-8"), operator_token + "\n")
+
+    def test_fresh_install_creates_openbao_token_and_materializes_same_value(self):
+        self.client.kv_read_with_metadata.side_effect = OpenBaoNotFound("not found")
+
+        token_file = deploy_backend.sync_backend_operator_token(
+            self.root,
+            self.client,
+        )
+
+        stored = self.client.kv_write.call_args.args[2]["operator_token"]
+        self.assertRegex(stored, r"^[A-Za-z0-9_-]{32,256}$")
+        self.assertEqual(token_file.read_text(encoding="utf-8"), stored + "\n")
+
+    def test_invalid_openbao_token_is_rejected_and_session_is_revoked(self):
+        self.client.kv_read_with_metadata.return_value = (
+            {"operator_token": "contains spaces"},
+            {"version": 1},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid format"):
+            deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_not_called()
+        self.client.revoke_self.assert_called_once_with("deployment-token")
+
+    def test_existing_backend_keys_are_preserved_when_operator_token_is_added(self):
+        operator_token = "p" * 40
+        token_file = self.root / ".runtime/monitoring/operator-token"
+        token_file.parent.mkdir(parents=True)
+        token_file.write_text(operator_token + "\n", encoding="utf-8")
+        self.client.kv_read_with_metadata.return_value = (
+            {"existing_key": "existing-value"},
+            {"version": 7},
+        )
+
+        deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_called_once_with(
+            "deployment-token",
+            "backend",
+            {
+                "existing_key": "existing-value",
+                "operator_token": operator_token,
+            },
+            mount="atlas",
+            cas=7,
+        )
+
+    def test_runtime_symlink_is_rejected_before_openbao_login(self):
+        (self.root / ".runtime/openbao-approle.json").unlink()
+        (self.root / ".runtime").rmdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.root / ".runtime").symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+            deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.login_from_identity.assert_not_called()
+
 
 class BackendRuntimeTests(unittest.TestCase):
     def setUp(self):
@@ -112,6 +327,9 @@ class BackendRuntimeTests(unittest.TestCase):
         identity.write_text("{}\n", encoding="utf-8")
         monitoring_identity = self.root / ".runtime/openbao-monitoring.json"
         monitoring_identity.write_text("{}\n", encoding="utf-8")
+        operator_token = self.root / ".runtime/monitoring/operator-token"
+        operator_token.parent.mkdir(parents=True)
+        operator_token.write_text("t" * 40 + "\n", encoding="utf-8")
         monitoring_default = self.root / "deployment/monitoring.default.yaml"
         monitoring_default.write_text(
             "version: 2\nallowed_device_networks: [192.0.2.0/24]\n"
@@ -206,7 +424,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             service["environment"]["ATLAS_FORTIOS_VALIDATE_CERTS"],
-            "true",
+            "false",
         )
         self.assertEqual(
             service["environment"]["ATLAS_SSH_KNOWN_HOSTS_FILE"],
@@ -292,6 +510,8 @@ class BackendRuntimeTests(unittest.TestCase):
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
         (self.root / ".runtime/openbao-monitoring.json").unlink()
+        (self.root / ".runtime/monitoring/operator-token").unlink()
+        (self.root / ".runtime/monitoring").rmdir()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
         (self.root / ".runtime/oxidized/ssh").rmdir()
         (self.root / ".runtime/oxidized").rmdir()

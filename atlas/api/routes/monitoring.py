@@ -1,13 +1,12 @@
 """Authenticated monitoring routes. Targets and credentials cannot be caller supplied."""
 import logging
-import secrets
-from pathlib import Path
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Request
 from pydantic import BaseModel, ConfigDict, Field
 from atlas.api.errors import AtlasError
+from atlas.api.operator_auth import require_operator
 from atlas.monitoring.models import MonitoringError
 from atlas.services.errors import DependencyError
 from atlas.device_credentials import DeviceValidationError
@@ -17,17 +16,15 @@ from atlas.integrations.zabbix import ZabbixAPIError
 logger = logging.getLogger("atlas.monitoring")
 
 
-def authorized(request: Request):
-    try:
-        token = Path(request.app.state.settings.monitoring_operator_token_file).read_text().strip()
-    except OSError:
-        raise AtlasError(503, "monitoring_authorization_not_configured", "Monitoring operator access is not configured") from None
-    supplied = request.headers.get("Authorization", "")
-    if len(token) < 32 or not secrets.compare_digest(supplied, f"Bearer {token}"):
-        raise AtlasError(401, "monitoring_unauthorized", "Monitoring operator authorization required")
+def authorized(request: Request) -> None:
+    require_operator(request, scope="monitoring")
 
 
-router = APIRouter(prefix="/monitoring", tags=["monitoring provisioning"], dependencies=[Depends(authorized)])
+router = APIRouter(
+    prefix="/monitoring",
+    tags=["monitoring provisioning"],
+    dependencies=[Depends(authorized)],
+)
 
 
 class Mode(BaseModel):

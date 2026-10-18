@@ -1,4 +1,4 @@
-version: 1
+version: 2
 zabbix_version: "7.0.31"
 managed_host_group: "Aricoma Atlas"
 platform_templates:
@@ -12,11 +12,59 @@ platform_templates:
   sophos-ap: "Network Generic Device by SNMP"
   aruba-aos-cx: "Network Generic Device by SNMP"
   aruba-aos-switch: "Network Generic Device by SNMP"
+device_type_template_rules:
+  aruba-aos-cx:
+    - device_type_patterns:
+        - "hpe-aruba-8325-*"
+        - "hpe-aruba-8360-*"
+      template: "Aruba CX 8300s by SNMP"
+  aruba-aos-switch:
+    - device_type_patterns:
+        - "hpe-aruba-2920-*"
+      template: "HP Enterprise Switch by SNMP"
+template_metadata:
+  "Network Generic Device by SNMP":
+    origin: zabbix
+    coverage: generic-snmp
+    metrics: [uptime]
+  "Cisco IOS by SNMP":
+    origin: zabbix
+    coverage: cisco-ios
+    metrics: [cpu, memory, uptime]
+  "Aricoma Atlas Cisco CBS250-350 by SNMP":
+    origin: atlas
+    coverage: cisco-cbs250-350
+    metrics: [cpu, uptime, temperature]
+  "FortiGate by SNMP":
+    origin: zabbix
+    coverage: fortios
+    metrics: [cpu, memory, uptime]
+  "Juniper by SNMP":
+    origin: zabbix
+    coverage: junos
+    metrics: [cpu, memory, uptime]
+  "Aricoma Atlas Sophos SFOS by SNMP":
+    origin: atlas
+    coverage: sophos-sfos
+    metrics: [cpu, memory, uptime, temperature]
+  "Aruba CX 8300s by SNMP":
+    origin: zabbix
+    coverage: aruba-cx-8300-series
+    metrics: [cpu, memory, uptime, temperature]
+  "HP Enterprise Switch by SNMP":
+    origin: zabbix
+    coverage: hp-enterprise-switch
+    metrics: [cpu, memory, uptime, temperature]
 metric_keys:
   cpu:
     - "system.cpu.util"
+    - "aruba.system.cpu.utilization"
   memory:
     - "vm.memory.util"
+    - "aruba.system.memory.usage"
   uptime:
     - "system.hw.uptime"
     - "system.net.uptime"
+  temperature:
+    - "sensor.temp.value"
+    - "aruba.system.sensors[arubaWiredTempSensorTemperature."

@@ -1,0 +1,9 @@
+---
+atlas_monitoring_platform_tasks:
+  cisco-ios: cisco_ios.yml
+  cisco-ios-xe: cisco_ios.yml
+  cisco-cbs: cisco_cbs.yml
+  cisco-cbs250-350: cisco_cbs.yml
+  fortios: fortios.yml
+  aruba-aos-cx: aruba_aoscx.yml
+  aruba-aos-switch: aruba_aos_switch.yml

@@ -196,7 +196,7 @@ or credential store.
 2. Review `default_platform` on imported Device Types and audit the unmapped list. Existing Devices with no platform need an explicit operator-selected platform; no bulk backfill runs.
 3. In the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel), create the real `admin` and optionally `snmp` secrets at the exact profile paths. Do not paste real secrets into Git, command history, reports or NetBox.
 4. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
-5. If legacy secrets exist at old `devices/credentials/default`, `devices/credentials/cisco` or `devices/snmp/...` paths, copy them through the authenticated OpenBao UI to the new hierarchy and verify consumers before retiring old keys. Deployment neither migrates nor overwrites secrets. The narrowed read policy only permits the new credential hierarchy.
+5. If operator-managed legacy secrets exist at old `devices/credentials/default` or `devices/credentials/cisco` paths, copy them through the authenticated OpenBao UI and verify consumers before retiring old keys. Atlas-generated monitoring values under `devices/snmp/<vendor>/<device-id>/monitoring` are different: an approved `provision_and_monitor` operation copies a valid value with `cas=0` to `devices/credentials/<vendor>/<device-name>/snmp`. It never deletes the legacy value. The monitoring provisioner can write only that terminal `snmp` leaf and cannot write sibling `admin` credentials.
 6. Run `sudo atlasctl oxidized reconcile` and `sudo atlasctl zabbix sync`, then
    perform physical-device acceptance tests before enabling any newly verified
    driver family.

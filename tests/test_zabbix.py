@@ -23,6 +23,12 @@ from atlas.services.zabbix_sync import (
     ZabbixSyncSummary,
 )
 from atlas.services.zabbix_sync import ZabbixSyncService
+from atlas.zabbix_config import (
+    load_zabbix_config,
+    required_template_names,
+    resolve_template,
+    template_metrics,
+)
 from scripts import deploy_zabbix, zabbix_admin, zabbix_cli
 
 
@@ -285,14 +291,21 @@ class FakeZabbixClient:
         self.created = []
         self.updated = []
         self.host_queries = []
+        self.template_ids = {
+            name: str(20 + index)
+            for index, name in enumerate(required_template_names(load_zabbix_config()))
+        }
 
     def hostgroup_get(self, _params):
         return [{"groupid": "10", "name": "Aricoma Atlas"}]
 
     def template_get(self, params):
+        names = params["filter"]["host"]
+        for name in names:
+            self.template_ids.setdefault(name, str(20 + len(self.template_ids)))
         return [
-            {"templateid": str(index), "host": name, "name": name}
-            for index, name in enumerate(params["filter"]["host"], start=20)
+            {"templateid": self.template_ids[name], "host": name, "name": name}
+            for name in names
         ]
 
     def host_get(self, params):
@@ -335,6 +348,10 @@ def netbox_device(**overrides):
 
 
 def managed_host(**overrides):
+    template_ids = {
+        name: str(20 + index)
+        for index, name in enumerate(required_template_names(load_zabbix_config()))
+    }
     value = {
         "hostid": "50",
         "host": "SW01",
@@ -355,7 +372,10 @@ def managed_host(**overrides):
         ],
         "hostgroups": [{"groupid": "10", "name": "Aricoma Atlas"}],
         "parentTemplates": [
-            {"templateid": "22", "host": "Cisco IOS by SNMP"}
+            {
+                "templateid": template_ids["Cisco IOS by SNMP"],
+                "host": "Cisco IOS by SNMP",
+            }
         ],
         "tags": [
             {"tag": "managed_by", "value": "aricoma-atlas"},
@@ -443,8 +463,14 @@ class ZabbixSyncTests(unittest.TestCase):
             {"XGS-01", "AP6-01"},
         )
         by_host = {payload["host"]: payload for payload in client.created}
-        self.assertEqual(by_host["XGS-01"]["templates"], [{"templateid": "21"}])
-        self.assertEqual(by_host["AP6-01"]["templates"], [{"templateid": "25"}])
+        self.assertEqual(
+            by_host["XGS-01"]["templates"],
+            [{"templateid": client.template_ids["Aricoma Atlas Sophos SFOS by SNMP"]}],
+        )
+        self.assertEqual(
+            by_host["AP6-01"]["templates"],
+            [{"templateid": client.template_ids["Network Generic Device by SNMP"]}],
+        )
 
     def test_cbs250_350_uses_managed_template_and_legacy_cbs_uses_generic(self):
         devices = [
@@ -464,8 +490,14 @@ class ZabbixSyncTests(unittest.TestCase):
 
         self.assertEqual(result.summary.created, 2)
         by_host = {payload["host"]: payload for payload in client.created}
-        self.assertEqual(by_host["CBS350-01"]["templates"], [{"templateid": "20"}])
-        self.assertEqual(by_host["CBS220-01"]["templates"], [{"templateid": "25"}])
+        self.assertEqual(
+            by_host["CBS350-01"]["templates"],
+            [{"templateid": client.template_ids["Aricoma Atlas Cisco CBS250-350 by SNMP"]}],
+        )
+        self.assertEqual(
+            by_host["CBS220-01"]["templates"],
+            [{"templateid": client.template_ids["Network Generic Device by SNMP"]}],
+        )
 
     def test_aruba_switch_platforms_use_generic_snmp_template(self):
         devices = [
@@ -473,13 +505,19 @@ class ZabbixSyncTests(unittest.TestCase):
                 id=401,
                 name="CX6300-01",
                 platform={"slug": "aruba-aos-cx"},
-                device_type={"manufacturer": {"slug": "hpe"}},
+                device_type={
+                    "slug": "hpe-aruba-6300f-48g-4sfp56",
+                    "manufacturer": {"slug": "hpe"},
+                },
             ),
             netbox_device(
                 id=402,
                 name="2930F-01",
                 platform={"slug": "aruba-aos-switch"},
-                device_type={"manufacturer": {"slug": "hpe"}},
+                device_type={
+                    "slug": "hpe-aruba-2930f-48g-4sfpp",
+                    "manufacturer": {"slug": "hpe"},
+                },
             ),
         ]
 
@@ -487,8 +525,65 @@ class ZabbixSyncTests(unittest.TestCase):
 
         self.assertEqual(result.summary.created, 2)
         by_host = {payload["host"]: payload for payload in client.created}
-        self.assertEqual(by_host["CX6300-01"]["templates"], [{"templateid": "25"}])
-        self.assertEqual(by_host["2930F-01"]["templates"], [{"templateid": "25"}])
+        generic_id = client.template_ids["Network Generic Device by SNMP"]
+        self.assertEqual(by_host["CX6300-01"]["templates"], [{"templateid": generic_id}])
+        self.assertEqual(by_host["2930F-01"]["templates"], [{"templateid": generic_id}])
+
+    def test_reviewed_aruba_families_use_official_model_specific_templates(self):
+        devices = [
+            netbox_device(
+                id=411,
+                name="CX8325-01",
+                platform={"slug": "aruba-aos-cx"},
+                device_type={
+                    "slug": "hpe-aruba-8325-48y8c",
+                    "manufacturer": {"slug": "hpe"},
+                },
+            ),
+            netbox_device(
+                id=412,
+                name="AOS2920-01",
+                platform={"slug": "aruba-aos-switch"},
+                device_type={
+                    "slug": "hpe-aruba-2920-48g",
+                    "manufacturer": {"slug": "hpe"},
+                },
+            ),
+        ]
+
+        result, client = self.sync(devices)
+
+        self.assertEqual(result.summary.created, 2)
+        by_host = {payload["host"]: payload for payload in client.created}
+        self.assertEqual(
+            by_host["CX8325-01"]["templates"],
+            [{"templateid": client.template_ids["Aruba CX 8300s by SNMP"]}],
+        )
+        self.assertEqual(
+            by_host["AOS2920-01"]["templates"],
+            [{"templateid": client.template_ids["HP Enterprise Switch by SNMP"]}],
+        )
+
+    def test_template_catalog_resolves_capabilities_and_all_required_names(self):
+        config = load_zabbix_config()
+
+        self.assertEqual(
+            resolve_template(config, "aruba-aos-cx", "hpe-aruba-8360-48xt4c"),
+            "Aruba CX 8300s by SNMP",
+        )
+        self.assertEqual(
+            resolve_template(config, "aruba-aos-cx", "hpe-aruba-6300f-48g"),
+            "Network Generic Device by SNMP",
+        )
+        self.assertIn(
+            "cpu",
+            template_metrics(config, "Aruba CX 8300s by SNMP"),
+        )
+        self.assertNotIn(
+            "cpu",
+            template_metrics(config, "Network Generic Device by SNMP"),
+        )
+        self.assertIn("HP Enterprise Switch by SNMP", required_template_names(config))
 
     def test_sophos_red_is_not_silently_treated_as_snmp_firewall(self):
         device = netbox_device(
@@ -629,6 +724,16 @@ class ZabbixDeploymentTests(unittest.TestCase):
             {graph["name"] for graph in document["zabbix_export"]["graphs"]},
             {"Cisco CBS: CPU utilization", "Cisco CBS: Temperature"},
         )
+        graph_keys = {
+            item["item"]["key"]
+            for graph in document["zabbix_export"]["graphs"]
+            for item in graph["graph_items"]
+        }
+        by_key = {item["key"]: item for item in template["items"]}
+        self.assertTrue(graph_keys)
+        for key in graph_keys:
+            self.assertEqual(by_key[key]["history"], "35d")
+            self.assertEqual(by_key[key]["trends"], "365d")
 
         def collect_uuids(value):
             if isinstance(value, dict):
@@ -676,6 +781,17 @@ class ZabbixDeploymentTests(unittest.TestCase):
             "UUIDv4 is expected",
         ):
             deploy_zabbix._import_managed_templates(admin, 120)
+
+    def test_bootstrap_fails_closed_when_required_template_is_missing(self):
+        admin = Mock()
+        names = list(required_template_names(load_zabbix_config()))
+        admin.template_get.return_value = [
+            {"templateid": str(index), "host": name, "name": name}
+            for index, name in enumerate(names[1:], start=1)
+        ]
+
+        with self.assertRaisesRegex(RuntimeError, names[0]):
+            deploy_zabbix._validate_required_templates(admin)
 
     def test_configuration_is_explicitly_pinned_and_matches_mapping(self):
         config = deploy_zabbix.load_config(ROOT / "deployment/zabbix.yaml")
@@ -925,7 +1041,7 @@ class MetricServiceTests(unittest.TestCase):
         service = ZabbixMonitoringService(FakeZabbixService(client))
 
         history = service.metric("50", "cpu", "1h")
-        trend = service.metric("50", "cpu", "7d")
+        trend = service.metric("50", "cpu", "30d")
 
         self.assertEqual(history["value"], 23.5)
         self.assertEqual(history["points"], [MetricPoint(90, 20.0)])
@@ -933,6 +1049,39 @@ class MetricServiceTests(unittest.TestCase):
         self.assertEqual(client.history_params["history"], 0)
         self.assertEqual(trend["points"], [MetricPoint(80, 18.25)])
         self.assertEqual(client.trend_params["itemids"], ["70"])
+
+    def test_aruba_cpu_item_key_is_discovered(self):
+        class ArubaMetricClient(MetricClient):
+            def __init__(self):
+                super().__init__()
+                self.searches = []
+
+            def item_get(self, params):
+                prefix = params["search"]["key_"]
+                self.searches.append(prefix)
+                if prefix != "aruba.system.cpu.utilization":
+                    return []
+                return [{
+                    "itemid": "71",
+                    "key_": "aruba.system.cpu.utilization[arubaWiredSystemInfoCpu.1]",
+                    "name": "Module management: CPU utilization",
+                    "value_type": "0",
+                    "units": "%",
+                    "lastvalue": "11.5",
+                    "lastclock": "100",
+                    "status": "0",
+                    "state": "0",
+                }]
+
+        client = ArubaMetricClient()
+        result = ZabbixMonitoringService(FakeZabbixService(client)).metric(
+            "50",
+            "cpu",
+            "1h",
+        )
+
+        self.assertEqual(result["value"], 11.5)
+        self.assertIn("aruba.system.cpu.utilization", client.searches)
 
 
 class FakeMonitoring:
@@ -1022,7 +1171,7 @@ class ZabbixApiTests(unittest.TestCase):
         sync = client.post("/api/zabbix/sync")
         device = client.get("/api/devices/123/monitoring")
         metric = client.get(
-            "/api/devices/123/monitoring/metrics/cpu?window=7d"
+            "/api/devices/123/monitoring/metrics/cpu?window=30d"
         )
 
         self.assertEqual(status.json()["version"], "7.0.31")
@@ -1030,7 +1179,7 @@ class ZabbixApiTests(unittest.TestCase):
         self.assertEqual(device.json()["status"], "up")
         self.assertEqual(device.json()["metrics"]["cpu"], 23.5)
         self.assertEqual(metric.json()["points"][0]["value"], 20.0)
-        self.assertEqual(monitoring.last_window, "7d")
+        self.assertEqual(monitoring.last_window, "30d")
         serialized = "".join(
             response.text for response in (status, sync, device, metric)
         )

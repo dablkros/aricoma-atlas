@@ -1,4 +1,6 @@
-# Copy to .runtime/proxy.yaml and fill in values for this customer VM.
+# Compatibility template for manual proxy-only configuration.
+# New installations should use deployment/site.example.yaml with
+# `sudo atlasctl configure --site-file ...` so monitoring policy is generated too.
 # No DNS names, certificates or management networks are assumed.
 proxy:
   docker_image: "docker.io/library/nginx:1.30.5"

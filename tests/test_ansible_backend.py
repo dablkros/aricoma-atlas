@@ -3,18 +3,22 @@ import unittest
 from pathlib import Path
 from types import SimpleNamespace
 
+from jinja2.nativetypes import NativeEnvironment
+import yaml
+
 from atlas.prophylaxis.ansible_backend import (
     AnsibleBackend,
     _failure_context,
     _failure_from_event,
 )
+from atlas.monitoring.ansible import MonitoringAnsibleBackend
 from atlas.prophylaxis.errors import (
     AnsibleContentError,
     AuthenticationFailedError,
     ConnectionFailedError,
     SSHNegotiationFailedError,
 )
-from atlas.prophylaxis.models import CheckId
+from atlas.prophylaxis.models import CheckId, CollectorId
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 
 
@@ -49,7 +53,7 @@ class AnsibleBackendTests(unittest.TestCase):
     def tearDown(self):
         self.temporary.cleanup()
 
-    def backend(self, runner):
+    def backend(self, runner, *, fortios_validate_certs=True):
         return AnsibleBackend(
             ROOT / "automation",
             known_hosts_file=self.known_hosts,
@@ -57,7 +61,7 @@ class AnsibleBackendTests(unittest.TestCase):
             connect_timeout=10,
             command_timeout=20,
             job_timeout=120,
-            fortios_validate_certs=True,
+            fortios_validate_certs=fortios_validate_certs,
             runner=runner,
         )
 
@@ -136,6 +140,228 @@ class AnsibleBackendTests(unittest.TestCase):
             "token-value",
         )
         self.assertNotIn("token-value", repr(call["extravars"]))
+
+    def test_fortios_can_disable_certificate_validation(self):
+        runner = CapturingRunner(
+            {
+                "schema_version": 1,
+                "check": "device_facts",
+                "platform": "fortios",
+                "status": "ok",
+                "data": {"hostname": "FGT"},
+                "raw_output": None,
+                "error_code": None,
+            }
+        )
+        profile = AnsiblePlatformRegistry().resolve("fortios")
+
+        self.backend(runner, fortios_validate_certs=False).execute(
+            host="192.0.2.20",
+            port=444,
+            profile=profile,
+            check_id=CheckId.DEVICE_FACTS,
+            credentials={"api_token": "token-value"},
+        )
+
+        host = runner.calls[0]["inventory"]["all"]["hosts"]["atlas_target"]
+        self.assertFalse(host["ansible_httpapi_validate_certs"])
+
+    def test_snmp_collector_uses_local_transport_and_secret_environment(self):
+        runner = CapturingRunner(
+            {
+                "schema_version": 1,
+                "collector": "snmp_system",
+                "platform": "cisco-cbs",
+                "status": "ok",
+                "data": {"metrics": {}},
+                "raw_output": None,
+                "error_code": None,
+            }
+        )
+        profile = AnsiblePlatformRegistry().resolve("cisco-cbs")
+
+        self.backend(runner).execute(
+            host="192.0.2.30",
+            port=161,
+            profile=profile,
+            collector_id=CollectorId.SNMP_SYSTEM,
+            check_id=CheckId.CPU_UTILIZATION,
+            credentials={"version": "2c", "community": "snmp-secret"},
+            device_model="CBS350-16T-2G",
+        )
+
+        call = runner.calls[0]
+        host = call["inventory"]["all"]["hosts"]["atlas_target"]
+        self.assertEqual(call["extravars"]["atlas_transport"], "snmp")
+        self.assertEqual(call["extravars"]["atlas_device_model"], "CBS350-16T-2G")
+        self.assertEqual(host["ansible_connection"], "local")
+        self.assertEqual(host["ansible_port"], 161)
+        self.assertEqual(call["envvars"]["ATLAS_SNMP_COMMUNITY"], "snmp-secret")
+        self.assertNotIn("snmp-secret", repr(call["inventory"]))
+        self.assertNotIn("snmp-secret", repr(call["extravars"]))
+
+    def test_monitoring_playbook_keeps_community_out_of_inventory_and_extravars(self):
+        class MonitoringRunner:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, **kwargs):
+                self.calls.append(kwargs)
+                kwargs["event_handler"](
+                    {
+                        "event": "runner_on_ok",
+                        "event_data": {
+                            "task": "atlas_monitoring : ATLAS_MONITORING_RESULT",
+                            "res": {
+                                "ansible_facts": {
+                                    "atlas_monitoring_result": {
+                                        "schema_version": 1,
+                                        "platform": "cisco-ios-xe",
+                                        "compliant": True,
+                                        "actions": [],
+                                    }
+                                }
+                            },
+                        },
+                    }
+                )
+                return SimpleNamespace(status="successful", rc=0)
+
+        runner = MonitoringRunner()
+        shared = self.backend(runner)
+        profile = AnsiblePlatformRegistry().resolve("cisco-ios-xe")
+        result = MonitoringAnsibleBackend(shared).execute(
+            host="192.0.2.30",
+            port=22,
+            profile=profile,
+            credentials={"username": "admin", "password": "device-secret"},
+            operation="inspect",
+            options={"snmp_port": 161, "source_ips": ["192.0.2.5"]},
+            secret={"community": "SnmpSecretValue"},
+        )
+
+        call = runner.calls[0]
+        self.assertTrue(result["compliant"])
+        self.assertEqual(call["playbook"], "playbooks/configure_monitoring.yml")
+        self.assertNotIn("SnmpSecretValue", repr(call["inventory"]))
+        self.assertNotIn("SnmpSecretValue", repr(call["extravars"]))
+        self.assertEqual(call["envvars"]["ATLAS_SNMP_COMMUNITY"], "SnmpSecretValue")
+        self.assertTrue(call["suppress_env_files"])
+
+    def test_cisco_ios_compliance_accepts_both_acl_host_renderings(self):
+        tasks = yaml.safe_load(
+            (
+                ROOT
+                / "automation"
+                / "roles"
+                / "atlas_monitoring"
+                / "tasks"
+                / "cisco_ios.yml"
+            ).read_text(encoding="utf-8")
+        )
+        facts = next(
+            task["ansible.builtin.set_fact"]
+            for task in tasks
+            if task.get("name")
+            == "Derive Cisco IOS compliance without returning configuration"
+        )
+        template = NativeEnvironment().from_string(
+            facts["atlas_monitoring_compliant"]
+        )
+        community_output = (
+            "snmp-server community SnmpSecretValue RO ATLAS-SNMP-V2C"
+        )
+
+        for permit_line in (
+            " permit host 10.200.200.10",
+            " permit 10.200.200.10",
+        ):
+            with self.subTest(permit_line=permit_line):
+                compliant = template.render(
+                    atlas_snmp_community="SnmpSecretValue",
+                    atlas_monitoring_source_ips=["10.200.200.10"],
+                    atlas_cisco_ios_snmp={
+                        "stdout": [
+                            "ip access-list standard ATLAS-SNMP-V2C\n"
+                            " remark Managed by Aricoma Atlas\n"
+                            f"{permit_line}\n!",
+                            community_output,
+                        ]
+                    },
+                )
+                self.assertIs(compliant, True)
+
+        non_compliant = template.render(
+            atlas_snmp_community="SnmpSecretValue",
+            atlas_monitoring_source_ips=["10.200.200.10"],
+            atlas_cisco_ios_snmp={
+                "stdout": [
+                    "ip access-list standard ATLAS-SNMP-V2C\n"
+                    " remark Managed by Aricoma Atlas\n"
+                    " permit 10.200.200.100\n!",
+                    community_output,
+                ]
+            },
+        )
+        self.assertIs(non_compliant, False)
+
+    def test_aruba_aoscx_compliance_accepts_device_canonical_rendering(self):
+        tasks = yaml.safe_load(
+            (
+                ROOT
+                / "automation"
+                / "roles"
+                / "atlas_monitoring"
+                / "tasks"
+                / "aruba_aoscx.yml"
+            ).read_text(encoding="utf-8")
+        )
+        facts = next(
+            task["ansible.builtin.set_fact"]
+            for task in tasks
+            if task.get("name")
+            == "Derive Aruba AOS-CX compliance without returning configuration"
+        )
+        template = NativeEnvironment().from_string(
+            facts["atlas_monitoring_compliant"]
+        )
+        base_output = (
+            "snmp-server vrf default\n"
+            "access-list ip ATLAS-SNMP-V2C\n"
+            "    10 comment Managed by Aricoma Atlas\n"
+            "    {permit_line}\n"
+            "snmp-server community SnmpSecretValue\n"
+            "    access-list ipv4 ATLAS-SNMP-V2C\n"
+        )
+
+        for permit_line in (
+            "20 permit any 10.200.200.10/32 any",
+            "20 permit any 10.200.200.10 any",
+        ):
+            with self.subTest(permit_line=permit_line):
+                compliant = template.render(
+                    atlas_aruba_aoscx_vrf="default",
+                    atlas_snmp_community="SnmpSecretValue",
+                    atlas_monitoring_source_ips=["10.200.200.10"],
+                    atlas_aruba_aoscx_snmp={
+                        "stdout": [base_output.format(permit_line=permit_line)]
+                    },
+                )
+                self.assertIs(compliant, True)
+
+        non_compliant = template.render(
+            atlas_aruba_aoscx_vrf="default",
+            atlas_snmp_community="SnmpSecretValue",
+            atlas_monitoring_source_ips=["10.200.200.10"],
+            atlas_aruba_aoscx_snmp={
+                "stdout": [
+                    base_output.format(
+                        permit_line="20 permit any 10.200.200.100 any"
+                    )
+                ]
+            },
+        )
+        self.assertIs(non_compliant, False)
 
     def test_failure_classification_covers_safe_network_categories(self):
         cases = (
