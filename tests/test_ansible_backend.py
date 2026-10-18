@@ -271,6 +271,64 @@ class AnsibleBackendTests(unittest.TestCase):
         )
         self.assertIs(non_compliant, False)
 
+    def test_aruba_aoscx_compliance_accepts_device_canonical_rendering(self):
+        tasks = yaml.safe_load(
+            (
+                ROOT
+                / "automation"
+                / "roles"
+                / "atlas_monitoring"
+                / "tasks"
+                / "aruba_aoscx.yml"
+            ).read_text(encoding="utf-8")
+        )
+        facts = next(
+            task["ansible.builtin.set_fact"]
+            for task in tasks
+            if task.get("name")
+            == "Derive Aruba AOS-CX compliance without returning configuration"
+        )
+        template = NativeEnvironment().from_string(
+            facts["atlas_monitoring_compliant"]
+        )
+        base_output = (
+            "snmp-server vrf default\n"
+            "access-list ip ATLAS-SNMP-V2C\n"
+            "    10 comment Managed by Aricoma Atlas\n"
+            "    {permit_line}\n"
+            "snmp-server community SnmpSecretValue\n"
+            "    access-list ipv4 ATLAS-SNMP-V2C\n"
+        )
+
+        for permit_line in (
+            "20 permit any 10.200.200.10/32 any",
+            "20 permit any 10.200.200.10 any",
+        ):
+            with self.subTest(permit_line=permit_line):
+                compliant = template.render(
+                    atlas_aruba_aoscx_vrf="default",
+                    atlas_snmp_community="SnmpSecretValue",
+                    atlas_monitoring_source_ips=["10.200.200.10"],
+                    atlas_aruba_aoscx_snmp={
+                        "stdout": [base_output.format(permit_line=permit_line)]
+                    },
+                )
+                self.assertIs(compliant, True)
+
+        non_compliant = template.render(
+            atlas_aruba_aoscx_vrf="default",
+            atlas_snmp_community="SnmpSecretValue",
+            atlas_monitoring_source_ips=["10.200.200.10"],
+            atlas_aruba_aoscx_snmp={
+                "stdout": [
+                    base_output.format(
+                        permit_line="20 permit any 10.200.200.100 any"
+                    )
+                ]
+            },
+        )
+        self.assertIs(non_compliant, False)
+
     def test_failure_classification_covers_safe_network_categories(self):
         cases = (
             (
