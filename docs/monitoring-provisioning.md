@@ -34,10 +34,13 @@ secrets. FortiGate API tokens and SSH credentials are resolved through the same 
 credential service used by Profylaxia. The canonical KV v2 path for generated communities is
 `atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring`.
 
-Backend deployment creates `.runtime/monitoring/config.yaml` from a safe
-default, `.runtime/monitoring/operator-token`, and a persistent SQLite job
-directory. The default permits the three RFC1918 private IPv4 ranges but has no
-monitoring source IP, so provisioning remains blocked until the operator sets
+`sudo atlasctl configure` creates `.runtime/monitoring/config.yaml` together
+with the proxy/TLS site policy from one validated interactive or declarative
+input. See [First-boot site configuration](site-configuration.md). If that
+command has not been run, backend deployment creates a safe default,
+`.runtime/monitoring/operator-token`, and a persistent SQLite job directory.
+The default permits the three RFC1918 private IPv4 ranges but has no monitoring
+source IP, so provisioning remains blocked until the operator sets
 `monitoring.source_ip`. Narrow `allowed_device_networks` to the customer
 management ranges when they are known. Existing runtime configuration is never
 overwritten; update it explicitly and redeploy the backend. Schema v1 is rejected with

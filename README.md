@@ -24,12 +24,14 @@ Odporúčaný clean-install workflow na novej Linux VM je:
 
 ```bash
 sudo ./install.sh
-sudo ./deploy.sh
+sudo atlasctl configure
+sudo atlasctl deploy
 ```
 
 `install.sh` pripraví nainštalovaný strom v `/opt/aricoma-atlas`, privátny runtime a administračný wrapper. `deploy.sh` následne spustí deployment z nainštalovaného stromu. Po inštalácii sa bežná prevádzka vykonáva cez:
 
 ```bash
+sudo atlasctl configure
 sudo atlasctl deploy
 sudo atlasctl status
 sudo atlasctl openbao
@@ -44,7 +46,11 @@ sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
 ```
 
-Pred prvým spustením je potrebné pripraviť lokálnu `.runtime/proxy.yaml`, DNS a TLS súbory podľa sekcie **Inštalácia a deployment na čistej VM**. Priame `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a diagnostiku.
+Pred prvým deploymentom `atlasctl configure` vytvorí z jedného validovaného
+vstupu chránené `proxy.yaml`, TLS a monitoring policy súbory. DNS záznamy a
+produkčné certifikáty zostávajú vstupom zákazníckeho prostredia. Priame
+`python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a
+diagnostiku.
 
 ---
 
@@ -327,12 +333,15 @@ devicetype-library/
 
 # `.runtime/`
 
-Atlas používa dva súvisiace kontexty:
+Atlas podporuje dva súvisiace kontexty:
 
 1. **bootstrap input v source checkoute** – `~/aricoma-atlas/.runtime/`,
 2. **kanonický nainštalovaný runtime** – `/opt/aricoma-atlas/.runtime/`.
 
-Pred `install.sh` sa v source checkoute pripravujú site-specific vstupy, najmä `proxy.yaml` a TLS súbory. Installer ich importuje do nainštalovaného runtime. Bežná prevádzka a `atlasctl` následne pracujú s `/opt/aricoma-atlas/.runtime/`.
+Odporúčaný fresh-install flow vytvorí site-specific súbory až v nainštalovanom
+runtime cez `sudo atlasctl configure`. Source `.runtime/proxy.yaml` a TLS súbory
+zostávajú podporované ako kompatibilný pre-install import. Bežná prevádzka a
+`atlasctl` pracujú s `/opt/aricoma-atlas/.runtime/`.
 
 Typický nainštalovaný runtime:
 
@@ -341,11 +350,18 @@ Typický nainštalovaný runtime:
 ├── proxy.yaml
 ├── tls/
 │   ├── ca.crt
-│   ├── ca.key                 # iba LAB CA, ak bola vytvorená lokálne
-│   ├── server.crt
-│   ├── server.key
-│   ├── server.csr
-│   └── server.ext
+│   ├── netbox.crt
+│   ├── netbox.key
+│   ├── oxidized.crt
+│   ├── oxidized.key
+│   ├── zabbix.crt
+│   └── zabbix.key
+├── monitoring/
+│   ├── config.yaml
+│   ├── operator-token
+│   ├── jobs/
+│   │   └── jobs.sqlite3
+│   └── trust/
 ├── proxy/
 │   └── oxidized.htpasswd
 ├── openbao-approle.json
@@ -748,7 +764,31 @@ git clone <REPOSITORY_URL> aricoma-atlas
 cd aricoma-atlas
 ```
 
-## 2. Priprav site-specific TLS a proxy konfiguráciu
+## 2. Vyber first-boot site konfiguráciu
+
+Odporúčaný flow používa po inštalácii jeden validovaný konfigurátor. Pre
+interaktívne nasadenie netreba v source checkoute vopred vytvárať `.runtime`:
+
+```text
+sudo ./install.sh
+sudo atlasctl configure
+sudo atlasctl deploy
+```
+
+Pre unattended/cloud-init flow priprav jeden súbor podľa
+[`deployment/site.example.yaml`](deployment/site.example.yaml) a po inštalácii
+ho najprv over bez zápisu:
+
+```bash
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml --check
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml
+sudo atlasctl deploy
+```
+
+Kompletný field reference, TLS režimy, ochrana existujúcej konfigurácie a
+troubleshooting sú v [First-boot site configuration](docs/site-configuration.md).
+
+### Kompatibilný manuálny import pred inštaláciou
 
 DNS názvy, management IP, povolené podsiete a certifikáty sa líšia podľa zákazníka. Nie sú pevne zapísané v repozitári.
 
@@ -921,13 +961,29 @@ PY
 sudo ./install.sh
 ```
 
+Ak installer neimportoval starší source `.runtime/proxy.yaml`, vytvor kanonickú
+proxy, TLS a monitoring konfiguráciu teraz:
+
+```bash
+sudo atlasctl configure
+```
+
+Alebo deklaratívne:
+
+```bash
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml --check
+sudo atlasctl configure --site-file /secure/path/customer-site.yaml
+```
+
 Po installeri over import runtime vstupov:
 
 ```bash
 sudo test -f /opt/aricoma-atlas/.runtime/proxy.yaml
 sudo test -f /opt/aricoma-atlas/.runtime/tls/ca.crt
-sudo test -f /opt/aricoma-atlas/.runtime/tls/server.crt
-sudo test -f /opt/aricoma-atlas/.runtime/tls/server.key
+sudo test -f /opt/aricoma-atlas/.runtime/tls/netbox.crt
+sudo test -f /opt/aricoma-atlas/.runtime/tls/oxidized.crt
+sudo test -f /opt/aricoma-atlas/.runtime/tls/zabbix.crt
+sudo test -f /opt/aricoma-atlas/.runtime/monitoring/config.yaml
 ```
 
 Súbory nekopíruj ručne do `/opt`, pokiaľ installer zlyhá. Chýbajúci import je chyba install flow, nie štandardný post-install krok.
@@ -973,6 +1029,7 @@ sudo ./update.sh --verbose
 ## 5. Prevádzkové príkazy `atlasctl`
 
 ```text
+sudo atlasctl configure [--site-file FILE] [--check] [--force]
 sudo atlasctl deploy [deploy_atlas.py options]
 sudo atlasctl status
 sudo atlasctl openbao
@@ -991,6 +1048,9 @@ Význam:
 
 | Príkaz | Úloha |
 |---|---|
+| `sudo atlasctl configure` | Interaktívne vytvorí chránenú proxy, TLS a monitoring site konfiguráciu. |
+| `sudo atlasctl configure --site-file FILE --check` | Overí deklaratívny site vstup a TLS bez zápisu. |
+| `sudo atlasctl configure --site-file FILE --force` | Po explicitnej kontrole nahradí iba konfigurátorom spravované site súbory. |
 | `sudo atlasctl deploy` | Nasadí alebo zosúladí celý Atlas stack. |
 | `sudo atlasctl status` | Zobrazí stav kontajnerov, Zabbix servera a Oxidized inventára. |
 | `sudo atlasctl openbao` | Otvorí interaktívny OpenBao access helper. |

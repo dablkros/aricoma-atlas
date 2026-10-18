@@ -70,6 +70,10 @@ validate_source_repo() {
         die "Missing deployment/backend/Dockerfile in ${source_dir}"
     [[ -f "${source_dir}/scripts/import_site_config.py" ]] || \
         die "Missing scripts/import_site_config.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/configure_site.py" ]] || \
+        die "Missing scripts/configure_site.py in ${source_dir}"
+    [[ -f "${source_dir}/deployment/site.example.yaml" ]] || \
+        die "Missing deployment/site.example.yaml in ${source_dir}"
     [[ -f "${source_dir}/deployment/tmpfiles.d/aricoma-atlas.conf" ]] || \
         die "Missing deployment/tmpfiles.d/aricoma-atlas.conf in ${source_dir}"
     [[ -x "${source_dir}/bin/atlasctl" ]] || \
@@ -330,7 +334,7 @@ install_site_configuration() {
         if [[ -f "${RUNTIME_DIR}/proxy.yaml" ]]; then
             ok "Existing installed site configuration preserved"
         else
-            warn "No ${source_config} found. Prepare site DNS/TLS input before sudo ./deploy.sh."
+            warn "No ${source_config} found. After installation run sudo atlasctl configure before deployment."
         fi
         return
     fi
@@ -429,7 +433,12 @@ main() {
     printf 'Operator group:    %s\n' "$ATLAS_ADMIN_GROUP"
     printf 'Admin CLI:         %s\n' '/usr/local/sbin/atlasctl'
     printf '\nNext step:\n'
-    printf '  sudo ./deploy.sh\n'
+    if [[ -f "${RUNTIME_DIR}/proxy.yaml" ]]; then
+        printf '  sudo atlasctl deploy\n'
+    else
+        printf '  sudo atlasctl configure\n'
+        printf '  sudo atlasctl deploy\n'
+    fi
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
