@@ -28,7 +28,10 @@ from atlas.deployment import (  # noqa: E402
     write_yaml,
 )
 from atlas.integrations.zabbix import ZabbixAPIError, ZabbixClient  # noqa: E402
-from atlas.zabbix_config import load_zabbix_config  # noqa: E402
+from atlas.zabbix_config import (  # noqa: E402
+    load_zabbix_config,
+    required_template_names,
+)
 
 
 CONFIG_FILE = ROOT / "deployment/zabbix.yaml"
@@ -372,6 +375,27 @@ def _import_managed_templates(admin, read_timeout):
             ) from None
 
 
+def _validate_required_templates(admin):
+    names = list(required_template_names(load_zabbix_config()))
+    templates = admin.template_get(
+        {
+            "output": ["templateid", "host", "name"],
+            "filter": {"host": names},
+        }
+    )
+    installed = {
+        str(template.get("host"))
+        for template in templates
+        if isinstance(template, dict)
+    }
+    missing = sorted(set(names) - installed)
+    if missing:
+        raise RuntimeError(
+            "Required Zabbix templates are missing after bootstrap: "
+            + ", ".join(missing)
+        )
+
+
 def _admin_client(config, bao, bao_token):
     unauthenticated = ZabbixClient(api_url(config), None, 3, 15)
     stored = optional_secret(bao, bao_token, "zabbix/admin")
@@ -458,6 +482,7 @@ def _bootstrap_api_identity(config, bao, bao_token, admin):
         admin,
         config["runtime"]["template_import_timeout"],
     )
+    _validate_required_templates(admin)
     existing = optional_secret(bao, bao_token, "zabbix/api")
     existing_token = None
     if existing is not None:

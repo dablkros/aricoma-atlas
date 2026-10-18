@@ -63,6 +63,19 @@ class MonitoringModelTests(unittest.TestCase):
             with self.subTest(code=code), self.assertRaisesRegex(MonitoringError, code):
                 device_reference(raw_device(**change))
 
+    def test_netbox_reference_preserves_device_type_for_template_selection(self):
+        device = device_reference(
+            raw_device(
+                device_type={
+                    "slug": "hpe-aruba-8325-48y8c",
+                    "manufacturer": {"slug": "hpe"},
+                },
+                platform={"slug": "aruba-aos-cx"},
+            )
+        )
+
+        self.assertEqual(device.device_type, "hpe-aruba-8325-48y8c")
+
     def test_netbox_reference_accepts_only_explicit_vendor_platform_pairs(self):
         pairs = (
             ("fortinet", "fortios"),
@@ -239,8 +252,9 @@ class MonitoringSecretTests(unittest.TestCase):
         service = Mock()
         service.read_secret_with_metadata.side_effect = [
             DependencyError("secret_not_found"),
+            DependencyError("secret_not_found"),
             ({"version": "2c", "community": "A" * 32, "managed_by": "atlas",
-              "device_id": "42", "community_id": 7,
+              "device_id": "42", "device_name": "fw-1", "community_id": 7,
               "vdom": "root"}, {"version": 1}),
         ]
         service._authenticated.side_effect = lambda callback: callback("runtime-token")
@@ -254,8 +268,69 @@ class MonitoringSecretTests(unittest.TestCase):
         callback("runtime-token")
         service.client.kv_write.assert_called_once()
         args, kwargs = service.client.kv_write.call_args
-        self.assertEqual(args[:2], ("runtime-token", "devices/snmp/fortinet/42/monitoring"))
+        self.assertEqual(
+            args[:2],
+            ("runtime-token", "devices/credentials/fortinet/fw-1/snmp"),
+        )
         self.assertEqual(kwargs["cas"], 0)
+
+    def test_legacy_monitoring_secret_is_copied_to_named_device_path(self):
+        legacy = {
+            "version": "2c",
+            "community": "A" * 32,
+            "managed_by": "atlas",
+            "device_id": "42",
+            "community_id": 7,
+            "vdom": "root",
+        }
+        migrated = {**legacy, "device_name": "fw-1"}
+        service = Mock()
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            (legacy, {"version": 3}),
+            (migrated, {"version": 1}),
+        ]
+        service._authenticated.side_effect = lambda callback: callback("runtime-token")
+        device = Device(42, "fw-1", "10.0.0.10", "fortinet", "fortios", "edge", "ba")
+
+        value, version = MonitoringSecrets(service).ensure(
+            device,
+            7,
+            {"vdom": "root"},
+        )
+
+        self.assertEqual(version, 1)
+        self.assertEqual(value["device_name"], "fw-1")
+        service.client.kv_write.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/fortinet/fw-1/snmp",
+            migrated,
+            mount="atlas",
+            cas=0,
+        )
+
+    def test_read_uses_legacy_secret_without_migrating_it(self):
+        legacy = {
+            "version": "2c",
+            "community": "A" * 32,
+            "managed_by": "atlas",
+            "device_id": "42",
+            "community_id": 7,
+            "vdom": "root",
+        }
+        service = Mock()
+        service.read_secret_with_metadata.side_effect = [
+            DependencyError("secret_not_found"),
+            (legacy, {"version": 3}),
+        ]
+        device = Device(42, "fw-1", "10.0.0.10", "fortinet", "fortios", "edge", "ba")
+
+        value, version = MonitoringSecrets(service).read(device)
+
+        self.assertEqual(value, legacy)
+        self.assertEqual(version, 3)
+        service._authenticated.assert_not_called()
+        service.client.kv_write.assert_not_called()
 
     def test_cisco_cbs_secret_uses_documented_twenty_character_limit(self):
         service = Mock()
@@ -267,7 +342,8 @@ class MonitoringSecretTests(unittest.TestCase):
         }
         service.read_secret_with_metadata.side_effect = [
             DependencyError("secret_not_found"),
-            (stored, {"version": 1}),
+            DependencyError("secret_not_found"),
+            ({**stored, "device_name": "cbs-1"}, {"version": 1}),
         ]
         service._authenticated.side_effect = lambda callback: callback("runtime-token")
         device = Device(
@@ -524,7 +600,8 @@ class MonitoringServiceTests(unittest.TestCase):
             community = "A" * 32
             openbao.read_secret_with_metadata.return_value = (
                 {"version": "2c", "community": community, "managed_by": "atlas",
-                 "device_id": "42", "community_id": 7, "vdom": "root"},
+                 "device_id": "42", "device_name": "fw-1",
+                 "community_id": 7, "vdom": "root"},
                 {"version": 2},
             )
             credential_source = Mock()

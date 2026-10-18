@@ -29,7 +29,7 @@ from atlas.services.device_resolution import (
     resolve_primary_interface,
     resolve_tcp_service_port,
 )
-from atlas.zabbix_config import load_zabbix_config
+from atlas.zabbix_config import load_zabbix_config, resolve_template, template_metrics
 from atlas.services.zabbix_sync import ZabbixSyncService
 
 MODES = {"monitor_only", "provision_and_monitor"}
@@ -210,7 +210,12 @@ class MonitoringService:
         driver.check_schema()
         state = driver.inspect()
         device_changes = driver.plan(state, secret) if mode == "provision_and_monitor" else []
-        template = load_zabbix_config()["platform_templates"].get(device.platform)
+        zabbix_config = load_zabbix_config()
+        template = resolve_template(
+            zabbix_config,
+            device.platform,
+            device.device_type,
+        )
         if not template:
             raise MonitoringError("template_mapping_missing")
         zabbix = self.zabbix_sync.reconciler(device, options, template)
@@ -221,7 +226,9 @@ class MonitoringService:
                   "device_configuration": "NOT_CHANGED" if mode == "monitor_only" else "INSPECTED",
                   "zabbix_status": "EXISTS" if remote["host"] else "MISSING",
                   "resolved": {**self._public_resolved(device, options),
-                    "zabbix_template": template, "credential_profile": device.profile,
+                    "zabbix_template": template,
+                    "zabbix_metrics": list(template_metrics(zabbix_config, template)),
+                    "credential_profile": device.profile,
                     "credential_reference": credential_path(device.vendor, device.profile)}}
         fingerprint = self.fingerprint({"device": asdict(device), "config": config, "options": options,
             "secret": secret, "version": version, "device_state": state, "zabbix": remote, "mode": mode})

@@ -90,8 +90,15 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         spec = deploy_openbao.RUNTIME_ROLES["atlas-monitoring-provisioner"]
         policy = spec["policy_file"].read_text(encoding="utf-8")
         self.assertNotIn('path "atlas/data/devices/credentials/*"', policy)
+        self.assertIn(
+            'path "atlas/data/devices/credentials/+/+/snmp"',
+            policy,
+        )
         self.assertIn('path "atlas/data/devices/snmp/*"', policy)
         self.assertIn('capabilities = ["create", "read", "update"]', policy)
+        legacy = policy.split('path "atlas/data/devices/snmp/*"', 1)[1]
+        self.assertIn('capabilities = ["read"]', legacy)
+        self.assertNotIn('capabilities = ["create", "read", "update"]', legacy)
         for forbidden in ("delete", "sudo", "root"):
             self.assertNotIn(forbidden, policy.lower())
 

@@ -28,11 +28,27 @@ sudo atlasctl openbao
 # Select: 2. Reconcile Atlas backend roles
 ```
 
-The role creates, reads, or updates only `atlas/devices/snmp/*`. It cannot
-read operator-managed device credentials, delete secrets, or access deployment
-secrets. FortiGate API tokens and SSH credentials are resolved through the same `atlas-backend`
-credential service used by Profylaxia. The canonical KV v2 path for generated communities is
-`atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring`.
+The role creates, reads, or updates only the terminal SNMP leaf at
+`atlas/devices/credentials/<manufacturer-slug>/<device-name>/snmp`. For example,
+device `SWtento` owned by manufacturer slug `cisco` uses
+`atlas/devices/credentials/cisco/SWtento/snmp`. The OpenBao policy cannot write
+the sibling `admin` or `automation` credentials, delete secrets, or access
+deployment secrets. FortiGate API tokens and SSH credentials are resolved
+through the same `atlas-backend` credential service used by Profylaxia.
+
+Legacy Atlas-generated values at
+`atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring` remain
+read-only. During an explicitly approved `provision_and_monitor` operation,
+Atlas copies a valid legacy value to the canonical named path with KV v2
+`cas=0`. It never overwrites an existing canonical value and never deletes the
+legacy value. `monitor_only` may read the legacy value but never performs this
+migration. After a NetBox device rename, `monitor_only` stops until the new
+named path exists. An approved `provision_and_monitor` operation creates a new
+community at the new path and reconciles it to the device; the old named secret
+remains untouched. To preserve the same community across a rename, move it
+explicitly before reconciliation. Atlas does not guess whether two names
+identify the same device. Device names used for this path must contain only
+letters, digits, `.`, `_`, or `-` and must start with a letter or digit.
 
 `sudo atlasctl configure` creates `.runtime/monitoring/config.yaml` together
 with the proxy/TLS site policy from one validated interactive or declarative
@@ -113,8 +129,35 @@ is executed by the isolated `configure_monitoring.yml` Ansible playbook and
 feeds the same Zabbix reconciliation boundary.
 The sync service prefers an Atlas-generated per-device monitoring secret when
 one exists and otherwise retains the existing operator-managed SNMP profile
-lookup. Generated secret paths use
-`atlas/devices/snmp/<manufacturer-slug>/<netbox-device-id>/monitoring`.
+lookup. New generated secret paths use
+`atlas/devices/credentials/<manufacturer-slug>/<device-name>/snmp`; the old
+numeric path remains a read-only compatibility source as described above.
+
+## Zabbix template selection and metrics
+
+`catalog/zabbix.yaml` is the single reviewed mapping. Each supported platform
+has a conservative default template. A device-type rule may replace that
+default only when the exact NetBox Device Type slug matches a reviewed pattern.
+If different rules match different templates, Atlas stops with an ambiguity
+error instead of choosing one silently.
+
+Current Aruba rules are deliberately narrow:
+
+- `hpe-aruba-8325-*` and `hpe-aruba-8360-*` use the official
+  `Aruba CX 8300s by SNMP` template;
+- `hpe-aruba-2920-*` uses the official `HP Enterprise Switch by SNMP`
+  template;
+- other AOS-CX and AOS-Switch device types retain
+  `Network Generic Device by SNMP` until their OID contract is reviewed.
+
+The inspect/plan response exposes both `resolved.zabbix_template` and the
+reviewed `resolved.zabbix_metrics`. The Atlas graph resolver recognizes the
+official Aruba CPU and memory keys as well as the standard Zabbix keys. During
+fresh deployment and upgrade, Atlas validates that every catalog-referenced
+template exists after importing its own templates. A missing official template
+stops deployment with its exact name; it is not silently replaced with a
+generic template. Zabbix does not automatically update installed templates, so
+template upgrades remain an explicit deployment concern.
 
 ## API sequence
 
@@ -171,3 +214,7 @@ Primary references:
   <https://www.zabbix.com/documentation/7.0/en/manual/api/reference/usermacro/object>
 - Zabbix 7.0 host interfaces:
   <https://www.zabbix.com/documentation/7.0/en/manual/api/reference/hostinterface/object>
+- Zabbix 7.0 official network templates repository:
+  <https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net?at=release%2F7.0>
+- Zabbix 7.0 template changes and manual upgrade requirement:
+  <https://www.zabbix.com/documentation/7.0/en/manual/installation/template_changes>

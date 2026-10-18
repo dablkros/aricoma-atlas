@@ -22,6 +22,7 @@ class Device:
     platform: str
     profile: str
     site: str
+    device_type: str = ""
 
 
 SUPPORTED_MONITORING_DEVICES = frozenset(
@@ -44,7 +45,14 @@ def device_reference(raw):
     status = raw.get("status") or {}
     if (status.get("value") if isinstance(status, dict) else status) != "active":
         raise MonitoringError("device_not_active")
-    vendor = ((raw.get("device_type") or {}).get("manufacturer") or {}).get("slug")
+    device_type = raw.get("device_type") or {}
+    vendor = (device_type.get("manufacturer") or {}).get("slug")
+    device_type_slug = device_type.get("slug")
+    if device_type_slug is not None and (
+        not isinstance(device_type_slug, str)
+        or not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", device_type_slug)
+    ):
+        raise MonitoringError("invalid_device_type")
     platform = (raw.get("platform") or {}).get("slug")
     if (vendor, platform) not in SUPPORTED_MONITORING_DEVICES:
         raise MonitoringError("unsupported_monitoring_driver")
@@ -65,7 +73,16 @@ def device_reference(raw):
     site = (raw.get("site") or {}).get("slug")
     if not isinstance(site, str) or not re.fullmatch(r"[a-z0-9_-]{1,80}", site):
         raise MonitoringError("missing_or_invalid_site")
-    return Device(raw["id"], raw["name"], str(address), vendor, platform, profile, site)
+    return Device(
+        raw["id"],
+        raw["name"],
+        str(address),
+        vendor,
+        platform,
+        profile,
+        site,
+        device_type_slug or "",
+    )
 
 
 def _port(value, default):
