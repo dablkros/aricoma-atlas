@@ -61,7 +61,8 @@ def _address(value, label):
 
 def _ipv4(value, label):
     address = _address(value, label)
-    if ipaddress.ip_address(address).version != 4:
+    parsed = ipaddress.ip_address(address)
+    if parsed.version != 4 or parsed.is_link_local:
         raise ValueError(f"{label} must be an IPv4 address")
     return address
 
@@ -92,6 +93,59 @@ def _resolve_file(value, base, label):
     if not path.is_file():
         raise ValueError(f"{label} does not exist: {path}")
     return str(path)
+
+
+def _proxy_name(value, label):
+    if not isinstance(value, str) or not value.strip() or len(value.strip()) > 128:
+        raise ValueError(f"{label} is invalid")
+    return value.strip()
+
+
+def _egress_profiles(value, allowed_networks):
+    profiles = _mapping(value, "monitoring.egress_profiles")
+    if not profiles:
+        raise ValueError("monitoring.egress_profiles must not be empty")
+    normalized = {}
+    for name, raw in profiles.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name
+        ):
+            raise ValueError("monitoring.egress_profiles contains an invalid name")
+        raw = _mapping(raw, f"monitoring.egress_profiles.{name}")
+        device_networks = _networks(
+            raw.get("device_networks"),
+            f"monitoring.egress_profiles.{name}.device_networks",
+            ipv4_only=True,
+        )
+        if any(
+            not any(
+                ipaddress.ip_network(network).subnet_of(
+                    ipaddress.ip_network(allowed)
+                )
+                for allowed in allowed_networks
+            )
+            for network in device_networks
+        ):
+            raise ValueError(
+                f"monitoring.egress_profiles.{name}.device_networks must be "
+                "contained by monitoring.allowed_device_networks"
+            )
+        profile = {
+            "device_networks": device_networks,
+            "source_ip": _ipv4(
+                raw.get("source_ip"),
+                f"monitoring.egress_profiles.{name}.source_ip",
+            ),
+        }
+        if "proxy_name" in raw:
+            profile["proxy_name"] = _proxy_name(
+                raw["proxy_name"],
+                f"monitoring.egress_profiles.{name}.proxy_name",
+            )
+        normalized[name] = profile
+    # The canonical monitoring loader enforces overlap, allowed-network and
+    # one-source-per-poller constraints on the rendered document.
+    return normalized
 
 
 def normalize_site(raw, base):
@@ -152,13 +206,13 @@ def normalize_site(raw, base):
         )
 
     monitoring = _mapping(raw.get("monitoring"), "monitoring")
+    allowed_device_networks = _networks(
+        monitoring.get("allowed_device_networks", PRIVATE_NETWORKS),
+        "monitoring.allowed_device_networks",
+        ipv4_only=True,
+    )
     normalized_monitoring = {
-        "source_ip": _ipv4(monitoring.get("source_ip"), "monitoring.source_ip"),
-        "allowed_device_networks": _networks(
-            monitoring.get("allowed_device_networks", PRIVATE_NETWORKS),
-            "monitoring.allowed_device_networks",
-            ipv4_only=True,
-        ),
+        "allowed_device_networks": allowed_device_networks,
         "default_snmp_port": _integer(
             monitoring.get("default_snmp_port", 161),
             "monitoring.default_snmp_port",
@@ -171,15 +225,28 @@ def normalize_site(raw, base):
             "monitoring.allow_unrestricted_snmp_v2c",
         ),
     }
+    source_ip = monitoring.get("source_ip")
+    profiles = monitoring.get("egress_profiles")
+    if source_ip is not None and profiles is not None:
+        raise ValueError("monitoring.source_ip and egress_profiles are mutually exclusive")
+    if profiles is not None:
+        if "proxy_name" in monitoring:
+            raise ValueError("monitoring.proxy_name belongs inside each egress profile")
+        normalized_monitoring["egress_profiles"] = _egress_profiles(
+            profiles, allowed_device_networks
+        )
+    else:
+        normalized_monitoring["source_ip"] = _ipv4(
+            source_ip, "monitoring.source_ip"
+        )
     if not isinstance(normalized_monitoring["aruba_aoscx_vrf"], str) or not re.fullmatch(
         r"[A-Za-z0-9_.-]{1,32}", normalized_monitoring["aruba_aoscx_vrf"]
     ):
         raise ValueError("monitoring.aruba_aoscx_vrf is invalid")
     if "proxy_name" in monitoring:
-        proxy_name = monitoring["proxy_name"]
-        if not isinstance(proxy_name, str) or not proxy_name.strip() or len(proxy_name) > 128:
-            raise ValueError("monitoring.proxy_name is invalid")
-        normalized_monitoring["proxy_name"] = proxy_name.strip()
+        normalized_monitoring["proxy_name"] = _proxy_name(
+            monitoring["proxy_name"], "monitoring.proxy_name"
+        )
 
     fortios = _mapping(raw.get("fortios", {}), "fortios")
     normalized_fortios = {
@@ -470,7 +537,14 @@ def main():
         validate_documents(site, Path(temporary))
     print("[OK] Site configuration and TLS material validated")
     print(f"[INFO] Proxy listen address: {site['proxy']['listen_address']}:{site['proxy']['https_port']}")
-    print(f"[INFO] Monitoring source IP: {site['monitoring']['source_ip']}")
+    if site["monitoring"].get("egress_profiles"):
+        summaries = []
+        for name, profile in site["monitoring"]["egress_profiles"].items():
+            poller = profile.get("proxy_name", "direct-server")
+            summaries.append(f"{name}={profile['source_ip']} via {poller}")
+        print("[INFO] Monitoring egress profiles: " + "; ".join(summaries))
+    else:
+        print(f"[INFO] Monitoring source IP: {site['monitoring']['source_ip']}")
     if args.check:
         print("[OK] Check completed; no files were written")
         return

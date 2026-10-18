@@ -75,6 +75,67 @@ def _port(value, default):
     return value
 
 
+def _source_ip(value):
+    parsed = ip_address(value)
+    if (
+        parsed.version != 4
+        or parsed.is_unspecified
+        or parsed.is_multicast
+        or parsed.is_loopback
+        or parsed.is_link_local
+    ):
+        raise ValueError()
+    return str(parsed)
+
+
+def _proxy_name(value):
+    if (
+        not isinstance(value, str)
+        or not value.strip()
+        or len(value.strip()) > 128
+    ):
+        raise ValueError()
+    return value.strip()
+
+
+def _egress_profiles(value, allowed_networks):
+    if not isinstance(value, dict) or not value:
+        raise ValueError()
+    profiles = {}
+    claimed = {}
+    for name, raw in value.items():
+        if not isinstance(name, str) or not re.fullmatch(
+            r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}", name
+        ):
+            raise ValueError()
+        if not isinstance(raw, dict):
+            raise ValueError()
+        networks = [ip_network(entry) for entry in raw["device_networks"]]
+        if (
+            not networks
+            or any(network.version != 4 or network.prefixlen == 0 for network in networks)
+            or any(
+                not any(network.subnet_of(allowed) for allowed in allowed_networks)
+                for network in networks
+            )
+        ):
+            raise ValueError()
+        for network in networks:
+            rendered = str(network)
+            if rendered in claimed and claimed[rendered] != name:
+                raise MonitoringError("monitoring_egress_profile_ambiguous", 503)
+            claimed[rendered] = name
+        profile = {
+            "device_networks": [str(network) for network in networks],
+            "source_ip": _source_ip(raw["source_ip"]),
+        }
+        if raw.get("proxy_name") is not None:
+            profile["proxy_name"] = _proxy_name(raw["proxy_name"])
+        profiles[name] = profile
+
+    return profiles
+
+
 def load_config(path):
     try:
         config = yaml.safe_load(Path(path).read_text(encoding="utf-8"))
@@ -115,16 +176,21 @@ def load_config(path):
         if not isinstance(monitoring, dict):
             raise ValueError()
         source = monitoring.get("source_ip")
-        if source is not None:
-            parsed = ip_address(source)
-            if parsed.version != 4 or parsed.is_unspecified or parsed.is_multicast or parsed.is_loopback:
-                raise ValueError()
-            monitoring = {**monitoring, "source_ip": str(parsed)}
+        profiles = monitoring.get("egress_profiles")
+        if source is not None and profiles is not None:
+            raise MonitoringError("monitoring_egress_configuration_conflict", 503)
+        if profiles is not None:
+            if monitoring.get("proxy_name") is not None:
+                raise MonitoringError("monitoring_egress_configuration_conflict", 503)
+            monitoring = {
+                **monitoring,
+                "egress_profiles": _egress_profiles(profiles, networks),
+            }
+        elif source is not None:
+            monitoring = {**monitoring, "source_ip": _source_ip(source)}
         proxy_name = monitoring.get("proxy_name")
-        if proxy_name is not None and (
-            not isinstance(proxy_name, str) or not proxy_name.strip() or len(proxy_name) > 128
-        ):
-            raise ValueError()
+        if proxy_name is not None:
+            monitoring = {**monitoring, "proxy_name": _proxy_name(proxy_name)}
         allow_unrestricted = monitoring.get("allow_unrestricted_snmp_v2c", False)
         if type(allow_unrestricted) is not bool:
             raise ValueError()
@@ -153,11 +219,51 @@ def ensure_device_network_allowed(device, config):
         raise MonitoringError("device_network_not_allowed")
 
 
+def resolve_egress(device, monitoring):
+    profiles = monitoring.get("egress_profiles")
+    if not profiles:
+        source = monitoring.get("source_ip")
+        if not source:
+            raise MonitoringError("monitoring_source_ip_unresolved")
+        return {
+            "source_ip": source,
+            **(
+                {"proxy_name": monitoring["proxy_name"]}
+                if monitoring.get("proxy_name")
+                else {}
+            ),
+        }
+
+    target = ip_address(device.address)
+    matches = []
+    for name, profile in profiles.items():
+        for value in profile["device_networks"]:
+            network = ip_network(value)
+            if target in network:
+                matches.append((network.prefixlen, name, network, profile))
+    if not matches:
+        raise MonitoringError("monitoring_egress_profile_unresolved")
+    longest = max(match[0] for match in matches)
+    selected = [match for match in matches if match[0] == longest]
+    names = {match[1] for match in selected}
+    if len(names) != 1:
+        raise MonitoringError("monitoring_egress_profile_ambiguous", 503)
+    _, name, network, profile = selected[0]
+    return {
+        "source_ip": profile["source_ip"],
+        "egress_profile": name,
+        "egress_network": str(network),
+        **(
+            {"proxy_name": profile["proxy_name"]}
+            if profile.get("proxy_name")
+            else {}
+        ),
+    }
+
+
 def site_options(device, config, *, https_port=None, interface=None, ssh_port=22):
     ensure_device_network_allowed(device, config)
-    source = config["monitoring"].get("source_ip")
-    if not source:
-        raise MonitoringError("monitoring_source_ip_unresolved")
+    egress = resolve_egress(device, config["monitoring"])
     snmp_port = (
         config["fortios"]["default_snmp_port"]
         if device.platform == "fortios"
@@ -167,7 +273,7 @@ def site_options(device, config, *, https_port=None, interface=None, ssh_port=22
         raise MonitoringError("unsupported_snmp_port")
     options = {
         "snmp_port": snmp_port,
-        "source_ips": [source],
+        "source_ips": [egress["source_ip"]],
         "allow_unrestricted_snmp_v2c": config["monitoring"].get(
             "allow_unrestricted_snmp_v2c", False
         ),
@@ -192,8 +298,9 @@ def site_options(device, config, *, https_port=None, interface=None, ssh_port=22
                 options[key] = fortios[key]
     else:
         options["ssh_port"] = _port(ssh_port, 22)
-    if config["monitoring"].get("proxy_name"):
-        options["proxy_name"] = config["monitoring"]["proxy_name"].strip()
+    for key in ("egress_profile", "egress_network", "proxy_name"):
+        if key in egress:
+            options[key] = egress[key]
     return options
 
 
@@ -204,5 +311,6 @@ __all__ = [
     "device_reference",
     "ensure_device_network_allowed",
     "load_config",
+    "resolve_egress",
     "site_options",
 ]

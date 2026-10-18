@@ -99,16 +99,52 @@ current shell directory.
 
 | Field | Required | Default/meaning |
 |---|---:|---|
-| `source_ip` | yes | Exact Atlas/Zabbix IPv4 address allowed by device SNMP ACLs. |
 | `allowed_device_networks` | no | RFC1918 ranges; target management IP allowlist. |
+| `source_ip` | conditionally | Compatibility form for one direct Zabbix egress IPv4. Mutually exclusive with `egress_profiles`. |
+| `egress_profiles` | conditionally | Named target-network to source-IP mappings. Required for multiple egress paths. |
 | `default_snmp_port` | no | `161`; non-Forti network platforms currently require 161. |
 | `aruba_aoscx_vrf` | no | `default`. |
 | `allow_unrestricted_snmp_v2c` | no | `false`; explicit exception for AOS-Switch only. |
-| `proxy_name` | no | Exact existing Zabbix proxy name. |
+| `proxy_name` | no | Compatibility form for one existing Zabbix proxy; with profiles it belongs inside each profile. |
 
-`allowed_device_networks` and `source_ip` are different controls. The former
-limits which NetBox primary addresses Atlas may contact; the latter is the
-single source address installed into supported device SNMP ACLs.
+`allowed_device_networks` and egress selection are different controls. The
+former limits which NetBox primary addresses Atlas may contact. Egress profiles
+select the expected SNMP source and optional existing Zabbix proxy by longest
+matching target CIDR:
+
+```yaml
+monitoring:
+  allowed_device_networks:
+    - 10.0.0.0/8
+    - 172.16.0.0/12
+  egress_profiles:
+    lab:
+      device_networks:
+        - 10.255.253.0/24
+      source_ip: 10.99.98.200
+    remote-site:
+      device_networks:
+        - 172.20.0.0/16
+      source_ip: 172.20.0.5
+      proxy_name: remote-site-proxy
+```
+
+Every profile network must be contained by `allowed_device_networks`. Duplicate
+target CIDRs are rejected. Direct profiles may use different VM source
+addresses: Zabbix leaves source selection to the operating system and Docker
+SNAT, while Linux routing selects the address for each destination. Before
+backend deployment, every direct profile is checked with `ip route get` on the
+Atlas host. Deployment stops if Linux selects a different source address.
+Proxy profiles are not checked against the Atlas VM route, because their SNMP
+traffic originates on the external proxy.
+
+Profile CIDRs must follow real routing boundaries. If a more-specific Linux
+route selects another VM address inside a broad profile, add a narrower egress
+profile for that destination; longest-prefix selection will prefer it.
+
+The legacy single `source_ip` form remains valid for upgrades. It is checked
+against every allowed device network and should be migrated to profiles when
+the VM has multiple routing paths.
 
 ### `fortios`
 
@@ -196,6 +232,9 @@ service identity.
 | `Site configuration version must be 1` | Start from the current `deployment/site.example.yaml`. |
 | `services must contain exactly...` | Configure all three ingress services and remove unknown service keys. |
 | `entire address family` | Replace `/0` with explicit administrator or management CIDRs. |
+| `monitoring_egress_profile_unresolved` | Add a profile whose target CIDR contains the device management IP. |
+| `monitoring_egress_profile_ambiguous` | Remove a duplicate target CIDR from competing profiles. |
+| `expects source ... but the host route ... selects ...` | Correct the profile source IP or the Linux route before deployment. |
 | certificate/key/hostname/CA validation failure | Reissue or correct the production certificate before deployment. |
 | `already exists ... --force` | Validate the intended replacement first; use `--force` only after review. |
 | `must not be a symlink` | Restore a regular protected runtime path; do not redirect security-sensitive files. |

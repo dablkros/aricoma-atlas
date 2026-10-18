@@ -115,6 +115,9 @@ class MonitoringService:
             "snmp_port": options["snmp_port"],
             "monitoring_source_ip": options["source_ips"][0],
         }
+        for key in ("egress_profile", "egress_network", "proxy_name"):
+            if key in options:
+                resolved[key] = options[key]
         if device.platform == "fortios":
             resolved.update(
                 {

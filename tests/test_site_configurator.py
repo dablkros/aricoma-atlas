@@ -72,6 +72,45 @@ class SiteConfiguratorTests(unittest.TestCase):
         self.assertEqual(monitoring["monitoring"]["source_ip"], "10.20.30.40")
         self.assertTrue(monitoring["fortios"]["tls_verify"])
 
+    def test_site_input_supports_network_specific_egress_profiles(self):
+        raw = self.site()
+        raw["monitoring"] = {
+            "allowed_device_networks": ["10.0.0.0/8", "172.16.0.0/12"],
+            "egress_profiles": {
+                "lab": {
+                    "device_networks": ["10.255.253.0/24"],
+                    "source_ip": "10.99.98.200",
+                },
+                "remote": {
+                    "device_networks": ["172.20.0.0/16"],
+                    "source_ip": "172.20.0.5",
+                    "proxy_name": "remote-proxy",
+                },
+            },
+        }
+
+        site = self.module.normalize_site(raw, self.directory)
+        with tempfile.TemporaryDirectory() as validation:
+            monitoring_path = Path(validation) / "monitoring.yaml"
+            monitoring_path.write_text(
+                self.module.yaml.safe_dump(
+                    self.module.monitoring_document(site), sort_keys=False
+                ),
+                encoding="utf-8",
+            )
+            self.module.load_monitoring_config(monitoring_path)
+
+        monitoring = self.module.monitoring_document(site, installed=True)
+        self.assertNotIn("source_ip", monitoring["monitoring"])
+        self.assertEqual(
+            monitoring["monitoring"]["egress_profiles"]["lab"]["source_ip"],
+            "10.99.98.200",
+        )
+        self.assertEqual(
+            monitoring["monitoring"]["egress_profiles"]["remote"]["proxy_name"],
+            "remote-proxy",
+        )
+
     def test_site_input_rejects_broad_or_ambiguous_networks(self):
         cases = (
             ("proxy", "allowed_networks", ["0.0.0.0/0"]),

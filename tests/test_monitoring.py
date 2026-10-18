@@ -103,6 +103,105 @@ class MonitoringModelTests(unittest.TestCase):
         with self.assertRaisesRegex(MonitoringError, "monitoring_source_ip_unresolved"):
             site_options(device, {**config, "monitoring": {}}, https_port=443, interface="port1")
 
+    def test_egress_profiles_use_longest_prefix_and_expose_selected_poller(self):
+        device = device_reference(raw_device())
+        config = {
+            "allowed_device_networks": ["10.0.0.0/8"],
+            "fortios": {
+                "default_snmp_port": 161,
+                "default_vdom": "root",
+                "tls_verify": True,
+            },
+            "monitoring": {
+                "egress_profiles": {
+                    "fallback": {
+                        "device_networks": ["10.0.0.0/8"],
+                        "source_ip": "192.0.2.10",
+                        "proxy_name": "fallback-proxy",
+                    },
+                    "bratislava": {
+                        "device_networks": ["10.0.0.0/24"],
+                        "source_ip": "198.51.100.10",
+                        "proxy_name": "bratislava-proxy",
+                    },
+                }
+            },
+        }
+
+        options = site_options(
+            device, config, https_port=443, interface="port1"
+        )
+
+        self.assertEqual(options["source_ips"], ["198.51.100.10"])
+        self.assertEqual(options["egress_profile"], "bratislava")
+        self.assertEqual(options["egress_network"], "10.0.0.0/24")
+        self.assertEqual(options["proxy_name"], "bratislava-proxy")
+        resolved = MonitoringService._public_resolved(device, options)
+        self.assertEqual(resolved["monitoring_source_ip"], "198.51.100.10")
+        self.assertEqual(resolved["egress_profile"], "bratislava")
+        self.assertEqual(resolved["egress_network"], "10.0.0.0/24")
+        self.assertEqual(resolved["proxy_name"], "bratislava-proxy")
+
+    def test_egress_profile_requires_matching_target_network(self):
+        device = device_reference(raw_device())
+        config = {
+            "allowed_device_networks": ["10.0.0.0/8"],
+            "fortios": {"default_snmp_port": 161},
+            "monitoring": {
+                "egress_profiles": {
+                    "other": {
+                        "device_networks": ["10.20.0.0/16"],
+                        "source_ip": "192.0.2.10",
+                    }
+                }
+            },
+        }
+        with self.assertRaisesRegex(
+            MonitoringError, "monitoring_egress_profile_unresolved"
+        ):
+            site_options(device, config, https_port=443, interface="port1")
+
+    def test_config_rejects_ambiguous_egress_profiles(self):
+        profiles = """
+    one: {device_networks: [10.0.0.0/24], source_ip: 192.0.2.10, proxy_name: proxy-one}
+    two: {device_networks: [10.0.0.0/24], source_ip: 198.51.100.10, proxy_name: proxy-two}
+"""
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n  egress_profiles:\n"
+                + profiles,
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                MonitoringError, "monitoring_egress_profile_ambiguous"
+            ):
+                load_config(path)
+
+    def test_config_allows_route_selected_sources_without_proxies(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    one: {device_networks: [10.0.0.0/24], source_ip: 192.0.2.10}\n"
+                "    two: {device_networks: [10.0.1.0/24], source_ip: 198.51.100.10}\n",
+                encoding="utf-8",
+            )
+
+            config = load_config(path)
+
+            self.assertEqual(
+                config["monitoring"]["egress_profiles"]["two"]["source_ip"],
+                "198.51.100.10",
+            )
+
     def test_v1_config_requires_explicit_migration(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "monitoring.yaml"

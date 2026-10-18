@@ -100,6 +100,110 @@ class BackendConfigurationTests(unittest.TestCase):
             ):
                 deploy_backend.validate_config(backend_config(backend=values))
 
+    def test_monitoring_egress_matches_host_route_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab:\n"
+                "      device_networks: [10.255.253.0/24]\n"
+                "      source_ip: 10.99.98.200\n",
+                encoding="utf-8",
+            )
+            route_source = Mock(return_value="10.99.98.200")
+
+            deploy_backend.validate_monitoring_egress(path, route_source)
+
+            route_source.assert_called_once_with("10.255.253.1")
+
+    def test_host_route_source_reads_kernel_selected_src(self):
+        runner = Mock(
+            return_value=SimpleNamespace(
+                returncode=0,
+                stdout=(
+                    "10.255.253.10 via 10.99.98.1 dev ens192 "
+                    "src 10.99.98.200 uid 1000\n"
+                ),
+            )
+        )
+
+        source = deploy_backend.host_route_source("10.255.253.10", runner)
+
+        self.assertEqual(source, "10.99.98.200")
+        runner.assert_called_once_with(
+            ["ip", "route", "get", "10.255.253.10"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_monitoring_egress_rejects_wrong_host_route_source(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab: {device_networks: [10.255.253.0/24], source_ip: 10.200.200.10}\n",
+                encoding="utf-8",
+            )
+
+            with self.assertRaisesRegex(
+                RuntimeError, "expects source 10.200.200.10.*selects 10.99.98.200"
+            ):
+                deploy_backend.validate_monitoring_egress(
+                    path, Mock(return_value="10.99.98.200")
+                )
+
+    def test_monitoring_egress_allows_multiple_route_selected_vm_addresses(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8, 172.16.0.0/12]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    lab: {device_networks: [10.255.253.0/24], source_ip: 10.99.98.200}\n"
+                "    dc: {device_networks: [172.20.0.0/16], source_ip: 172.20.0.10}\n",
+                encoding="utf-8",
+            )
+            sources = {
+                "10.255.253.1": "10.99.98.200",
+                "172.20.0.1": "172.20.0.10",
+            }
+
+            deploy_backend.validate_monitoring_egress(
+                path, lambda target: sources[target]
+            )
+
+    def test_proxy_egress_is_not_validated_against_atlas_host_route(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "monitoring.yaml"
+            path.write_text(
+                "version: 2\n"
+                "allowed_device_networks: [10.0.0.0/8]\n"
+                "fortios: {}\n"
+                "monitoring:\n"
+                "  egress_profiles:\n"
+                "    remote:\n"
+                "      device_networks: [10.20.0.0/16]\n"
+                "      source_ip: 10.20.0.5\n"
+                "      proxy_name: remote-proxy\n",
+                encoding="utf-8",
+            )
+            route_source = Mock()
+
+            deploy_backend.validate_monitoring_egress(path, route_source)
+
+            route_source.assert_not_called()
+
 
 class BackendRuntimeTests(unittest.TestCase):
     def setUp(self):

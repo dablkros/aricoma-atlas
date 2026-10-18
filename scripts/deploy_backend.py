@@ -7,6 +7,7 @@ import ipaddress
 import os
 import re
 import secrets
+import subprocess
 import sys
 from pathlib import Path
 
@@ -30,6 +31,10 @@ from atlas.proxy import (  # noqa: E402
     load_config as load_proxy_config,
     public_service_urls,
 )
+from atlas.monitoring.models import (  # noqa: E402
+    MonitoringError,
+    load_config as load_monitoring_config,
+)
 
 
 CONFIG_FILE = ROOT / "deployment/backend.yaml"
@@ -37,6 +42,70 @@ MONITORING_DEFAULT_FILE = ROOT / "deployment/monitoring.default.yaml"
 IMAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+
+
+def _route_probe_address(network):
+    network = ipaddress.ip_network(network)
+    if network.num_addresses > 2:
+        return str(network.network_address + 1)
+    return str(network.network_address)
+
+
+def host_route_source(target, runner=subprocess.run):
+    try:
+        result = runner(
+            ["ip", "route", "get", target],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError as exc:
+        raise RuntimeError("Unable to execute ip route get for monitoring egress validation") from exc
+    if result.returncode != 0:
+        raise RuntimeError(f"No host route is available for monitoring target {target}")
+    match = re.search(r"\bsrc\s+(\S+)", result.stdout)
+    if not match:
+        raise RuntimeError(f"Host route for monitoring target {target} has no source address")
+    try:
+        source = ipaddress.ip_address(match.group(1))
+    except ValueError as exc:
+        raise RuntimeError(f"Host route for monitoring target {target} has an invalid source") from exc
+    if source.version != 4:
+        raise RuntimeError(f"Host route for monitoring target {target} is not IPv4")
+    return str(source)
+
+
+def validate_monitoring_egress(path, route_source=host_route_source):
+    try:
+        config = load_monitoring_config(path)
+    except MonitoringError as exc:
+        raise RuntimeError(f"Invalid monitoring configuration: {exc.code}") from None
+    monitoring = config["monitoring"]
+    profiles = monitoring.get("egress_profiles")
+    checks = []
+    if profiles:
+        for name, profile in profiles.items():
+            if profile.get("proxy_name"):
+                continue
+            checks.extend(
+                (name, network, profile["source_ip"])
+                for network in profile["device_networks"]
+            )
+    elif monitoring.get("source_ip"):
+        checks.extend(
+            ("legacy-direct", network, monitoring["source_ip"])
+            for network in config["allowed_device_networks"]
+        )
+    for name, network, expected in checks:
+        target = _route_probe_address(network)
+        actual = route_source(target)
+        if actual != expected:
+            raise RuntimeError(
+                "Monitoring egress profile "
+                f"{name} expects source {expected} for {network}, but the host route "
+                f"to {target} selects {actual}"
+            )
+    return config
 
 
 def load_config(path=CONFIG_FILE):
@@ -230,6 +299,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
     if monitoring_config.is_symlink() or not monitoring_config.is_file():
         raise RuntimeError("Monitoring configuration is not a regular file")
     os.chmod(monitoring_config, 0o600)
+    validate_monitoring_egress(monitoring_config)
 
     monitoring_operator_token = monitoring_directory / "operator-token"
     if not monitoring_operator_token.exists():

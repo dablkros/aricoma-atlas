@@ -27,16 +27,26 @@ services:
     private_key: ./tls/server.key
 
 monitoring:
-  # Exact Atlas/Zabbix source address permitted by device SNMP ACLs.
-  source_ip: 10.20.30.40
   allowed_device_networks:
     - 10.0.0.0/8
     - 172.16.0.0/12
     - 192.168.0.0/16
+  # Longest-prefix match chooses the profile for each device management IP.
+  # Direct profiles are checked against Linux `ip route get` during deploy.
+  egress_profiles:
+    primary-management:
+      device_networks:
+        - 10.0.0.0/8
+      source_ip: 10.20.30.40
+      # proxy_name: customer-a-proxy
+    secondary-management:
+      device_networks:
+        - 172.16.0.0/12
+        - 192.168.0.0/16
+      source_ip: 10.20.30.40
   default_snmp_port: 161
   aruba_aoscx_vrf: default
   allow_unrestricted_snmp_v2c: false
-  # proxy_name: customer-a-proxy
 
 fortios:
   default_vdom: root

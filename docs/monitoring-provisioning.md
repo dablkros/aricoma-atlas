@@ -40,9 +40,14 @@ input. See [First-boot site configuration](site-configuration.md). If that
 command has not been run, backend deployment creates a safe default,
 `.runtime/monitoring/operator-token`, and a persistent SQLite job directory.
 The default permits the three RFC1918 private IPv4 ranges but has no monitoring
-source IP, so provisioning remains blocked until the operator sets
-`monitoring.source_ip`. Narrow `allowed_device_networks` to the customer
-management ranges when they are known. Existing runtime configuration is never
+egress, so provisioning remains blocked until the operator sets one legacy
+`monitoring.source_ip` or named `monitoring.egress_profiles`. Profiles select
+the source IP and optional existing Zabbix proxy by longest target-prefix
+match. A direct Atlas-hosted Zabbix server may use different VM addresses when
+Linux routing selects them for different target networks. Direct profiles are
+validated against the Atlas host's `ip route get` result during deployment.
+Narrow `allowed_device_networks` to the customer management ranges when they
+are known. Existing runtime configuration is never
 overwritten; update it explicitly and redeploy the backend. Schema v1 is rejected with
 `monitoring_configuration_v1_migration_required`; it is never deleted or
 silently reinterpreted.
@@ -71,8 +76,10 @@ The browser keeps it only in memory. It is required for every
    the default port 443.
 4. Store the FortiOS API token or SSH username/password in the existing device
    credential profile.
-5. Configure the allowed management networks and one site-level Zabbix egress
-   `monitoring.source_ip`. Atlas blocks provisioning if it cannot determine it.
+5. Configure the allowed management networks and either one compatibility
+   `monitoring.source_ip` or explicit egress profiles. Atlas blocks provisioning
+   when no profile matches, mappings are ambiguous, or the direct host route
+   selects a different source IP.
 6. In the Atlas UI enter the operator token, select a mode, and inspect. The
    plan shows the resolved API or SSH endpoint, applicable FortiOS context,
    ports, source IP, credential profile, and template without secret values.
