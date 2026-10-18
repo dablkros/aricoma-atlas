@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.0-beta** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.4.1-beta** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
   pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -56,7 +56,29 @@ diagnostiku.
 
 # Aktuálny stav
 
-**Posledný vydaný release:** `v0.3.0-beta`
+**Verzia tejto dokumentácie a backendu:** `v0.4.1-beta`
+
+Zmeny oproti `v0.4.0-beta` zahŕňajú Ansible monitoring onboarding, rozšírenú
+profylaxiu a Operations UI, konfiguráciu fresh VM cez `atlasctl configure`
+a správu monitoring credentials. Podrobný prehľad je v [CHANGELOG.md](CHANGELOG.md).
+
+V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
+zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
+niektorého plánu zablokuje hromadné vykonanie. Stav `COMPLETED` s verifikáciou
+`PENDING` znamená dokončenú konfiguráciu a čakanie na čerstvú SNMP vzorku zo Zabbixu.
+
+Pre CBS250/350 nastav na zariadení v NetBoxe platformu `cisco-cbs250-350`:
+tá používa vlastný template `Aricoma Atlas Cisco CBS250-350 by SNMP`.
+Platforma `cisco-cbs` zostáva generická pre CBS220/legacy CBS. Bootstrap nastavuje
+predvolenú platformu Device Types; existujúce Devices automaticky nemigruje.
+RAM CBS350 a systémové metriky testovanej Aruba CX OVA zostávajú bez overeného
+SNMP kontraktu; hranice sú uvedené v [dokumentácii systémových metrík](docs/prophylaxis-system-metrics.md).
+
+Fresh VM konfiguráciu a výber zdrojovej SNMP IP pri viacerých rozhraniach opisuje
+[site configuration](docs/site-configuration.md). Spoločný backend operator token
+sa uchováva v OpenBao na `atlas/backend`; zariadeniové SNMP secrets používajú
+`devices/credentials/<vendor>/<device-name>/snmp`. Podrobnosti vrátane migrácie
+sú v [monitoring provisioning](docs/monitoring-provisioning.md).
 
 Táto dokumentácia opisuje aktuálny pracovný strom. Historický scope už vydaného tagu `v0.1.2-beta` je uvedený samostatne nižšie.
 
@@ -86,7 +108,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.0-beta`
+- Atlas backend image `aricoma-atlas-backend:0.4.1-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -209,13 +231,18 @@ deploy.sh / atlasctl deploy
     │      ├── host-key verification vypnuté (`secure: false`)
     │      └── web/API iba v internej Docker sieti
     │
-    ├── 4. Atlas backend
+    ├── 4. Zabbix
+    │      ├── server, web a samostatný PostgreSQL
+    │      ├── OpenBao credentials a API integrácia
+    │      └── import Atlas-managed templates
+    │
+    ├── 5. Atlas backend
     │      ├── lokálny build z pripnutého checkoutu
     │      ├── non-root kontajner s read-only root filesystemom
     │      ├── healthcheck GET /api/health
     │      └── host bind iba 127.0.0.1:8081
     │
-    └── 5. Nginx
+    └── 6. Nginx
            ├── samostatné DNS názvy služieb
            ├── HTTPS s certifikátmi internej CA
            ├── management subnet allowlist
@@ -492,7 +519,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.0-beta","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.1-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -2727,10 +2754,10 @@ Prvá beta verzia:
 v0.1.0-beta
 ```
 
-Aktuálny tag:
+Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.3.0-beta
+v0.4.1-beta
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -2760,8 +2787,11 @@ Odporúčaný release postup:
 ```bash
 git status
 python3 -m unittest discover -s tests -v
-git tag -a v0.4.0-beta -m "Aricoma Atlas v0.4.0-beta"
-git push origin v0.4.0-beta
+# Po merge PR a úspešnom CI na konkrétnom main commite:
+git switch main
+git pull --ff-only
+git tag -a v0.4.1-beta -m "Aricoma Atlas v0.4.1-beta"
+git push origin v0.4.1-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.
@@ -2836,11 +2866,11 @@ Auto-unseal nie je súčasťou beta verzie. Aktuálny recovery model zámerne po
 
 Ďalšie fázy projektu:
 
-- aplikačná logika nad existujúcim Atlas FastAPI skeletonom,
-- GUI/API nad existujúcim výberom NetBox zariadení a reconcile logikou,
+- rozšírenie existujúcej profylaxie a monitoring Operations UI,
+- autentifikácia a autorizácia pre verejné sprístupnenie Atlas GUI/API,
 - pending-approval evidencia a riadená rotácia SSH host keys,
 - automatická validácia prvého backupu po schválení zariadenia,
-- Zabbix alert notifications a prípadné vendor-specific custom templates,
+- Zabbix alert notifications a ďalšie overené vendor-specific templates,
 - rozšírenie Zabbix SNMPv3 podpory a Atlas monitoring dashboardu,
 - individuálne prístupy alebo SSO pre proxy,
 - centrálne logging/monitoring,

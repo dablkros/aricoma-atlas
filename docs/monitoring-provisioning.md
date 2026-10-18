@@ -183,6 +183,11 @@ GET  /api/monitoring/jobs/{job_id}
 
 Write requests require a server-issued `plan_id` and `confirmed: true`.
 
+**Plan all** prepares a per-device preview before any provisioning writes.
+Review the planned changes and confirm them with the separate apply action.
+A planning error blocks the bulk apply; fix the affected device and generate
+fresh plans before retrying.
+
 The Operations UI shows the active job stage and posts an immediate notification
 when inspection or reconciliation starts. A completed Zabbix configuration with
 verification `PENDING` is displayed as waiting for the first SNMP sample, not as
