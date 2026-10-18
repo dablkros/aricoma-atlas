@@ -53,8 +53,16 @@ letters, digits, `.`, `_`, or `-` and must start with a letter or digit.
 `sudo atlasctl configure` creates `.runtime/monitoring/config.yaml` together
 with the proxy/TLS site policy from one validated interactive or declarative
 input. See [First-boot site configuration](site-configuration.md). If that
-command has not been run, backend deployment creates a safe default,
-`.runtime/monitoring/operator-token`, and a persistent SQLite job directory.
+command has not been run, backend deployment creates a safe default and a
+persistent SQLite job directory. The shared Atlas operator bearer token used by
+both monitoring and Profylaxia is stored in OpenBao at `atlas/backend` under
+the `operator_token` key. Backend deployment materializes the same value into
+`.runtime/monitoring/operator-token` with mode `0600` for a read-only container
+mount. On the first upgraded deployment, an existing valid local token is
+copied to the missing OpenBao key without rotation. Afterwards `atlas/backend`
+is the source of truth. If the local migration source does not exist,
+deployment generates a new token and stores it in OpenBao before creating the
+runtime file.
 The default permits the three RFC1918 private IPv4 ranges but has no monitoring
 egress, so provisioning remains blocked until the operator sets one legacy
 `monitoring.source_ip` or named `monitoring.egress_profiles`. Profiles select

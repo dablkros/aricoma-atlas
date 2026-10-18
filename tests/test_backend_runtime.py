@@ -8,7 +8,7 @@ from unittest.mock import Mock, call, patch
 import yaml
 
 from atlas import __version__
-from atlas.openbao_client import OpenBaoAuthenticationError
+from atlas.openbao_client import OpenBaoAuthenticationError, OpenBaoNotFound
 from scripts import deploy_atlas, deploy_backend
 
 
@@ -205,6 +205,116 @@ class BackendConfigurationTests(unittest.TestCase):
             route_source.assert_not_called()
 
 
+class AtlasOperatorTokenTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        identity = self.root / ".runtime/openbao-approle.json"
+        identity.parent.mkdir(parents=True)
+        identity.write_text("{}\n", encoding="utf-8")
+        self.client = Mock()
+        self.client.login_from_identity.return_value = "deployment-token"
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_existing_openbao_token_is_materialized_to_private_runtime_file(self):
+        operator_token = "o" * 40
+        self.client.kv_read_with_metadata.return_value = (
+            {"operator_token": operator_token},
+            {"version": 3},
+        )
+
+        token_file = deploy_backend.sync_backend_operator_token(
+            self.root,
+            self.client,
+        )
+
+        self.assertEqual(token_file.read_text(encoding="utf-8"), operator_token + "\n")
+        self.assertEqual(os.stat(token_file).st_mode & 0o777, 0o600)
+        self.assertEqual(os.stat(token_file.parent).st_mode & 0o777, 0o700)
+        self.client.kv_write.assert_not_called()
+        self.client.revoke_self.assert_called_once_with("deployment-token")
+
+    def test_existing_local_token_is_migrated_without_rotation(self):
+        operator_token = "l" * 40
+        token_file = self.root / ".runtime/monitoring/operator-token"
+        token_file.parent.mkdir(parents=True)
+        token_file.write_text(operator_token + "\n", encoding="utf-8")
+        self.client.kv_read_with_metadata.side_effect = OpenBaoNotFound("not found")
+
+        deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_called_once_with(
+            "deployment-token",
+            "backend",
+            {"operator_token": operator_token},
+            mount="atlas",
+            cas=0,
+        )
+        self.client.kv_read.assert_not_called()
+        self.assertEqual(token_file.read_text(encoding="utf-8"), operator_token + "\n")
+
+    def test_fresh_install_creates_openbao_token_and_materializes_same_value(self):
+        self.client.kv_read_with_metadata.side_effect = OpenBaoNotFound("not found")
+
+        token_file = deploy_backend.sync_backend_operator_token(
+            self.root,
+            self.client,
+        )
+
+        stored = self.client.kv_write.call_args.args[2]["operator_token"]
+        self.assertRegex(stored, r"^[A-Za-z0-9_-]{32,256}$")
+        self.assertEqual(token_file.read_text(encoding="utf-8"), stored + "\n")
+
+    def test_invalid_openbao_token_is_rejected_and_session_is_revoked(self):
+        self.client.kv_read_with_metadata.return_value = (
+            {"operator_token": "contains spaces"},
+            {"version": 1},
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "invalid format"):
+            deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_not_called()
+        self.client.revoke_self.assert_called_once_with("deployment-token")
+
+    def test_existing_backend_keys_are_preserved_when_operator_token_is_added(self):
+        operator_token = "p" * 40
+        token_file = self.root / ".runtime/monitoring/operator-token"
+        token_file.parent.mkdir(parents=True)
+        token_file.write_text(operator_token + "\n", encoding="utf-8")
+        self.client.kv_read_with_metadata.return_value = (
+            {"existing_key": "existing-value"},
+            {"version": 7},
+        )
+
+        deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.kv_write.assert_called_once_with(
+            "deployment-token",
+            "backend",
+            {
+                "existing_key": "existing-value",
+                "operator_token": operator_token,
+            },
+            mount="atlas",
+            cas=7,
+        )
+
+    def test_runtime_symlink_is_rejected_before_openbao_login(self):
+        (self.root / ".runtime/openbao-approle.json").unlink()
+        (self.root / ".runtime").rmdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+        (self.root / ".runtime").symlink_to(outside, target_is_directory=True)
+
+        with self.assertRaisesRegex(RuntimeError, "cannot be a symlink"):
+            deploy_backend.sync_backend_operator_token(self.root, self.client)
+
+        self.client.login_from_identity.assert_not_called()
+
+
 class BackendRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.temporary = tempfile.TemporaryDirectory()
@@ -217,6 +327,9 @@ class BackendRuntimeTests(unittest.TestCase):
         identity.write_text("{}\n", encoding="utf-8")
         monitoring_identity = self.root / ".runtime/openbao-monitoring.json"
         monitoring_identity.write_text("{}\n", encoding="utf-8")
+        operator_token = self.root / ".runtime/monitoring/operator-token"
+        operator_token.parent.mkdir(parents=True)
+        operator_token.write_text("t" * 40 + "\n", encoding="utf-8")
         monitoring_default = self.root / "deployment/monitoring.default.yaml"
         monitoring_default.write_text(
             "version: 2\nallowed_device_networks: [192.0.2.0/24]\n"
@@ -397,6 +510,8 @@ class BackendRuntimeTests(unittest.TestCase):
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
         (self.root / ".runtime/openbao-monitoring.json").unlink()
+        (self.root / ".runtime/monitoring/operator-token").unlink()
+        (self.root / ".runtime/monitoring").rmdir()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
         (self.root / ".runtime/oxidized/ssh").rmdir()
         (self.root / ".runtime/oxidized").rmdir()

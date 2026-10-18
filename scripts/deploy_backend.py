@@ -18,6 +18,11 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from atlas import __version__  # noqa: E402
+from atlas.openbao_client import (  # noqa: E402
+    OpenBaoClient,
+    OpenBaoError,
+    OpenBaoNotFound,
+)
 from atlas.deployment import (  # noqa: E402
     NETBOX_NETWORK,
     OPENBAO_NETWORK,
@@ -42,6 +47,9 @@ MONITORING_DEFAULT_FILE = ROOT / "deployment/monitoring.default.yaml"
 IMAGE_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9./_-]*:[A-Za-z0-9][A-Za-z0-9._-]*")
 PROJECT_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]*")
 LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
+OPENBAO_URL = "http://127.0.0.1:18200"
+BACKEND_SECRET_PATH = "backend"
+OPERATOR_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,256}")
 
 
 def _route_probe_address(network):
@@ -230,6 +238,140 @@ def runtime_path(config, root=ROOT):
     return Path(root) / config["runtime"]["directory"]
 
 
+def _validate_operator_token(value):
+    if not isinstance(value, str) or not OPERATOR_TOKEN_PATTERN.fullmatch(value):
+        raise RuntimeError("Atlas operator token has an invalid format")
+    return value
+
+
+def _read_local_operator_token(path):
+    if path.is_symlink() or not path.is_file():
+        raise RuntimeError("Monitoring operator token is not a regular file")
+    try:
+        value = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise RuntimeError("Unable to read the monitoring operator token") from exc
+    if value.endswith("\n"):
+        value = value[:-1]
+    return _validate_operator_token(value)
+
+
+def _materialize_operator_token(path, token):
+    token = _validate_operator_token(token)
+    if path.exists() and path.is_symlink():
+        raise RuntimeError("Monitoring operator token cannot be a symlink")
+    temporary = path.with_name(f".{path.name}.{secrets.token_hex(8)}.tmp")
+    try:
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(token + "\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        os.chmod(path, 0o600)
+    finally:
+        try:
+            temporary.unlink()
+        except FileNotFoundError:
+            pass
+
+
+def sync_backend_operator_token(root=ROOT, client=None):
+    """Reconcile the shared Atlas operator token to its runtime file."""
+    root = Path(root).resolve()
+    runtime_base = root / ".runtime"
+    if runtime_base.is_symlink():
+        raise RuntimeError(f"Atlas runtime cannot be a symlink: {runtime_base}")
+    monitoring_directory = runtime_base / "monitoring"
+    if monitoring_directory.is_symlink():
+        raise RuntimeError("Monitoring runtime cannot be a symlink")
+    if runtime_base.resolve() not in monitoring_directory.resolve().parents:
+        raise RuntimeError("Monitoring runtime escaped the protected runtime directory")
+    monitoring_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(monitoring_directory, 0o700)
+    token_file = monitoring_directory / "operator-token"
+    identity_file = root / ".runtime/openbao-approle.json"
+    client = client or OpenBaoClient(
+        os.environ.get("OPENBAO_URL", OPENBAO_URL),
+        timeout=15,
+    )
+
+    try:
+        openbao_token = client.login_from_identity(identity_file)
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas deployer cannot authenticate to OpenBao while reconciling "
+            "the Atlas operator token"
+        ) from exc
+
+    try:
+        try:
+            backend_secret, metadata = client.kv_read_with_metadata(
+                openbao_token,
+                BACKEND_SECRET_PATH,
+                mount="atlas",
+            )
+        except OpenBaoNotFound:
+            backend_secret = None
+            metadata = None
+        except OpenBaoError as exc:
+            raise RuntimeError(
+                "Unable to read the Atlas backend secret from OpenBao"
+            ) from exc
+
+        if backend_secret is not None and "operator_token" in backend_secret:
+            operator_token = _validate_operator_token(
+                backend_secret.get("operator_token")
+            )
+        else:
+            if token_file.exists() or token_file.is_symlink():
+                operator_token = _read_local_operator_token(token_file)
+            else:
+                operator_token = secrets.token_urlsafe(32)
+
+            if backend_secret is None:
+                updated_secret = {"operator_token": operator_token}
+                cas = 0
+            else:
+                if not isinstance(metadata, dict):
+                    raise RuntimeError("OpenBao backend secret metadata is invalid")
+                version = metadata.get("version")
+                if (
+                    isinstance(version, bool)
+                    or not isinstance(version, int)
+                    or version < 1
+                ):
+                    raise RuntimeError("OpenBao backend secret version is invalid")
+                updated_secret = dict(backend_secret)
+                updated_secret["operator_token"] = operator_token
+                cas = version
+
+            try:
+                client.kv_write(
+                    openbao_token,
+                    BACKEND_SECRET_PATH,
+                    updated_secret,
+                    mount="atlas",
+                    cas=cas,
+                )
+            except OpenBaoError as exc:
+                raise RuntimeError(
+                    "Unable to store the Atlas operator token in OpenBao"
+                ) from exc
+
+        _materialize_operator_token(token_file, operator_token)
+    finally:
+        try:
+            client.revoke_self(openbao_token)
+        except OpenBaoError as exc:
+            raise RuntimeError(
+                "Atlas operator token was reconciled, but the OpenBao "
+                "deployment token could not be revoked"
+            ) from exc
+
+    return token_file
+
+
 def prepare_runtime(config, root=ROOT, ui_urls=None):
     root = Path(root).resolve()
     backend = config["backend"]
@@ -302,13 +444,11 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
     validate_monitoring_egress(monitoring_config)
 
     monitoring_operator_token = monitoring_directory / "operator-token"
-    if not monitoring_operator_token.exists():
-        monitoring_operator_token.write_text(
-            secrets.token_urlsafe(32) + "\n",
-            encoding="utf-8",
-        )
     if monitoring_operator_token.is_symlink() or not monitoring_operator_token.is_file():
-        raise RuntimeError("Monitoring operator token is not a regular file")
+        raise RuntimeError(
+            "Monitoring operator token is missing; reconcile it from OpenBao first"
+        )
+    _read_local_operator_token(monitoring_operator_token)
     os.chmod(monitoring_operator_token, 0o600)
 
     known_hosts_file = root / ".runtime/oxidized/ssh/known_hosts"
@@ -482,6 +622,7 @@ def main():
     args = parse_args()
     config = load_config()
     proxy_config = load_proxy_config()
+    sync_backend_operator_token()
     compose_file = prepare_runtime(
         config,
         ui_urls=public_service_urls(proxy_config),
