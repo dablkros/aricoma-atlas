@@ -759,6 +759,73 @@ tbody tr:hover td {
   white-space: pre-wrap;
 }
 
+.monitoring-plan-preview {
+  margin: 0 0 1rem;
+  padding: 1rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+}
+
+.monitoring-plan-preview-heading,
+.monitoring-plan-preview-actions {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.monitoring-plan-preview-heading h3 {
+  margin: 0.15rem 0 0;
+  font-size: 1rem;
+}
+
+.monitoring-plan-preview-summary {
+  margin: 0.4rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  line-height: 1.45;
+}
+
+.monitoring-plan-preview-table {
+  margin-top: 1rem;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.monitoring-plan-preview-table th,
+.monitoring-plan-preview-table td {
+  vertical-align: top;
+}
+
+.monitoring-plan-detail,
+.monitoring-plan-target p {
+  margin: 0.2rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  line-height: 1.4;
+}
+
+.monitoring-plan-changes {
+  min-width: 220px;
+  margin: 0;
+  padding-left: 1.1rem;
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+
+.monitoring-plan-no-change {
+  color: var(--healthy);
+  font-size: 0.76rem;
+  font-weight: 700;
+}
+
+.monitoring-plan-preview-actions {
+  justify-content: flex-end;
+  margin-top: 1rem;
+}
+
 .table-message {
   padding: 2.2rem;
   color: var(--ink-soft);
@@ -851,6 +918,8 @@ tbody tr:hover td {
   .intro,
   .operation-callout,
   .table-toolbar,
+  .monitoring-plan-preview-heading,
+  .monitoring-plan-preview-actions,
   .footer {
     align-items: stretch;
     flex-direction: column;

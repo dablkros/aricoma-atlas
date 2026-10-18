@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261017-1">
-    <script src="/static/app.js?v=20261017-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261018-1">
+    <script src="/static/app.js?v=20261018-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -279,6 +279,28 @@
             <p id="monitoring-activity-detail">Atlas is preparing the operation.</p>
           </div>
         </div>
+        <section id="monitoring-bulk-preview" class="monitoring-plan-preview" aria-labelledby="monitoring-bulk-preview-title" hidden>
+          <div class="monitoring-plan-preview-heading">
+            <div>
+              <p class="section-kicker">Bulk plan preview</p>
+              <h3 id="monitoring-bulk-preview-title">Review planned monitoring changes</h3>
+              <p id="monitoring-bulk-preview-summary" class="monitoring-plan-preview-summary"></p>
+            </div>
+            <span id="monitoring-bulk-preview-mode" class="status-pill status-pill-neutral"></span>
+          </div>
+          <div class="table-wrap monitoring-plan-preview-table">
+            <table aria-label="Bulk monitoring plan preview">
+              <thead>
+                <tr><th>Device</th><th>Resolved target</th><th>Planned changes</th><th>Status</th></tr>
+              </thead>
+              <tbody id="monitoring-bulk-preview-body"></tbody>
+            </table>
+          </div>
+          <div class="monitoring-plan-preview-actions">
+            <button id="monitoring-bulk-cancel" class="button button-secondary" type="button">Discard plans</button>
+            <button id="monitoring-bulk-apply" class="button button-primary" type="button" disabled>Apply all plans</button>
+          </div>
+        </section>
         <pre id="monitoring-plan" class="monitoring-plan" hidden></pre>
         <div class="table-wrap">
           <table>

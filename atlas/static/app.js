@@ -11,6 +11,8 @@ const state = {
   monitoringJobs: new Map(),
   monitoringBusy: new Map(),
   monitoringPolling: new Set(),
+  monitoringBulkPlans: [],
+  monitoringBulkActive: false,
 };
 
 const elements = {
@@ -50,6 +52,12 @@ const elements = {
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
   monitoringBulk: document.querySelector("#monitoring-bulk"),
+  monitoringBulkPreview: document.querySelector("#monitoring-bulk-preview"),
+  monitoringBulkPreviewSummary: document.querySelector("#monitoring-bulk-preview-summary"),
+  monitoringBulkPreviewMode: document.querySelector("#monitoring-bulk-preview-mode"),
+  monitoringBulkPreviewBody: document.querySelector("#monitoring-bulk-preview-body"),
+  monitoringBulkCancel: document.querySelector("#monitoring-bulk-cancel"),
+  monitoringBulkApply: document.querySelector("#monitoring-bulk-apply"),
   monitoringTotal: document.querySelector("#monitoring-total"),
   monitoringPlan: document.querySelector("#monitoring-plan"),
   monitoringActivity: document.querySelector("#monitoring-activity"),
@@ -191,7 +199,8 @@ function setMonitoringBusy(deviceId, status = null) {
 
 function renderMonitoringDevices() {
   elements.monitoringTotal.textContent = `${state.monitoringDevices.length} devices`;
-  elements.monitoringBulk.disabled = !state.monitoringDevices.some((device) => !device.error_code);
+  elements.monitoringBulk.disabled = state.monitoringBulkActive
+    || !state.monitoringDevices.some((device) => !device.error_code);
   if (!state.monitoringDevices.length) {
     monitoringMessage("No monitoring-enabled devices were returned by NetBox.");
     return;
@@ -277,6 +286,95 @@ function showMonitoringPlan(value) {
   elements.monitoringPlan.textContent = JSON.stringify(value, null, 2);
 }
 
+function clearMonitoringBulkPreview() {
+  state.monitoringBulkPlans = [];
+  elements.monitoringBulkPreview.hidden = true;
+  elements.monitoringBulkPreviewBody.replaceChildren();
+  elements.monitoringBulkApply.disabled = true;
+}
+
+function appendMonitoringPlanDetail(container, label, value) {
+  if (!value) return;
+  const row = document.createElement("p");
+  const term = document.createElement("strong");
+  term.textContent = `${label}: `;
+  row.append(term, document.createTextNode(String(value)));
+  container.append(row);
+}
+
+function renderMonitoringBulkPreview(entries, mode) {
+  state.monitoringBulkPlans = entries;
+  const ready = entries.filter((entry) => entry.plan);
+  const blocked = entries.filter((entry) => entry.error);
+  const changes = ready.reduce(
+    (count, entry) => count + (entry.plan.planned_changes?.length || 0),
+    0,
+  );
+  elements.monitoringBulkPreviewMode.textContent = titleCase(mode);
+  elements.monitoringBulkPreviewSummary.textContent = blocked.length
+    ? `${ready.length} of ${entries.length} plans are ready. Resolve ${blocked.length} planning ${blocked.length === 1 ? "error" : "errors"} before applying the batch.`
+    : `${ready.length} plans are ready with ${changes} proposed ${changes === 1 ? "change" : "changes"}. No writes have been made.`;
+
+  const rows = entries.map((entry) => {
+    const row = document.createElement("tr");
+    const deviceCell = document.createElement("td");
+    const deviceName = document.createElement("strong");
+    deviceName.textContent = entry.device.name || `Device ${entry.device.id}`;
+    const deviceMeta = document.createElement("p");
+    deviceMeta.className = "monitoring-plan-detail";
+    deviceMeta.textContent = `${entry.device.address || "No address"} · ${entry.device.platform || "Unknown platform"}`;
+    deviceCell.append(deviceName, deviceMeta);
+
+    const targetCell = document.createElement("td");
+    targetCell.className = "monitoring-plan-target";
+    const resolved = entry.plan?.resolved || {};
+    appendMonitoringPlanDetail(
+      targetCell,
+      "Endpoint",
+      resolved.api_endpoint || resolved.ssh_endpoint || entry.device.address,
+    );
+    appendMonitoringPlanDetail(targetCell, "SNMP source", resolved.monitoring_source_ip);
+    appendMonitoringPlanDetail(targetCell, "Zabbix template", resolved.zabbix_template);
+    appendMonitoringPlanDetail(targetCell, "Credentials", resolved.credential_profile);
+    appendMonitoringPlanDetail(targetCell, "Proxy", resolved.proxy_name);
+    if (entry.error) {
+      appendMonitoringPlanDetail(targetCell, "Error", entry.error.safeMessage);
+    }
+
+    const changesCell = document.createElement("td");
+    const plannedChanges = entry.plan?.planned_changes || [];
+    if (plannedChanges.length) {
+      const list = document.createElement("ul");
+      list.className = "monitoring-plan-changes";
+      for (const change of plannedChanges) {
+        const item = document.createElement("li");
+        item.textContent = change;
+        list.append(item);
+      }
+      changesCell.append(list);
+    } else {
+      const empty = document.createElement("span");
+      empty.className = "monitoring-plan-no-change";
+      empty.textContent = entry.error ? "Plan unavailable" : "No changes required";
+      changesCell.append(empty);
+    }
+
+    const statusCell = document.createElement("td");
+    const status = document.createElement("span");
+    status.className = `status-pill status-pill-${entry.error ? "unhealthy" : "healthy"}`;
+    status.textContent = entry.error ? titleCase(entry.error.code) : "Ready";
+    statusCell.append(status);
+    row.append(deviceCell, targetCell, changesCell, statusCell);
+    return row;
+  });
+
+  elements.monitoringBulkPreviewBody.replaceChildren(...rows);
+  elements.monitoringBulkApply.textContent = `Apply all ${ready.length} ${ready.length === 1 ? "plan" : "plans"}`;
+  elements.monitoringBulkApply.disabled = !ready.length || Boolean(blocked.length);
+  elements.monitoringBulkPreview.hidden = false;
+  elements.monitoringBulkPreview.scrollIntoView({ behavior: "smooth", block: "nearest" });
+}
+
 async function loadMonitoringDevices() {
   state.monitoringToken = elements.monitoringToken.value.trim();
   if (!state.monitoringToken) {
@@ -284,6 +382,7 @@ async function loadMonitoringDevices() {
     return;
   }
   elements.monitoringLoad.disabled = true;
+  clearMonitoringBulkPreview();
   try {
     state.monitoringDevices = await monitoringRequest("/api/monitoring/devices");
     renderMonitoringDevices();
@@ -296,6 +395,7 @@ async function loadMonitoringDevices() {
 }
 
 async function inspectMonitoringDevice(device) {
+  clearMonitoringBulkPreview();
   setMonitoringBusy(device.id, "INSPECTING");
   toast(`${device.name}: inspection started.`, "info");
   try {
@@ -313,6 +413,7 @@ async function inspectMonitoringDevice(device) {
 }
 
 async function planMonitoringDevice(device) {
+  clearMonitoringBulkPreview();
   setMonitoringBusy(device.id, "PLANNING");
   try {
     const mode = elements.monitoringMode.value;
@@ -374,34 +475,84 @@ async function pollMonitoringJob(device, jobId, verificationDeadline) {
 async function planAllMonitoringDevices() {
   const devices = state.monitoringDevices.filter((device) => !device.error_code);
   if (!devices.length) return;
-  elements.monitoringBulk.disabled = true;
+  state.monitoringBulkActive = true;
+  renderMonitoringDevices();
+  clearMonitoringBulkPreview();
+  elements.monitoringPlan.hidden = true;
   toast(`Preparing monitoring plans for ${devices.length} devices.`, "info");
   try {
     const mode = elements.monitoringMode.value;
-    const plans = [];
+    const entries = [];
     for (const device of devices) {
-      const plan = await monitoringRequest(`/api/monitoring/devices/${device.id}/plan`, { method: "POST", body: { mode } });
-      plans.push({ device, plan });
+      setMonitoringBusy(device.id, "PLANNING");
+      try {
+        const plan = await monitoringRequest(`/api/monitoring/devices/${device.id}/plan`, {
+          method: "POST",
+          body: { mode },
+        });
+        entries.push({ device, plan, mode });
+      } catch (error) {
+        entries.push({ device, error, mode });
+      } finally {
+        setMonitoringBusy(device.id);
+      }
     }
-    showMonitoringPlan(plans.map(({ device, plan }) => ({ device: device.name, planned_changes: plan.planned_changes })));
-    if (!window.confirm(`Apply ${plans.length} current monitoring plans?`)) return;
+    renderMonitoringBulkPreview(entries, mode);
+    const blocked = entries.filter((entry) => entry.error).length;
+    toast(
+      blocked
+        ? `Bulk preview is ready with ${blocked} blocked ${blocked === 1 ? "device" : "devices"}.`
+        : `Review ${entries.length} monitoring plans before applying them.`,
+      blocked ? "warning" : "success",
+    );
+  } catch (error) {
+    toast(error.safeMessage || "Bulk monitoring plan failed.", "error");
+  } finally {
+    state.monitoringBulkActive = false;
+    renderMonitoringDevices();
+  }
+}
+
+async function applyAllMonitoringPlans() {
+  const entries = state.monitoringBulkPlans;
+  const ready = entries.filter((entry) => entry.plan);
+  if (!ready.length || entries.some((entry) => entry.error)) return;
+  state.monitoringBulkActive = true;
+  renderMonitoringDevices();
+  elements.monitoringBulkApply.disabled = true;
+  try {
     const result = await monitoringRequest("/api/monitoring/provision/bulk", {
       method: "POST",
-      body: { plans: plans.map(({ plan }) => ({ mode, plan_id: plan.plan_id, confirmed: true })) },
+      body: {
+        plans: ready.map(({ mode, plan }) => ({
+          mode,
+          plan_id: plan.plan_id,
+          confirmed: true,
+        })),
+      },
     });
     for (const item of result.jobs) {
-      const device = devices.find((candidate) => candidate.id === item.device_id);
+      const device = state.monitoringDevices.find(
+        (candidate) => candidate.id === item.device_id,
+      );
       state.monitoringJobs.set(item.device_id, item);
       state.monitoringPolling.add(item.device_id);
-      pollMonitoringJob(device, item.job_id, Date.now() + MONITORING_VERIFICATION_TIMEOUT_MS);
+      pollMonitoringJob(
+        device,
+        item.job_id,
+        Date.now() + MONITORING_VERIFICATION_TIMEOUT_MS,
+      );
     }
+    clearMonitoringBulkPreview();
     renderMonitoringDevices();
     renderMonitoringActivity();
     toast(`${result.jobs.length} monitoring jobs started.`, "info");
   } catch (error) {
-    toast(error.safeMessage || "Bulk monitoring plan failed.", "error");
+    elements.monitoringBulkApply.disabled = false;
+    toast(error.safeMessage || "Bulk monitoring apply failed.", "error");
   } finally {
-    elements.monitoringBulk.disabled = false;
+    state.monitoringBulkActive = false;
+    renderMonitoringDevices();
   }
 }
 
@@ -834,5 +985,11 @@ elements.deviceSort.addEventListener("change", renderDevices);
 elements.prophylaxisRun.addEventListener("click", launchProphylaxisRun);
 elements.monitoringLoad.addEventListener("click", loadMonitoringDevices);
 elements.monitoringBulk.addEventListener("click", planAllMonitoringDevices);
+elements.monitoringBulkApply.addEventListener("click", applyAllMonitoringPlans);
+elements.monitoringBulkCancel.addEventListener("click", clearMonitoringBulkPreview);
+elements.monitoringMode.addEventListener("change", () => {
+  clearMonitoringBulkPreview();
+  elements.monitoringPlan.hidden = true;
+});
 
 loadDashboard();
