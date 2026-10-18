@@ -22,3 +22,8 @@ atlas_transport_files:
       cisco-ios: telnet/cpu/cisco_ios.yml
     device_facts:
       cisco-ios: telnet/device_facts/cisco_ios.yml
+  snmp:
+    snmp_system:
+      cisco-cbs: snmp/cisco_cbs_system.yml
+      cisco-cbs250-350: snmp/cisco_cbs_system.yml
+      aruba-aos-cx: snmp/aruba_aoscx_system.yml

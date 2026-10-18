@@ -51,6 +51,7 @@ class DeviceTarget:
     platform: str
     vendor: str
     credential_profile: str
+    model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -132,6 +133,9 @@ def device_target(device: dict) -> DeviceTarget:
     vendor = manufacturer.get("slug") if isinstance(manufacturer, dict) else None
     if not isinstance(vendor, str) or not vendor:
         raise MissingManufacturerError()
+    model = device_type.get("model") if isinstance(device_type, dict) else None
+    if not isinstance(model, str) or not model.strip():
+        model = None
 
     return DeviceTarget(
         id=identifier,
@@ -140,6 +144,7 @@ def device_target(device: dict) -> DeviceTarget:
         platform=platform,
         vendor=vendor,
         credential_profile=credential_profile,
+        model=model.strip() if model else None,
     )
 
 

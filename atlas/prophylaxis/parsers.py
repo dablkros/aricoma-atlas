@@ -9,6 +9,9 @@ from atlas.prophylaxis.models import (
     OSVersionValues,
     RawCollectorResult,
     UptimeValues,
+    EvaluationOutcome,
+    HardwareSensorValue,
+    SystemMetricValues,
 )
 
 
@@ -97,6 +100,181 @@ def normalize_cpu(raw: RawCollectorResult) -> CPUUtilizationValues:
 
         raise UnsupportedPlatformError() from None
     return parser(raw)
+
+
+FAN_STATUS = {
+    1: ("normal", EvaluationOutcome.PASS),
+    2: ("warning", EvaluationOutcome.FAIL),
+    3: ("critical", EvaluationOutcome.FAIL),
+    4: ("shutdown", EvaluationOutcome.FAIL),
+    5: ("notPresent", EvaluationOutcome.UNKNOWN),
+    6: ("notFunctioning", EvaluationOutcome.FAIL),
+}
+
+# Cisco Business 350 data sheet, hardware table. Keep this deliberately
+# model-specific: an unknown chassis must not inherit a fan expectation.
+CBS_EXPECTED_FANS = {
+    "CBS350-16T-2G": 0,
+}
+
+
+def _snmp_data(raw: RawCollectorResult) -> dict:
+    if not isinstance(raw.data, dict):
+        raise ParseFailedError()
+    metrics = raw.data.get("metrics")
+    if not isinstance(metrics, dict):
+        raise ParseFailedError()
+    return raw.data
+
+
+def _identity(data: dict) -> dict:
+    result = {}
+    for source, target in (("model", "model"), ("sys_object_id", "sys_object_id")):
+        value = data.get(source)
+        if isinstance(value, str) and value.strip():
+            result[target] = " ".join(value.split())
+    return result
+
+
+def _metric(data: dict, name: str) -> dict:
+    value = data["metrics"].get(name)
+    if not isinstance(value, dict) or not isinstance(value.get("status"), str):
+        raise ParseFailedError()
+    return value
+
+
+def normalize_snmp_cpu(raw: RawCollectorResult):
+    data = _snmp_data(raw)
+    if raw.platform == "aruba-aos-cx":
+        return SystemMetricValues(
+            outcome=EvaluationOutcome.UNSUPPORTED,
+            reason_code="aruba_aoscx_cpu_oid_unverified",
+            **_identity(data),
+        )
+    values = []
+    for name in ("cpu_one_second", "cpu_one_minute", "cpu_five_minutes"):
+        item = _metric(data, name)
+        if item["status"] in {"no_such_object", "no_such_instance", "unsupported"}:
+            return SystemMetricValues(
+                outcome=EvaluationOutcome.UNSUPPORTED,
+                reason_code="metric_not_exposed",
+                **_identity(data),
+            )
+        value = item.get("value")
+        if isinstance(value, bool) or not isinstance(value, (int, float)):
+            raise ParseFailedError()
+        values.append(float(value))
+    try:
+        return CPUUtilizationValues(
+            current_percent=values[0],
+            one_minute_percent=values[1],
+            five_minute_percent=values[2],
+        )
+    except ValueError:
+        raise ParseFailedError() from None
+
+
+def normalize_snmp_memory(raw: RawCollectorResult) -> SystemMetricValues:
+    data = _snmp_data(raw)
+    return SystemMetricValues(
+        outcome=EvaluationOutcome.UNSUPPORTED,
+        reason_code=(
+            "aruba_aoscx_memory_oid_unverified"
+            if raw.platform == "aruba-aos-cx"
+            else "cbs350_memory_oid_unverified"
+        ),
+        **_identity(data),
+    )
+
+
+def normalize_snmp_temperature(raw: RawCollectorResult) -> SystemMetricValues:
+    data = _snmp_data(raw)
+    if raw.platform == "aruba-aos-cx":
+        return SystemMetricValues(
+            outcome=EvaluationOutcome.UNSUPPORTED,
+            reason_code="aruba_aoscx_temperature_oid_unverified",
+            **_identity(data),
+        )
+    item = _metric(data, "temperature")
+    if item["status"] != "ok":
+        return SystemMetricValues(
+            outcome=EvaluationOutcome.UNSUPPORTED,
+            reason_code="metric_not_exposed",
+            **_identity(data),
+        )
+    value = item.get("value")
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ParseFailedError()
+    # The tested OID returned 47, but the cited Cisco document does not state
+    # a unit or threshold. Preserve the reading without inventing Celsius.
+    return SystemMetricValues(
+        outcome=EvaluationOutcome.UNKNOWN,
+        value=float(value),
+        reason_code="temperature_unit_unverified",
+        **_identity(data),
+    )
+
+
+def normalize_snmp_fans(raw: RawCollectorResult) -> SystemMetricValues:
+    data = _snmp_data(raw)
+    if raw.platform == "aruba-aos-cx":
+        return SystemMetricValues(
+            outcome=EvaluationOutcome.UNSUPPORTED,
+            reason_code="aruba_aoscx_fan_oid_unverified",
+            **_identity(data),
+        )
+    model = data.get("model")
+    expected = CBS_EXPECTED_FANS.get(model) if isinstance(model, str) else None
+    sensors = []
+    for index in range(1, 4):
+        item = _metric(data, f"fan_{index}")
+        code = item.get("value") if item.get("status") == "ok" else None
+        if isinstance(code, bool) or not isinstance(code, int):
+            sensors.append(HardwareSensorValue(
+                index=index,
+                status_code=None,
+                status_text="unknown",
+                outcome=EvaluationOutcome.UNKNOWN,
+            ))
+            continue
+        text, outcome = FAN_STATUS.get(
+            code,
+            ("unknown", EvaluationOutcome.UNKNOWN),
+        )
+        if expected == 0:
+            outcome = (
+                EvaluationOutcome.NOT_APPLICABLE
+                if code == 5
+                else EvaluationOutcome.UNKNOWN
+            )
+        elif code == 5 and expected is not None and index <= expected:
+            outcome = EvaluationOutcome.FAIL
+        sensors.append(HardwareSensorValue(
+            index=index,
+            status_code=code,
+            status_text=text,
+            outcome=outcome,
+        ))
+    outcomes = {sensor.outcome for sensor in sensors}
+    if EvaluationOutcome.FAIL in outcomes:
+        outcome = EvaluationOutcome.FAIL
+        reason = "fan_failure_detected"
+    elif expected == 0 and outcomes == {EvaluationOutcome.NOT_APPLICABLE}:
+        outcome = EvaluationOutcome.NOT_APPLICABLE
+        reason = "fanless_model"
+    elif expected is not None and outcomes == {EvaluationOutcome.PASS}:
+        outcome = EvaluationOutcome.PASS
+        reason = None
+    else:
+        outcome = EvaluationOutcome.UNKNOWN
+        reason = "fan_expectation_unverified"
+    return SystemMetricValues(
+        outcome=outcome,
+        reason_code=reason,
+        expected_components=expected,
+        sensors=tuple(sensors),
+        **_identity(data),
+    )
 
 
 def _device_facts(values: object) -> DeviceFactsValues:

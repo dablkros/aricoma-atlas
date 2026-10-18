@@ -11,18 +11,24 @@ from atlas.prophylaxis.models import (
     OSVersionValues,
     RawCollectorResult,
     UptimeValues,
+    SystemMetricValues,
 )
 from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_os_version,
     normalize_uptime,
+    normalize_snmp_cpu,
+    normalize_snmp_fans,
+    normalize_snmp_memory,
+    normalize_snmp_temperature,
 )
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 
 NormalizedValues = (
     CPUUtilizationValues | DeviceFactsValues | OSVersionValues | UptimeValues
+    | SystemMetricValues
 )
 Normalizer = Callable[[RawCollectorResult], NormalizedValues]
 
@@ -74,26 +80,53 @@ DEVICE_FACTS_COLLECTOR = CollectorSpec(
     },
 )
 
+SNMP_SYSTEM_COLLECTOR = CollectorSpec(
+    id=CollectorId.SNMP_SYSTEM,
+    normalizers={
+        CheckId.CPU_UTILIZATION: normalize_snmp_cpu,
+        CheckId.MEMORY_UTILIZATION: normalize_snmp_memory,
+        CheckId.CPU_TEMPERATURE: normalize_snmp_temperature,
+        CheckId.FAN_HEALTH: normalize_snmp_fans,
+    },
+)
+
 
 class CollectorRegistry:
     def __init__(self, collectors: Iterable[CollectorSpec] | None = None) -> None:
-        selected = tuple(collectors or (CPU_COLLECTOR, DEVICE_FACTS_COLLECTOR))
+        selected = tuple(collectors or (
+            CPU_COLLECTOR,
+            DEVICE_FACTS_COLLECTOR,
+            SNMP_SYSTEM_COLLECTOR,
+        ))
         self._by_id: dict[CollectorId, CollectorSpec] = {}
-        self._by_check: dict[CheckId, CollectorSpec] = {}
+        self._by_check: dict[CheckId, list[CollectorSpec]] = {}
         for collector in selected:
             if collector.id in self._by_id:
                 raise ValueError(f"duplicate collector: {collector.id}")
             self._by_id[collector.id] = collector
             for check_id in collector.checks:
-                if check_id in self._by_check:
-                    raise ValueError(f"duplicate check provider: {check_id}")
-                self._by_check[check_id] = collector
+                self._by_check.setdefault(check_id, []).append(collector)
 
-    def resolve_check(self, check_id: CheckId) -> CollectorSpec:
+    def resolve_check(
+        self,
+        check_id: CheckId,
+        profile: AnsiblePlatformProfile | None = None,
+    ) -> CollectorSpec:
         try:
-            return self._by_check[check_id]
+            candidates = self._by_check[check_id]
         except KeyError:
             raise ValueError("check has no registered collector") from None
+        if profile is None:
+            return candidates[0]
+        preferred = profile.preferred_collector(check_id)
+        if preferred is not None:
+            for collector in candidates:
+                if collector.id == preferred and profile.supports_collector(collector.id):
+                    return collector
+        for collector in candidates:
+            if profile.supports_collector(collector.id):
+                return collector
+        raise ValueError("check has no supported collector")
 
     def plan(
         self,
@@ -105,7 +138,7 @@ class CollectorRegistry:
         unsupported: list[CheckId] = []
         for check_id in dict.fromkeys(check_ids):
             try:
-                collector = self.resolve_check(check_id)
+                collector = self.resolve_check(check_id, profile)
             except ValueError:
                 unsupported.append(check_id)
                 continue
@@ -124,6 +157,7 @@ class CollectorRegistry:
 __all__ = [
     "CPU_COLLECTOR",
     "DEVICE_FACTS_COLLECTOR",
+    "SNMP_SYSTEM_COLLECTOR",
     "CollectionPlan",
     "CollectorRegistry",
     "CollectorSpec",

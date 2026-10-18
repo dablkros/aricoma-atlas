@@ -12,11 +12,14 @@ from atlas.prophylaxis.errors import (
     UnsupportedPlatformError,
 )
 from atlas.prophylaxis.models import (
-    CPU_NETBOX_VALUES,
+    CHECK_VALUE_ALIASES,
     CheckId,
+    CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
+    EvaluationOutcome,
     OSVersionValues,
+    SystemMetricValues,
     UptimeValues,
 )
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
@@ -144,11 +147,7 @@ class DeviceFactsRunService:
         known: list[CheckId] = []
         unknown: list[str] = []
         for value in sorted(raw_values):
-            normalized = (
-                CheckId.CPU_UTILIZATION.value
-                if value in CPU_NETBOX_VALUES
-                else value
-            )
+            normalized = CHECK_VALUE_ALIASES.get(value, value)
             try:
                 check_id = CheckId(normalized)
             except ValueError:
@@ -256,50 +255,70 @@ class DeviceFactsRunService:
         if not plan.tasks:
             return tuple(results)
 
-        try:
-            services = (
-                self.netbox.get_device_services(
-                    target.id,
-                    profile.netbox_service_name,
-                )
-                if profile.netbox_service_name
-                else []
-            )
-            port = resolve_service_port(services, profile.default_port)
-            telnet_services = (
-                self.netbox.get_device_services(
-                    target.id,
-                    profile.telnet_fallback_service_name,
-                )
-                if profile.telnet_fallback_service_name
-                else []
-            )
-            telnet_fallback_port = (
-                resolve_service_port(
-                    telnet_services,
-                    profile.telnet_fallback_default_port,
-                )
-                if telnet_services
-                else None
-            )
-            credentials = self.openbao.get_device_credentials(
-                target.vendor,
-                target.credential_profile,
-                authentication=profile.authentication,
-            )
-        except Exception as exc:
-            status, code = self._classify_exception(exc)
-            results.extend(
-                self._check_error(
-                    device_id, name, management_ip, platform, check.value,
-                    status, code,
-                )
-                for task in plan.tasks for check in task.checks
-            )
-            return tuple(results)
-
+        admin_connection = None
+        snmp_credentials = None
         for task in plan.tasks:
             try:
+                if task.collector.id == CollectorId.SNMP_SYSTEM:
+                    port = 161
+                    telnet_fallback_port = None
+                    if snmp_credentials is None:
+                        try:
+                            snmp_credentials = self.openbao.get_snmp_credentials(
+                                target.vendor,
+                                target.name,
+                            )[0]
+                        except DeviceValidationError as exc:
+                            if (
+                                exc.code != "snmp_credential_not_found"
+                                or target.credential_profile == target.name
+                            ):
+                                raise
+                            snmp_credentials = self.openbao.get_snmp_credentials(
+                                target.vendor,
+                                target.credential_profile,
+                            )[0]
+                        if snmp_credentials.get("version") != "2c":
+                            raise DeviceValidationError(
+                                "SNMP version is not supported by this collector",
+                                code="unsupported_snmp_version",
+                                category="skipped",
+                            )
+                    credentials = snmp_credentials
+                else:
+                    if admin_connection is None:
+                        services = (
+                            self.netbox.get_device_services(
+                                target.id,
+                                profile.netbox_service_name,
+                            )
+                            if profile.netbox_service_name
+                            else []
+                        )
+                        port = resolve_service_port(services, profile.default_port)
+                        telnet_services = (
+                            self.netbox.get_device_services(
+                                target.id,
+                                profile.telnet_fallback_service_name,
+                            )
+                            if profile.telnet_fallback_service_name
+                            else []
+                        )
+                        telnet_fallback_port = (
+                            resolve_service_port(
+                                telnet_services,
+                                profile.telnet_fallback_default_port,
+                            )
+                            if telnet_services
+                            else None
+                        )
+                        credentials = self.openbao.get_device_credentials(
+                            target.vendor,
+                            target.credential_profile,
+                            authentication=profile.authentication,
+                        )
+                        admin_connection = (port, telnet_fallback_port, credentials)
+                    port, telnet_fallback_port, credentials = admin_connection
                 raw = self.backend.execute(
                     host=target.host,
                     port=port,
@@ -308,6 +327,7 @@ class DeviceFactsRunService:
                     check_id=task.checks[0],
                     credentials=credentials,
                     telnet_fallback_port=telnet_fallback_port,
+                    device_model=target.model,
                 )
             except Exception as exc:
                 status, code = self._classify_exception(exc)
@@ -358,6 +378,7 @@ class DeviceFactsRunService:
             | DeviceFactsValues
             | OSVersionValues
             | UptimeValues
+            | SystemMetricValues
         ),
     ) -> ProphylaxisCheckResult:
         if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
@@ -368,7 +389,26 @@ class DeviceFactsRunService:
                 management_ip=management_ip,
                 platform=platform,
                 status="success",
+                evaluation=EvaluationOutcome.PASS,
                 facts=values,
+            )
+        if isinstance(values, SystemMetricValues):
+            status = {
+                EvaluationOutcome.PASS: "success",
+                EvaluationOutcome.FAIL: "failed",
+                EvaluationOutcome.UNKNOWN: "incomplete",
+                EvaluationOutcome.NOT_APPLICABLE: "skipped",
+                EvaluationOutcome.UNSUPPORTED: "skipped",
+            }[values.outcome]
+            return ProphylaxisCheckResult(
+                check=check.value,
+                device_id=device_id,
+                device_name=name,
+                management_ip=management_ip,
+                platform=platform,
+                status=status,
+                evaluation=values.outcome,
+                values=values,
             )
         valid_values = (
             check == CheckId.CPU_UTILIZATION
@@ -387,6 +427,7 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status="success",
+            evaluation=EvaluationOutcome.PASS,
             values=values,
         )
 
@@ -444,6 +485,13 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status=status,
+            evaluation=(
+                EvaluationOutcome.UNSUPPORTED
+                if status == "skipped"
+                else EvaluationOutcome.UNKNOWN
+                if status == "incomplete"
+                else EvaluationOutcome.FAIL
+            ),
             error=code,
         )
 

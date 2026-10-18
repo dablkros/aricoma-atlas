@@ -3,7 +3,7 @@
 from dataclasses import dataclass
 from typing import Literal
 
-from atlas.prophylaxis.models import CollectorId
+from atlas.prophylaxis.models import CheckId, CollectorId
 
 
 AuthenticationType = Literal["ssh", "api_token"]
@@ -21,6 +21,7 @@ class AnsiblePlatformProfile:
     collection: str
     module_family: str
     supported_collectors: frozenset[CollectorId]
+    preferred_collectors: tuple[tuple[CheckId, CollectorId], ...] = ()
     legacy_kex_algorithms: tuple[str, ...] = ()
     legacy_hostkey_algorithms: tuple[str, ...] = ()
     legacy_ciphers: tuple[str, ...] = ()
@@ -31,9 +32,19 @@ class AnsiblePlatformProfile:
     def supports_collector(self, collector_id: CollectorId) -> bool:
         return collector_id in self.supported_collectors
 
+    def preferred_collector(self, check_id: CheckId) -> CollectorId | None:
+        return dict(self.preferred_collectors).get(check_id)
+
 
 CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
 FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS})
+CBS_COLLECTORS = frozenset({
+    CollectorId.CPU_USAGE,
+    CollectorId.DEVICE_FACTS,
+    CollectorId.SNMP_SYSTEM,
+})
+ARUBA_CX_COLLECTORS = frozenset({CollectorId.DEVICE_FACTS, CollectorId.SNMP_SYSTEM})
+SNMP_CPU_PREFERENCE = ((CheckId.CPU_UTILIZATION, CollectorId.SNMP_SYSTEM),)
 
 ANSIBLE_PLATFORMS = {
     "cisco-ios": AnsiblePlatformProfile(
@@ -83,7 +94,8 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_collectors=CPU_AND_FACTS,
+        supported_collectors=CBS_COLLECTORS,
+        preferred_collectors=SNMP_CPU_PREFERENCE,
     ),
     "cisco-cbs250-350": AnsiblePlatformProfile(
         slug="cisco-cbs250-350",
@@ -95,7 +107,8 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="community.ciscosmb",
         module_family="community.ciscosmb.command",
-        supported_collectors=CPU_AND_FACTS,
+        supported_collectors=CBS_COLLECTORS,
+        preferred_collectors=SNMP_CPU_PREFERENCE,
     ),
     "fortios": AnsiblePlatformProfile(
         slug="fortios",
@@ -119,7 +132,7 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="arubanetworks.aoscx",
         module_family="arubanetworks.aoscx.aoscx_command",
-        supported_collectors=FACTS_ONLY,
+        supported_collectors=ARUBA_CX_COLLECTORS,
     ),
     "aruba-aos-switch": AnsiblePlatformProfile(
         slug="aruba-aos-switch",

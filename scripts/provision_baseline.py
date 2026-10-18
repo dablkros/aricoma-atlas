@@ -524,9 +524,20 @@ DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES = [
     *PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
 ]
 
-STABLE_ID_PROPHYLAXIS_CHOICES = [
+STABLE_ID_PROPHYLAXIS_CHOICES_V1 = [
     ["device_facts", "Device identity, serial & uptime"],
     *PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
+]
+
+STABLE_ID_PROPHYLAXIS_CHOICES = [
+    ["device_facts", "Device identity, serial & uptime"],
+    ["cpu_utilization", "CPU utilization"],
+    ["os_version", "OS version"],
+    ["cpu_temperature", "Temperature sensor (raw)"],
+    ["uptime", "Uptime"],
+    ["memory_utilization", "Memory utilization"],
+    ["fan_health", "Fan health"],
+    *LEGACY_PROPHYLAXIS_CHOICES[2:7],
 ]
 
 
@@ -546,6 +557,7 @@ def is_supported_choice_set_migration(
             LEGACY_PROPHYLAXIS_CHOICES,
             PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
             DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
+            STABLE_ID_PROPHYLAXIS_CHOICES_V1,
         )
         and
         desired.get("extra_choices")

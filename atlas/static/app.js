@@ -45,6 +45,7 @@ const elements = {
   prophylaxisFailure: document.querySelector("#prophylaxis-failure"),
   prophylaxisSkipped: document.querySelector("#prophylaxis-skipped"),
   prophylaxisReport: document.querySelector("#prophylaxis-report"),
+  prophylaxisResults: document.querySelector("#prophylaxis-results"),
   monitoringToken: document.querySelector("#monitoring-token"),
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
@@ -589,6 +590,44 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     ? `Run ${run.run_id} · Report: ${run.report_path}`
     : "No run has been launched.";
   elements.prophylaxisRun.disabled = ["PENDING", "RUNNING"].includes(status);
+  const results = run?.results || [];
+  if (!results.length) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 4;
+    cell.className = "table-message";
+    cell.textContent = ["PENDING", "RUNNING"].includes(status)
+      ? "Checks are running…"
+      : "No results yet.";
+    row.append(cell);
+    elements.prophylaxisResults.replaceChildren(row);
+    return;
+  }
+  const rows = results.map((result) => {
+    const row = document.createElement("tr");
+    const payload = result.values || result.facts || {};
+    const details = [];
+    for (const [key, value] of Object.entries(payload)) {
+      if (value === null || value === undefined || key === "outcome" || key === "sensors") continue;
+      details.push(`${titleCase(key)}: ${value}`);
+    }
+    if (Array.isArray(payload.sensors)) {
+      details.push(payload.sensors.map((sensor) =>
+        `Fan ${sensor.index}: ${sensor.status_text} (${sensor.outcome})`).join(", "));
+    }
+    for (const value of [
+      result.device_name,
+      titleCase(result.check),
+      result.evaluation,
+      result.error ? titleCase(result.error) : details.join(" · ") || "Collected",
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  });
+  elements.prophylaxisResults.replaceChildren(...rows);
 }
 
 function addResultEvent(symbol, kind, device, detail = "") {

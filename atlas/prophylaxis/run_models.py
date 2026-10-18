@@ -11,6 +11,8 @@ from atlas.prophylaxis.models import (
     DeviceFactsValues,
     OSVersionValues,
     UptimeValues,
+    EvaluationOutcome,
+    SystemMetricValues,
 )
 
 
@@ -27,18 +29,47 @@ class ProphylaxisCheckResult(BaseModel):
     management_ip: str | None = None
     platform: str | None = None
     status: Literal["success", "failed", "incomplete", "skipped"]
+    evaluation: EvaluationOutcome
     facts: DeviceFactsValues | None = None
-    values: CPUUtilizationValues | OSVersionValues | UptimeValues | None = None
+    values: CPUUtilizationValues | OSVersionValues | UptimeValues | SystemMetricValues | None = None
     error: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="before")
+    @classmethod
+    def infer_legacy_evaluation(cls, value):
+        if isinstance(value, dict) and "evaluation" not in value:
+            status = value.get("status")
+            inferred = {
+                "success": EvaluationOutcome.PASS,
+                "failed": EvaluationOutcome.FAIL,
+                "incomplete": EvaluationOutcome.UNKNOWN,
+                "skipped": EvaluationOutcome.UNSUPPORTED,
+            }.get(status)
+            if inferred is not None:
+                value = {**value, "evaluation": inferred}
+        return value
 
     @model_validator(mode="after")
     def validate_payload(self):
+        expected_status = {
+            EvaluationOutcome.PASS: "success",
+            EvaluationOutcome.FAIL: "failed",
+            EvaluationOutcome.UNKNOWN: "incomplete",
+            EvaluationOutcome.NOT_APPLICABLE: "skipped",
+            EvaluationOutcome.UNSUPPORTED: "skipped",
+        }[self.evaluation]
+        if self.status != expected_status:
+            raise ValueError("status does not match evaluation")
         if self.status == "success":
             payloads = int(self.facts is not None) + int(self.values is not None)
             if payloads != 1 or self.error is not None:
                 raise ValueError("successful result requires one payload")
-        elif self.facts is not None or self.values is not None or not self.error:
-            raise ValueError("non-success result requires only a safe error code")
+        elif self.facts is not None:
+            raise ValueError("non-success result cannot contain facts")
+        elif self.values is None and not self.error:
+            raise ValueError("non-success result requires values or a safe error code")
+        elif self.values is not None and self.error is not None:
+            raise ValueError("evaluated result must not also contain an error")
         return self
 
 

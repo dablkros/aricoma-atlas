@@ -1792,9 +1792,12 @@ Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
 Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
 `profylaxia_checks`. `device_facts`, `os_version` a `uptime` zdieľajú jeden
-facts collector job; `cpu_utilization` používa CPU collector. Nepodporované voľby sa zaznamenajú ako
-`skipped` s kódom `unsupported_check`. Pôvodná manuálna CPU kontrola zostáva
-dostupná cez API.
+facts collector job. Cisco CBS systémové metriky zdieľajú jeden read-only SNMP
+GET job; ostatné existujúce CPU platformy používajú pôvodný SSH/API collector.
+Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
+OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
+[Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
+manuálna CPU kontrola zostáva dostupná cez API.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |

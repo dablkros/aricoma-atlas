@@ -18,7 +18,7 @@ from atlas.prophylaxis.errors import (
     ConnectionFailedError,
     SSHNegotiationFailedError,
 )
-from atlas.prophylaxis.models import CheckId
+from atlas.prophylaxis.models import CheckId, CollectorId
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 
 
@@ -165,6 +165,40 @@ class AnsibleBackendTests(unittest.TestCase):
 
         host = runner.calls[0]["inventory"]["all"]["hosts"]["atlas_target"]
         self.assertFalse(host["ansible_httpapi_validate_certs"])
+
+    def test_snmp_collector_uses_local_transport_and_secret_environment(self):
+        runner = CapturingRunner(
+            {
+                "schema_version": 1,
+                "collector": "snmp_system",
+                "platform": "cisco-cbs",
+                "status": "ok",
+                "data": {"metrics": {}},
+                "raw_output": None,
+                "error_code": None,
+            }
+        )
+        profile = AnsiblePlatformRegistry().resolve("cisco-cbs")
+
+        self.backend(runner).execute(
+            host="192.0.2.30",
+            port=161,
+            profile=profile,
+            collector_id=CollectorId.SNMP_SYSTEM,
+            check_id=CheckId.CPU_UTILIZATION,
+            credentials={"version": "2c", "community": "snmp-secret"},
+            device_model="CBS350-16T-2G",
+        )
+
+        call = runner.calls[0]
+        host = call["inventory"]["all"]["hosts"]["atlas_target"]
+        self.assertEqual(call["extravars"]["atlas_transport"], "snmp")
+        self.assertEqual(call["extravars"]["atlas_device_model"], "CBS350-16T-2G")
+        self.assertEqual(host["ansible_connection"], "local")
+        self.assertEqual(host["ansible_port"], 161)
+        self.assertEqual(call["envvars"]["ATLAS_SNMP_COMMUNITY"], "snmp-secret")
+        self.assertNotIn("snmp-secret", repr(call["inventory"]))
+        self.assertNotIn("snmp-secret", repr(call["extravars"]))
 
     def test_monitoring_playbook_keeps_community_out_of_inventory_and_extravars(self):
         class MonitoringRunner:

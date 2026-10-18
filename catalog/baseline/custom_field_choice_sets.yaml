@@ -6,14 +6,14 @@ choice_sets:
       - ["device_facts", "Device identity, serial & uptime"]
       - ["cpu_utilization", "CPU utilization"]
       - ["os_version", "OS version"]
-      - ["cpu_temperature", "CPU temperature"]
+      - ["cpu_temperature", "Temperature sensor (raw)"]
       - ["uptime", "Uptime"]
-      - ["Memory utilization", "Memory utilization"]
+      - ["memory_utilization", "Memory utilization"]
+      - ["fan_health", "Fan health"]
       - ["Interface utilization", "Interface utilization"]
       - ["interface errors", "interface errors"]
       - ["Routing table", "Routing table"]
       - ["Routing protocol neighbors", "Routing protocol neighbors"]
       - ["HA status", "HA status"]
-      - ["Temperature", "Temperature"]
     choice_colors: {}
     order_alphabetically: false

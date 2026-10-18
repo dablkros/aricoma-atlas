@@ -225,6 +225,13 @@ class AnsibleBackend:
                     "ansible_port": port,
                 }
             )
+        elif transport == "snmp":
+            variables.update(
+                {
+                    "ansible_connection": "local",
+                    "ansible_port": port,
+                }
+            )
         else:
             variables.update(
                 {
@@ -261,7 +268,12 @@ class AnsibleBackend:
     def _credential_environment(
         profile: AnsiblePlatformProfile,
         credentials: dict,
+        collector_id: CollectorId,
     ) -> dict[str, str]:
+        if collector_id == CollectorId.SNMP_SYSTEM:
+            if credentials.get("version") != "2c":
+                raise AnsibleExecutionError()
+            return {"ATLAS_SNMP_COMMUNITY": credentials["community"]}
         if profile.authentication == "api_token":
             return {"ATLAS_FORTIOS_API_TOKEN": credentials["api_token"]}
         return {
@@ -280,6 +292,7 @@ class AnsibleBackend:
         check_id: CheckId,
         credentials: dict,
         telnet_fallback_port: int | None = None,
+        device_model: str | None = None,
     ) -> RawCollectorResult:
         if collector_id is None:
             collector_id = (
@@ -362,7 +375,7 @@ class AnsibleBackend:
                 "ANSIBLE_HOST_KEY_CHECKING": str(self.strict_host_keys).lower(),
                 "ANSIBLE_HOST_KEY_AUTO_ADD": str(not self.strict_host_keys).lower(),
                 "SSH_AUTH_SOCK": "",
-                **self._credential_environment(profile, credentials),
+                **self._credential_environment(profile, credentials, collector_id),
             }
             if ssh_config_file is not None:
                 environment["ANSIBLE_LIBSSH_CONFIG_FILE"] = str(ssh_config_file)
@@ -388,6 +401,7 @@ class AnsibleBackend:
                             "atlas_platform": profile.slug,
                             "atlas_schema_version": 1,
                             "atlas_transport": transport,
+                            "atlas_device_model": device_model or "",
                         },
                         envvars=environment,
                         suppress_env_files=True,
@@ -412,7 +426,11 @@ class AnsibleBackend:
                     )
                     raise AnsibleExecutionError() from None
 
-            transport = profile.transport
+            transport = (
+                "snmp"
+                if collector_id == CollectorId.SNMP_SYSTEM
+                else profile.transport
+            )
             result = run_attempt(transport, port)
 
             if getattr(result, "status", None) != "successful" or getattr(result, "rc", 1) != 0:

@@ -114,7 +114,17 @@ class FileRunStore:
             }
             detail = []
             for field, value in values.items():
-                if value is None:
+                if value is None or field == "outcome":
+                    continue
+                if field == "sensors" and value:
+                    for sensor in value:
+                        sensor_outcome = sensor["outcome"]
+                        if hasattr(sensor_outcome, "value"):
+                            sensor_outcome = sensor_outcome.value
+                        detail.append(
+                            f"fan_{sensor['index']}={sensor['status_text']}"
+                            f"/{sensor_outcome}"
+                        )
                     continue
                 label = labels.get(field, field)
                 if field.endswith("_percent"):
@@ -149,7 +159,7 @@ class FileRunStore:
                 lines.append(
                     f"- {result.device_name} [{result.platform or 'unknown'}] "
                     f"{result.check}: "
-                    f"{result.status} ({detail})"
+                    f"{result.evaluation.value} / {result.status} ({detail})"
                 )
         return "\n".join(lines) + "\n"
 
