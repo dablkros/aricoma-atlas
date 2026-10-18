@@ -82,7 +82,13 @@ class MonitoringAnsibleBackend:
                 ).lower(),
                 "SSH_AUTH_SOCK": "",
                 "ATLAS_SNMP_COMMUNITY": (secret or {}).get("community", ""),
-                **self.backend._credential_environment(profile, credentials),
+                **self.backend._credential_environment(
+                    profile,
+                    credentials,
+                    # Monitoring config uses the device transport credentials;
+                    # its SNMP community is injected separately above.
+                    None,
+                ),
             }
             ssh_config = None
             if profile.legacy_ciphers or profile.legacy_macs:

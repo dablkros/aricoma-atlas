@@ -268,7 +268,7 @@ class AnsibleBackend:
     def _credential_environment(
         profile: AnsiblePlatformProfile,
         credentials: dict,
-        collector_id: CollectorId,
+        collector_id: CollectorId | None,
     ) -> dict[str, str]:
         if collector_id == CollectorId.SNMP_SYSTEM:
             if credentials.get("version") != "2c":
