@@ -573,9 +573,11 @@ Milestone 3 pridáva prvú zápisovú orchestration operáciu:
 POST /api/oxidized/sync
 ```
 
-Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta príslušné admin credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback credentials.
+Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta výhradne `oxidized` credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback z `oxidized` na `admin` credentials.
 
-Cisco platformy `cisco-cbs` a `cisco-cbs250-350` používajú explicitný Oxidized model `ciscosmb` a credential namespace `atlas/devices/credentials/cisco/<credential_profile>/admin`. Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických CBS220/250/350 zariadeniach; nepoužíva fallback na model `ios`.
+Cisco platformy `cisco-cbs` a `cisco-cbs250-350` používajú explicitný Oxidized model `ciscosmb` a credential namespace `atlas/devices/credentials/cisco/<credential_profile>/oxidized`. Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických CBS220/250/350 zariadeniach; nepoužíva fallback na model `ios`.
+
+Check Point platforma `checkpoint-gaia` používa model `gaiaos` z pripnutého Oxidized 0.37.0. `checkpoint-gaia-embedded` zostáva bez Oxidized mapovania, kým sa celý príkazový kontrakt neoverí na fyzickom Spark zariadení.
 
 Spracovanie používa jedno spoločné jadro pre API aj `sudo atlasctl oxidized reconcile`:
 
@@ -1363,6 +1365,8 @@ atlas/
 │       └── <manufacturer.slug>/
 │           └── <credential_profile>/
 │               ├── admin
+│               ├── automation
+│               ├── oxidized
 │               └── snmp
 │
 ├── netbox/
@@ -1377,7 +1381,7 @@ atlas/
 
 Význam:
 
-- `atlas/devices/credentials/*` – spoločné credentials pre spravované zariadenia,
+- `atlas/devices/credentials/*` – spoločná hierarchia účelovo oddelených credentials pre spravované zariadenia,
 - `atlas/netbox/*` – interné NetBox secrets,
 - `atlas/zabbix/api` – token obmedzeného Atlas API používateľa,
 - `atlas/zabbix/admin` a `atlas/zabbix/database` – iba deployment/bootstrap secrets,
@@ -1453,7 +1457,7 @@ umožňuje runtime službám čítať spoločný strom:
 atlas/devices/credentials/*
 ```
 
-Cieľom je, aby sa rovnaké credentials sieťových zariadení nemuseli duplikovať pre Zabbix, Oxidized a ďalšie Atlas aplikácie. App-specific secrets zostávajú oddelené.
+Cieľom je mať jeden konzistentný strom bez zdieľania nadbytočných oprávnení. Oxidized číta iba koncový leaf `oxidized`; `admin` a `snmp` zostávajú oddelené. `automation` je rezervovaný účel bez aktuálneho konzumenta. App-specific secrets zostávajú mimo tohto stromu.
 
 Oxidized reconcile číta tento strom cez `oxidized-runtime`, v pamäti zostaví úplný desired-state inventár a atómovo nahradí ephemeral `router.json`.
 
@@ -2328,7 +2332,7 @@ Kompromis tohto režimu: samostatná zmena hesla bez akejkoľvek inej významnej
 Pridanie:
 
 1. v NetBoxe nastav zariadenie do stavu `active`, primary management IP, podporovanú platformu, `credential_profile` a `oxidized_enabled=true`,
-2. ulož príslušné credentials do OpenBao,
+2. ulož read-only SSH účet do `atlas/devices/credentials/<manufacturer>/<credential_profile>/oxidized`,
 3. spusti `sudo atlasctl oxidized reconcile`,
 4. over `/nodes.json`, log a prvý commit v Oxidized Git histórii.
 

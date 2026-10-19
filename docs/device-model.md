@@ -61,7 +61,7 @@ build report contains every unmapped model.
 | Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
 | Aruba AOS-CX | `aruba-aos-cx` | 68 | `aoscx` |
 | Aruba AOS-Switch | `aruba-aos-switch` | 41 | `procurve` |
-| Check Point Gaia | `checkpoint-gaia` | 25 | unsupported/unmapped |
+| Check Point Gaia | `checkpoint-gaia` | 25 | `gaiaos` |
 | Check Point Gaia Embedded | `checkpoint-gaia-embedded` | 16 | unsupported/unmapped |
 
 Sixteen platform objects are prepared by a complete bootstrap. Actual
@@ -95,13 +95,20 @@ Smart-1 definitions in the pinned library map to `checkpoint-gaia`. Reviewed
 Spark 1500, 1600, 1800, 2000 and 2500 definitions map to
 `checkpoint-gaia-embedded`. Atlas does not infer either platform from the
 manufacturer. Rack shelves, SandBlast, older 1100/1400/2200/4400/5000-family
-definitions and any other unreviewed type are not imported. Neither Check
-Point platform receives an Oxidized or Ansible mapping until that runtime
-contract is separately verified and tested.
+definitions and any other unreviewed type are not imported. `checkpoint-gaia`
+maps to the pinned Oxidized `gaiaos` model. Gaia Embedded remains unmapped
+because the complete `gaiaos` command set has not been verified on physical
+Spark hardware. Neither Check Point platform has an Ansible mapping.
 
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 
 **Fact (high confidence, version-specific primary sources):** Oxidized 0.37.0 separates `fortigate` for FortiGate from `fortios` for other Fortinet appliances. Therefore the requested conceptual `fortios → fortios` example is intentionally corrected to **`fortios → fortigate`**. [Fortinet model notes, 0.37.0](https://github.com/ytti/oxidized/blob/0.37.0/docs/Model-Notes/Fortinet.md).
+
+**Fact (high confidence, version-specific primary source):** Oxidized 0.37.0
+ships the Check Point `gaiaos` model. It requires a Clish login shell and runs
+`show vsx`, `show asset all`, `show version all` and `show configuration`; VSX
+collection also selects each virtual-system context. It does not enter Expert
+mode. [GaiaOS model, 0.37.0](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/gaiaos.rb).
 
 **Experimental / unverified on physical CBS hardware:** both Cisco CBS platforms map explicitly to the pinned `ciscosmb` model. The model's source comment lists older Small Business series, not CBS220/250/350, so the mapping is not evidence of a successful backup on those families. It does not use an `ios` fallback. Hardware FortiAnalyzer and FortiAP compatibility has not been established; those platforms remain unmapped with an explicit validation error.
 
@@ -159,39 +166,44 @@ Examples:
 
 ```text
 devices/credentials/cisco/cisco-default/admin
+devices/credentials/cisco/cisco-default/oxidized
 devices/credentials/cisco/cisco-default/snmp
 devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/fortinet/fortinet-default/oxidized
 devices/credentials/sophos/sophos-default/snmp
-devices/credentials/cisco/SW-CORE-01/admin
+devices/credentials/check-point/GW-CP-01/oxidized
 ```
 
-The last example requires an explicit `credential_profile = SW-CORE-01`. Renaming a Device never changes its reference. Vendor comes from `device.device_type.manufacturer.slug` in the native NetBox REST representation, not a display name. The resolver rejects noncanonical vendor slugs, whitespace, slashes, URL escapes and traversal characters instead of silently rewriting a secret identity. Profile case is preserved; valid profiles match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`.
+The last example requires an explicit `credential_profile = GW-CP-01`. Renaming a Device never changes its reference. Vendor comes from `device.device_type.manufacturer.slug` in the native NetBox REST representation, not a display name. The resolver rejects noncanonical vendor slugs, whitespace, slashes, URL escapes and traversal characters instead of silently rewriting a secret identity. Profile case is preserved; valid profiles match `^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$`.
 
-The HTTP KV v2 data endpoint is `/v1/atlas/data/devices/credentials/...`; the `data` segment is not part of the relative secret path passed to `OpenBaoClient.kv_read`. `device-credentials-read` grants reads beneath `atlas/data/devices/credentials/*`. Existing service AppRoles retain the same policy assignment. `atlas/oxidized/*` continues to hold application secrets such as web login; it is not a per-device `oxidized` purpose.
+The HTTP KV v2 data endpoint is `/v1/atlas/data/devices/credentials/...`; the `data` segment is not part of the relative secret path passed to `OpenBaoClient.kv_read`. `device-credentials-read` grants reads beneath `atlas/data/devices/credentials/*`. Existing service AppRoles retain the same policy assignment. The `devices/credentials/.../oxidized` leaf is the per-device read-only SSH credential. The separate `atlas/oxidized/*` tree continues to hold application secrets such as the Oxidized web login.
 
-Required admin shape (placeholders only):
+Required SSH secret shape for both `admin` and `oxidized` purposes
+(placeholders only):
 
 ```json
 {"username": "<device-account>", "password": "<device-password>"}
 ```
 
-For a FortiGate used by both Oxidized and Profylaxia, extend the same existing
-secret rather than creating another credential path:
+Keep interactive/automation access and configuration backup access in separate
+purpose leaves even when they use the same explicit `credential_profile`:
 
-```json
-{
-  "username": "<device-account>",
-  "password": "<device-password>",
-  "api_token": "<read-only-fortigate-api-token>"
-}
+```text
+devices/credentials/fortinet/fortinet-default/admin
+{"api_token": "<fortigate-api-token>"}
+
+devices/credentials/fortinet/fortinet-default/oxidized
+{"username": "<read-only-ssh-account>", "password": "<device-password>"}
 ```
 
-Oxidized consumes only the SSH fields. The Ansible-backed FortiOS Profylaxia
-collector consumes only `api_token`. Adding this field is a one-time operator
-upgrade for existing Fortinet profiles; Atlas deployment does not create or
-rotate device API tokens.
+Oxidized consumes only the `oxidized` SSH leaf. The Ansible-backed FortiOS
+Profylaxia collector continues to consume `api_token` from `admin`. Atlas does
+not create, copy or rotate either device credential.
 
-Optional `enable_password` is a string and is not required. `admin` is the purpose for Oxidized; `snmp` is separate. The path helper also allows the future `automation` purpose without changing the hierarchy.
+Optional `enable_password` is a string and is not required. `oxidized` is the
+only purpose used by Oxidized; `admin` and `snmp` remain separate. The
+`automation` purpose is reserved but has no current consumer. There is
+deliberately no fallback from `oxidized` to `admin`.
 
 SNMPv2c:
 
@@ -223,7 +235,7 @@ explicit interface-details mapping and tests; no protocol fallback is used.
 `atlas/device_credentials.py` is shared by the FastAPI and deployment layers:
 
 - `oxidized_reference(device)` ignores devices whose flag is not the boolean `true`; validates an enabled Device's platform, service mapping, explicit profile, vendor slug, name and IP.
-- `resolve_oxidized_device(device, client, token)` reads the exact `admin` path from OpenBao and validates username/password. The return object's representation hides credentials. Callers must not serialize or log its credential dictionary.
+- `resolve_oxidized_device(device, client, token)` reads the exact `oxidized` path from OpenBao and validates username/password. The return object's representation hides credentials. Callers must not serialize or log its credential dictionary.
 - Missing platform, missing mapping, missing profile, missing secret and invalid admin schema have distinct errors. Permission/transport failures are distinct from missing secrets. There is no default credential/profile or platform inference.
 - OpenBao HTTP exceptions omit response bodies and transport exception details to avoid propagating secret-bearing diagnostics.
 
@@ -234,7 +246,7 @@ SW-CORE-01
 NetBox: manufacturer.slug=cisco, platform.slug=cisco-ios-xe
         credential_profile=cisco-default, oxidized_enabled=true
 Atlas:  cisco-ios-xe -> ios
-Bao:    atlas / devices/credentials/cisco/cisco-default/admin
+Bao:    atlas / devices/credentials/cisco/cisco-default/oxidized
 Consumers: Oxidized model=ios; Zabbix template=Cisco IOS by SNMP
 ```
 
@@ -246,12 +258,14 @@ or credential store.
 
 ## Operator steps
 
-1. Review and deploy this branch using the existing installation/update process, then run `sudo atlasctl deploy`.
-2. Review `default_platform` on imported Device Types and audit the unmapped list. Existing Devices with no platform need an explicit operator-selected platform; no bulk backfill runs.
-3. In the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel), create the real `admin` and optionally `snmp` secrets at the exact profile paths. Do not paste real secrets into Git, command history, reports or NetBox.
-4. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
-5. If operator-managed legacy secrets exist at old `devices/credentials/default` or `devices/credentials/cisco` paths, copy them through the authenticated OpenBao UI and verify consumers before retiring old keys. Atlas-generated monitoring values under `devices/snmp/<vendor>/<device-id>/monitoring` are different: an approved `provision_and_monitor` operation copies a valid value with `cas=0` to `devices/credentials/<vendor>/<device-name>/snmp`. It never deletes the legacy value. The monitoring provisioner can write only that terminal `snmp` leaf and cannot write sibling `admin` credentials.
-6. Run `sudo atlasctl oxidized reconcile` and `sudo atlasctl zabbix sync`, then
+1. Review this branch and identify every current Device with `oxidized_enabled=true`; do not deploy the credential-path change yet.
+2. Use the existing local OpenBao access flow (`sudo atlasctl openbao`, SSH tunnel) to create an `oxidized` secret for every enabled profile. Keep `admin` and optional `snmp` secrets separate. Do not paste real secrets into Git, command history, reports or NetBox.
+3. Deploy the reviewed branch using the existing installation/update process, then run `sudo atlasctl deploy`.
+4. Review `default_platform` on imported Device Types and audit the unmapped list. Existing Devices with no platform need an explicit operator-selected platform; no bulk backfill runs.
+5. Set the explicit `credential_profile` on each Device and its intended platform/IP/enable flags. A shared profile is deliberately selected, never guessed from the name.
+6. If operator-managed legacy secrets exist at old `devices/credentials/default` or `devices/credentials/cisco` paths, copy them through the authenticated OpenBao UI and verify consumers before retiring old keys. Atlas-generated monitoring values under `devices/snmp/<vendor>/<device-id>/monitoring` are different: an approved `provision_and_monitor` operation copies a valid value with `cas=0` to `devices/credentials/<vendor>/<device-name>/snmp`. It never deletes the legacy value. The monitoring provisioner can write only that terminal `snmp` leaf and cannot write sibling `admin` credentials.
+7. Run `sudo atlasctl oxidized reconcile` and
+   `sudo atlasctl zabbix sync`, then
    perform physical-device acceptance tests before enabling any newly verified
    driver family.
 
@@ -265,12 +279,13 @@ Primary evidence reviewed 2026-10-19:
 
 - [Pinned community Device Type Library](https://github.com/netbox-community/devicetype-library/tree/517549215455824be5e3b89965353fd2210cc20c/device-types) — actual models/slugs and vendor datasheet links.
 - [NetBox v4.7.1 model implementation](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/dcim/models/devices.py) — native defaults and inheritance.
-- [Oxidized 0.37.0 model list](https://github.com/ytti/oxidized/blob/0.37.0/docs/Supported-OS-Types.md), [AOS-CX](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/aoscx.rb), [ProCurve](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/procurve.rb), [IOS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ios.rb), [NX-OS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/nxos.rb), [Junos](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/junos.rb), [CiscoSMB](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ciscosmb.rb) — source commit `3ff7335d85592993727f7dfa7a98cd70aedb87b0`.
+- [Oxidized 0.37.0 model list](https://github.com/ytti/oxidized/blob/0.37.0/docs/Supported-OS-Types.md), [GaiaOS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/gaiaos.rb), [AOS-CX](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/aoscx.rb), [ProCurve](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/procurve.rb), [IOS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ios.rb), [NX-OS](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/nxos.rb), [Junos](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/junos.rb), [CiscoSMB](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/model/ciscosmb.rb) — source commit `3ff7335d85592993727f7dfa7a98cd70aedb87b0`.
 - [HPE Aruba AOS-CX 10.15 supported platforms](https://www.arubanetworks.com/techdocs/AOS-CX/10.15/PDF/security_4100i-6000-6100.pdf) and [AOS-CX 10.14 platform guide](https://www.arubanetworks.com/techdocs/AOS-CX/10.14/PDF/vxlan.pdf) — reviewed switch-family OS boundary.
 - [Zabbix 7.0 Aruba CX 8300s template](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/aruba/aruba_cx8300s_snmp?at=release%2F7.0) — reason for retaining the generic SNMP template across the broader Aruba selection.
 - [Cisco Catalyst 9000 release guidance](https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-series-switches/214814-recommended-releases-for-catalyst-9200-9.html), [3850 IOS XE release notes](https://www.cisco.com/c/en/us/support/switches/catalyst-3850-series-switches/products-release-notes-list.html), [8200/8300 IOS XE releases](https://www.cisco.com/c/en/us/support/routers/catalyst-8300-series-edge-platforms/series.html).
 - [Juniper QFX5130 system overview](https://www.juniper.net/documentation/us/en/hardware/qfx5130/topics/topic-map/qfx5130-system-overview.html) — Junos OS Evolved, reason for avoiding a broad QFX rule; [QFX5200](https://www.juniper.net/documentation/product/us/en/qfx5200/), [EX4100](https://www.juniper.net/documentation/product/us/en/ex4100/), [EX4000 hardware compatibility](https://pathfinder.juniper.net/hct/product/EX4000).
 - [Check Point R82.10 supported environments](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_RN/Content/Topics-RN/Supported-Environments.htm) — current Gaia gateway, management and Maestro platform boundary; [Maestro MHO-140 hardware guide](https://sc1.checkpoint.com/documents/Appliances/GSG_Maestro/EN/Topics/MHO-140-Rear-Panel.htm) — Gaia OS on the orchestrator.
 - [Check Point R81.10.X Spark overview](https://sc1.checkpoint.com/documents/SMB_R81.10.X/AdminGuides_Centrally_Managed/EN/Content/Topics/Overview.htm) and [R82.00.X Spark overview](https://sc1.checkpoint.com/documents/Appliances/Quantum_Spark_R82.00.X/AdminGuides_Locally_Managed/EN/Content/Topics/Overview.htm) — Gaia Embedded family and the 2500 appliance models.
+- [Check Point R82 roles](https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Roles.htm) and [users](https://sc1.checkpoint.com/documents/R82/WebAdminGuides/EN/CP_R82_Gaia_AdminGuide/Content/Topics-GAG/Users.htm) — `monitorRole`, CLI access and read-only Gaia accounts.
 
 Confidence: high for pinned code behavior and reproducible catalog counts; medium for family-level default-platform rules (reviewed hardware identity, not discovery of a running OS); unverified for physical-device collection and deliberately unmapped families. Vendor and driver support are version-sensitive; review sources and mappings whenever images/catalog pins change.

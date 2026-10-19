@@ -170,9 +170,10 @@ class OpenBaoService:
         profile: str,
         *,
         authentication: str = "ssh",
+        purpose: str = "admin",
     ) -> dict:
         try:
-            path = credential_path(manufacturer, profile, purpose="admin")
+            path = credential_path(manufacturer, profile, purpose=purpose)
             secret = self.read_secret(path)
         except DependencyError as exc:
             if exc.reason == "secret_not_found":

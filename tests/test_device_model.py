@@ -457,7 +457,7 @@ class CredentialTests(unittest.TestCase):
     def test_reference_and_hostname_rename(self):
         d = device()
         ref = oxidized_reference(d)
-        self.assertEqual(ref.path, "devices/credentials/cisco/cisco-default/admin")
+        self.assertEqual(ref.path, "devices/credentials/cisco/cisco-default/oxidized")
         self.assertEqual(ref.model, "ios")
         self.assertEqual(ref.address, "10.10.10.1")
         d["name"] = "renamed"
@@ -502,6 +502,7 @@ class CredentialTests(unittest.TestCase):
             ("junos", "juniper", "junos"),
             ("aruba-aos-cx", "hpe", "aoscx"),
             ("aruba-aos-switch", "hpe", "procurve"),
+            ("checkpoint-gaia", "check-point", "gaiaos"),
         )
         for platform, vendor, model in cases:
             with self.subTest(platform=platform):
@@ -521,6 +522,18 @@ class CredentialTests(unittest.TestCase):
                 self.assertEqual(resolved.reference.model, model)
                 self.assertEqual(resolved.reference.address, "2001:db8::10")
 
+    def test_checkpoint_gaia_embedded_remains_unmapped(self):
+        d = device()
+        d["platform"] = {"slug": "checkpoint-gaia-embedded"}
+        d["device_type"]["manufacturer"]["slug"] = "check-point"
+        client = Mock()
+
+        with self.assertRaises(DeviceValidationError) as raised:
+            resolve_oxidized_device(d, client, "fixture-token")
+
+        self.assertEqual(raised.exception.code, "unsupported_platform")
+        client.kv_read.assert_not_called()
+
     def test_disabled_devices_do_not_read_secrets(self):
         for enabled in (False, None, "true", 1):
             d = device(); d["custom_fields"]["oxidized_enabled"] = enabled
@@ -535,8 +548,12 @@ class CredentialTests(unittest.TestCase):
                 credential_path("cisco", bad)
         with self.assertRaises(DeviceValidationError):
             credential_path("Cisco Systems, Inc.", "profile")
+        self.assertEqual(
+            credential_path("cisco", "profile", "oxidized"),
+            "devices/credentials/cisco/profile/oxidized",
+        )
         with self.assertRaises(DeviceValidationError):
-            credential_path("cisco", "profile", "oxidized")
+            credential_path("cisco", "profile", "unknown")
 
     def test_secret_resolution_no_secret_repr_and_optional_enable(self):
         client = Mock()
@@ -545,7 +562,7 @@ class CredentialTests(unittest.TestCase):
         self.assertNotIn("fixture-secret", repr(resolved))
         self.assertNotIn("fixture-user", repr(resolved))
         self.assertNotIn("enable_password", resolved.credentials)
-        client.kv_read.assert_called_once_with("fixture-token", "devices/credentials/cisco/cisco-default/admin", mount="atlas")
+        client.kv_read.assert_called_once_with("fixture-token", "devices/credentials/cisco/cisco-default/oxidized", mount="atlas")
         client.kv_read.return_value["enable_password"] = "fixture-enable"
         self.assertEqual(resolve_oxidized_device(device(), client, "fixture-token").credentials["enable_password"], "fixture-enable")
 
