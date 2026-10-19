@@ -1,7 +1,7 @@
 # Atlas device platform and credential contract
 
 Status: implemented data model, Oxidized reconciliation and Zabbix monitoring
-integration; reviewed 2026-10-16. NetBox 4.7.1 (NetBox Docker 5.1.1),
+integration; reviewed 2026-10-19. NetBox 4.7.1 (NetBox Docker 5.1.1),
 Oxidized 0.37.0 and Zabbix 7.0.31 LTS.
 
 ## Ownership and deployment
@@ -35,7 +35,15 @@ Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **
 
 The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` and the exceptional `CATALYST 3850 48PT 12 MGIG+36 GIG UPOE`; filename-only examples such as `C9500*` are insufficient. Slug patterns cover those verified aliases.
 
-**Fact (reproducible catalog audit):** pinned upstream `517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162 Fortinet, 290 Juniper, 21 Sophos and 109 HPE Aruba switch types: 820 total, **625 mapped / 195 unmapped**. The HPE selection is intentionally limited to 68 AOS-CX and 41 AOS-Switch definitions; it does not import HPE servers, storage, AP/IAP, mobility controllers, Instant On, EdgeConnect or Comware devices. The build report contains every unmapped model.
+**Fact (reproducible catalog audit):** pinned upstream
+`517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162
+Fortinet, 290 Juniper, 21 Sophos, 109 HPE Aruba switch and 41 Check Point
+types: 861 total, **666 mapped / 195 unmapped**. The HPE selection is
+intentionally limited to 68 AOS-CX and 41 AOS-Switch definitions; it does not
+import HPE servers, storage, AP/IAP, mobility controllers, Instant On,
+EdgeConnect or Comware devices. The Check Point selection is intentionally
+limited to models with a verified Gaia or Gaia Embedded OS-family source. The
+build report contains every unmapped model.
 
 | Platform name | Slug | Mapped Device Types | Oxidized model |
 |---|---|---:|---|
@@ -53,8 +61,15 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 | Sophos SD-RED | `sophos-red` | 2 | unsupported/unmapped |
 | Aruba AOS-CX | `aruba-aos-cx` | 68 | `aoscx` |
 | Aruba AOS-Switch | `aruba-aos-switch` | 41 | `procurve` |
+| Check Point Gaia | `checkpoint-gaia` | 25 | unsupported/unmapped |
+| Check Point Gaia Embedded | `checkpoint-gaia-embedded` | 16 | unsupported/unmapped |
 
-Fourteen platform objects are prepared by a complete bootstrap. Actual create/existing counts depend on the target NetBox and are printed by its dry-run. NX-OS is available for an explicitly configured Device, but no Nexus is selected by the current manifest, so there is no fabricated Nexus catalog test or broad N9K rule. An N9K name alone also does not settle NX-OS versus ACI.
+Sixteen platform objects are prepared by a complete bootstrap. Actual
+create/existing counts depend on the target NetBox and are printed by its
+dry-run. NX-OS is available for an explicitly configured Device, but no Nexus
+is selected by the current manifest, so there is no fabricated Nexus catalog
+test or broad N9K rule. An N9K name alone also does not settle NX-OS versus
+ACI.
 
 All pinned Sophos Device Types are cataloged. XG/XGS are assigned
 `sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
@@ -74,6 +89,16 @@ official Zabbix 7.0 Aruba template is specific to CX 8300s and is not applied
 to every Aruba switch family. Physical-device acceptance remains required
 before enabling collection in a customer environment.
 
+Check Point remains two explicit NetBox platform families. Current Quantum
+Security Gateway, Quantum LightSpeed, supported Maestro orchestrator and
+Smart-1 definitions in the pinned library map to `checkpoint-gaia`. Reviewed
+Spark 1500, 1600, 1800, 2000 and 2500 definitions map to
+`checkpoint-gaia-embedded`. Atlas does not infer either platform from the
+manufacturer. Rack shelves, SandBlast, older 1100/1400/2200/4400/5000-family
+definitions and any other unreviewed type are not imported. Neither Check
+Point platform receives an Oxidized or Ansible mapping until that runtime
+contract is separately verified and tested.
+
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 
 **Fact (high confidence, version-specific primary sources):** Oxidized 0.37.0 separates `fortigate` for FortiGate from `fortios` for other Fortinet appliances. Therefore the requested conceptual `fortios → fortios` example is intentionally corrected to **`fortios → fortigate`**. [Fortinet model notes, 0.37.0](https://github.com/ytti/oxidized/blob/0.37.0/docs/Model-Notes/Fortinet.md).
@@ -90,6 +115,35 @@ python3 scripts/provision_netbox.py --all
 ```
 
 The builder requires the manifest-pinned `devicetype-library` checkout; the bootstrap prepares it automatically. The last two commands require the existing `NETBOX_URL` / `NETBOX_TOKEN` environment and make no NetBox writes without `--apply`. Audit output includes all unmapped models and platform counts; provisioning prints platform create/existing and Device Type update counts. No placeholder credential secrets are seeded by deployment.
+
+### Deploy the Check Point catalog with atlasctl
+
+On an installed Atlas appliance whose `/opt/aricoma-atlas` checkout contains
+this change:
+
+```bash
+cd /opt/aricoma-atlas
+sudo atlasctl deploy --verbose
+sudo atlasctl status
+```
+
+`atlasctl deploy` invokes the existing NetBox bootstrap with `--apply`. The
+expected catalog-build lines are `Check Point 41 device types`,
+`checkpoint-gaia: 25`, `checkpoint-gaia-embedded: 16`, and `Platform mapped:
+666; unmapped: 195`. The platform create/existing counts depend on the target
+NetBox. In NetBox, verify manufacturer `Check Point`, both platform slugs, and
+the imported Device Type defaults. Existing Devices are not changed.
+
+Run the same command a second time to verify the live target is reconciled:
+
+```bash
+sudo atlasctl deploy --verbose
+```
+
+The second bootstrap must report no duplicate objects and no unchanged
+`DeviceType.default_platform` writes. If the target already contains either
+platform slug under a different non-null manufacturer, deployment stops with
+a conflict instead of overwriting that customization.
 
 ## Credential storage
 
@@ -207,7 +261,7 @@ Local unit tests cover repeated provisioning with no extra writes, read-only dry
 
 GitHub CI additionally tests the declared model files **inside the deployed image**, fresh NetBox provisioning, native Device platform inheritance, a manual Device override, stable IDs after redeployment and real OpenBao credential reads / missing-profile behavior. The complete existing deployment, ingress and upgrade checks remain enabled. CI results must be read from the PR; this document does not imply a test passed before it ran.
 
-Primary evidence reviewed 2026-10-16:
+Primary evidence reviewed 2026-10-19:
 
 - [Pinned community Device Type Library](https://github.com/netbox-community/devicetype-library/tree/517549215455824be5e3b89965353fd2210cc20c/device-types) — actual models/slugs and vendor datasheet links.
 - [NetBox v4.7.1 model implementation](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/dcim/models/devices.py) — native defaults and inheritance.
@@ -216,5 +270,7 @@ Primary evidence reviewed 2026-10-16:
 - [Zabbix 7.0 Aruba CX 8300s template](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/aruba/aruba_cx8300s_snmp?at=release%2F7.0) — reason for retaining the generic SNMP template across the broader Aruba selection.
 - [Cisco Catalyst 9000 release guidance](https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-series-switches/214814-recommended-releases-for-catalyst-9200-9.html), [3850 IOS XE release notes](https://www.cisco.com/c/en/us/support/switches/catalyst-3850-series-switches/products-release-notes-list.html), [8200/8300 IOS XE releases](https://www.cisco.com/c/en/us/support/routers/catalyst-8300-series-edge-platforms/series.html).
 - [Juniper QFX5130 system overview](https://www.juniper.net/documentation/us/en/hardware/qfx5130/topics/topic-map/qfx5130-system-overview.html) — Junos OS Evolved, reason for avoiding a broad QFX rule; [QFX5200](https://www.juniper.net/documentation/product/us/en/qfx5200/), [EX4100](https://www.juniper.net/documentation/product/us/en/ex4100/), [EX4000 hardware compatibility](https://pathfinder.juniper.net/hct/product/EX4000).
+- [Check Point R82.10 supported environments](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_RN/Content/Topics-RN/Supported-Environments.htm) — current Gaia gateway, management and Maestro platform boundary; [Maestro MHO-140 hardware guide](https://sc1.checkpoint.com/documents/Appliances/GSG_Maestro/EN/Topics/MHO-140-Rear-Panel.htm) — Gaia OS on the orchestrator.
+- [Check Point R81.10.X Spark overview](https://sc1.checkpoint.com/documents/SMB_R81.10.X/AdminGuides_Centrally_Managed/EN/Content/Topics/Overview.htm) and [R82.00.X Spark overview](https://sc1.checkpoint.com/documents/Appliances/Quantum_Spark_R82.00.X/AdminGuides_Locally_Managed/EN/Content/Topics/Overview.htm) — Gaia Embedded family and the 2500 appliance models.
 
 Confidence: high for pinned code behavior and reproducible catalog counts; medium for family-level default-platform rules (reviewed hardware identity, not discovery of a running OS); unverified for physical-device collection and deliberately unmapped families. Vendor and driver support are version-sensitive; review sources and mappings whenever images/catalog pins change.

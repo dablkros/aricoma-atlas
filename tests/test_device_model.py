@@ -78,9 +78,9 @@ class MemoryNetBox:
         self.writes.append(("DELETE", endpoint, None))
 
 
-def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C"):
-    return {"file": Path("fixture.yaml"), "manufacturer": "Cisco", "model": model, "data": {
-        "manufacturer": "Cisco", "slug": slug, "model": model}}
+def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C", manufacturer="Cisco"):
+    return {"file": Path("fixture.yaml"), "manufacturer": manufacturer, "model": model, "data": {
+        "manufacturer": manufacturer, "slug": slug, "model": model}}
 
 
 class PlatformTests(unittest.TestCase):
@@ -115,6 +115,13 @@ class PlatformTests(unittest.TestCase):
             ("HPE", "hpe-aruba-1930-48g", "Aruba 1930 48G", None),
             ("HPE", "hpe-aruba-ap-635", "Aruba AP-635", None),
             ("HPE", "hpe-a5500-48g-4sfp-hi", "A5500-48G-4SFP HI", None),
+            ("Check Point", "check-point-sg9200", "SG9200", "checkpoint-gaia"),
+            ("Check Point", "check-point-mho-175", "MHO-175", "checkpoint-gaia"),
+            ("Check Point", "check-point-smart-1-6000-xl", "Smart-1 6000-XL", "checkpoint-gaia"),
+            ("Check Point", "check-point-sg1595r", "SG1595R", "checkpoint-gaia-embedded"),
+            ("Check Point", "check-point-sg2580", "SG2580", "checkpoint-gaia-embedded"),
+            ("Check Point", "check-point-sg1430", "SG1430", None),
+            ("Check Point", "check-point-cpap-sbte2000x", "SandBlast TE2000X", None),
             ("Fortinet", "fortinet-fpm-7620f", "FortiGate Module 7620F", None),
             ("Cisco", "cisco-n9k-unknown", "N9K-unknown", None),
             ("Cisco", "unknown", "unknown", None),
@@ -151,6 +158,42 @@ class PlatformTests(unittest.TestCase):
         types = client.tables["/api/dcim/device-types/"]
         xe = next(p for p in client.tables["/api/dcim/platforms/"] if p["slug"] == "cisco-ios-xe")
         self.assertEqual(types[0]["default_platform"], xe["id"])
+        self.assertFalse(any("/devices/" in entry[1] for entry in client.writes))
+
+    def test_check_point_platforms_provision_idempotently(self):
+        client = MemoryNetBox()
+        items = [
+            item("check-point-sg9200", "SG9200", "Check Point"),
+            item("check-point-sg2580", "SG2580", "Check Point"),
+        ]
+        with redirect_stdout(io.StringIO()):
+            provision_netbox.provision(client, items, True, 200, False)
+            writes = copy.deepcopy(client.writes)
+            provision_netbox.provision(client, items, True, 200, False)
+        self.assertEqual(client.writes, writes)
+        manufacturer = next(
+            obj for obj in client.tables["/api/dcim/manufacturers/"]
+            if obj["name"] == "Check Point"
+        )
+        platforms = {
+            obj["slug"]: obj for obj in client.tables["/api/dcim/platforms/"]
+        }
+        self.assertEqual(
+            platforms["checkpoint-gaia"]["manufacturer"], manufacturer["id"]
+        )
+        self.assertEqual(
+            platforms["checkpoint-gaia-embedded"]["manufacturer"],
+            manufacturer["id"],
+        )
+        defaults = {
+            obj["model"]: obj["default_platform"]
+            for obj in client.tables["/api/dcim/device-types/"]
+        }
+        self.assertEqual(defaults["SG9200"], platforms["checkpoint-gaia"]["id"])
+        self.assertEqual(
+            defaults["SG2580"],
+            platforms["checkpoint-gaia-embedded"]["id"],
+        )
         self.assertFalse(any("/devices/" in entry[1] for entry in client.writes))
 
     def test_existing_type_enriched_then_unmapped_cleared_without_other_edits(self):
