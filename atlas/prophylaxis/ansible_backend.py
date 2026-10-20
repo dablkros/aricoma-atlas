@@ -156,6 +156,9 @@ def _failure_context(
         "ansible_task": str(event_data.get("task") or "unknown")[:160],
         "ansible_message": _redacted_message(result.get("msg"), secrets),
     }
+    error_type = result.get("error_type")
+    if isinstance(error_type, str) and error_type:
+        context["ansible_error_type"] = error_type[:128]
     meta = result.get("meta", {})
     if isinstance(meta, dict):
         http_status = meta.get("http_status")
