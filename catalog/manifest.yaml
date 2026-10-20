@@ -21,13 +21,10 @@ vendors:
         - "CBS*.yaml"
         - "CBS*.yml"
         - "SF*.yaml"
-        - "SF*.yml"
         - "SG*.yaml"
         - "SG*.yml"
         - "SX*.yaml"
-        - "SX*.yml"
         - "RV*.yaml"
-        - "RV*.yml"
 
     enterprise:
       mode: patterns

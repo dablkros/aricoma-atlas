@@ -7,11 +7,13 @@
   "upstream_commit": "517549215455824be5e3b89965353fd2210cc20c",
   "vendors": {
     "Cisco": {
-      "count": 238,
+      "count": 241,
       "patterns": [
         "CBS*.yaml",
+        "CBS*.yml",
         "SF*.yaml",
         "SG*.yaml",
+        "SG*.yml",
         "SX*.yaml",
         "RV*.yaml",
         "WS-C2960X-*.yaml",
@@ -128,18 +130,18 @@
       ]
     }
   },
-  "total": 861,
+  "total": 864,
   "platform_mapping_sha256": "2c72a6e4d87dd2b318911cc55923eceb64e774df5980ca5b5e1bd1577e80b3c9",
   "platforms": {
-    "mapped": 666,
-    "unmapped": 195,
+    "mapped": 668,
+    "unmapped": 196,
     "by_platform": {
       "aruba-aos-cx": 68,
       "aruba-aos-switch": 41,
       "checkpoint-gaia": 25,
       "checkpoint-gaia-embedded": 16,
       "cisco-cbs": 2,
-      "cisco-cbs250-350": 19,
+      "cisco-cbs250-350": 21,
       "cisco-ios": 20,
       "cisco-ios-xe": 155,
       "fortianalyzer": 3,
@@ -175,6 +177,11 @@
         "manufacturer": "Cisco",
         "model": "SG200-08",
         "slug": "cisco-sg200-08"
+      },
+      {
+        "manufacturer": "Cisco",
+        "model": "SG220-26",
+        "slug": "cisco-sg220-26p"
       },
       {
         "manufacturer": "Cisco",
