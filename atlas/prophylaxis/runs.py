@@ -1,4 +1,4 @@
-"""Asynchronous orchestration for NetBox-selected Profylaxia checks."""
+"""Asynchronous orchestration for NetBox-selected Profylaxia groups."""
 
 from concurrent.futures import ThreadPoolExecutor
 import logging
@@ -16,7 +16,6 @@ from atlas.prophylaxis.errors import (
     UnsupportedPlatformError,
 )
 from atlas.prophylaxis.models import (
-    CHECK_VALUE_ALIASES,
     CheckId,
     CollectionStatus,
     CollectorId,
@@ -26,6 +25,7 @@ from atlas.prophylaxis.models import (
     OSVersionValues,
     SystemMetricValues,
     UptimeValues,
+    expand_check_selection,
 )
 from atlas.prophylaxis.charts import render_metric_svg
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
@@ -294,18 +294,7 @@ class DeviceFactsRunService:
         fields = device.get("custom_fields")
         fields = fields if isinstance(fields, dict) else {}
         raw_values = selected_check_values(fields.get("profylaxia_checks"))
-        known: list[CheckId] = []
-        unknown: list[str] = []
-        for value in sorted(raw_values):
-            normalized = CHECK_VALUE_ALIASES.get(value, value)
-            try:
-                check_id = CheckId(normalized)
-            except ValueError:
-                unknown.append(value[:128])
-                continue
-            if check_id not in known:
-                known.append(check_id)
-        return tuple(known), tuple(unknown)
+        return expand_check_selection(raw_values)
 
     def _collect_guarded(
         self,

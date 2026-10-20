@@ -1,5 +1,6 @@
 """Secret-free execution and normalized Profylaxia result contracts."""
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -8,7 +9,6 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 SCHEMA_VERSION = 1
-CPU_NETBOX_VALUES = frozenset({"cpu_utilization", "CPU utilization"})
 CHECK_VALUE_ALIASES = {
     "CPU utilization": "cpu_utilization",
     "Memory utilization": "memory_utilization",
@@ -32,11 +32,79 @@ class CheckId(StrEnum):
     ENVIRONMENT_HEALTH = "environment_health"
     LICENSE_STATE = "license_state"
     PKI_CERTIFICATES = "pki_certificates"
+    FIRMWARE_RECOMMENDATION = "firmware_recommendation"
+    EOL_STATUS = "eol_status"
     NTP_SYNC = "ntp_sync"
     RECENT_LOG_EVENTS = "recent_log_events"
-    BACKUP_FRESHNESS = "backup_freshness"
     SERIAL_INVENTORY = "serial_inventory"
     MODEL_INVENTORY = "model_inventory"
+
+
+class CheckGroupId(StrEnum):
+    IDENTITY = "identity"
+    RESOURCES = "resources"
+    INTERFACES = "interfaces"
+    COMPLIANCE = "compliance"
+    OPERATIONS = "operations"
+
+
+CHECK_GROUP_CHECKS = {
+    CheckGroupId.IDENTITY: (
+        CheckId.DEVICE_FACTS,
+        CheckId.OS_VERSION,
+        CheckId.UPTIME,
+    ),
+    CheckGroupId.RESOURCES: (
+        CheckId.CPU_UTILIZATION,
+        CheckId.MEMORY_UTILIZATION,
+        CheckId.ENVIRONMENT_HEALTH,
+        CheckId.CPU_TEMPERATURE,
+        CheckId.FAN_HEALTH,
+    ),
+    CheckGroupId.INTERFACES: (
+        CheckId.INTERFACE_STATE,
+        CheckId.INTERFACE_UTILIZATION,
+        CheckId.INTERFACE_ERROR_COUNTERS,
+    ),
+    CheckGroupId.COMPLIANCE: (
+        CheckId.LICENSE_STATE,
+        CheckId.PKI_CERTIFICATES,
+        CheckId.FIRMWARE_RECOMMENDATION,
+        CheckId.EOL_STATUS,
+    ),
+    CheckGroupId.OPERATIONS: (
+        CheckId.NTP_SYNC,
+        CheckId.RECENT_LOG_EVENTS,
+    ),
+}
+
+
+def expand_check_selection(
+    raw_values: Iterable[str],
+) -> tuple[tuple[CheckId, ...], tuple[str, ...]]:
+    """Expand NetBox groups and compatible legacy check values."""
+    values = set(raw_values)
+    checks: list[CheckId] = []
+    unknown: list[str] = []
+
+    for group_id in CheckGroupId:
+        if group_id.value not in values:
+            continue
+        for check_id in CHECK_GROUP_CHECKS[group_id]:
+            if check_id not in checks:
+                checks.append(check_id)
+
+    group_values = {group_id.value for group_id in CheckGroupId}
+    for value in sorted(values - group_values):
+        normalized = CHECK_VALUE_ALIASES.get(value, value)
+        try:
+            check_id = CheckId(normalized)
+        except ValueError:
+            unknown.append(value[:128])
+            continue
+        if check_id not in checks:
+            checks.append(check_id)
+    return tuple(checks), tuple(unknown)
 
 
 class CollectorId(StrEnum):
@@ -45,7 +113,6 @@ class CollectorId(StrEnum):
     IOS_INTERFACES = "ios_interfaces"
     IOS_COMPLIANCE = "ios_compliance"
     IOS_OPERATIONS = "ios_operations"
-    OXIDIZED_BACKUP_STATE = "oxidized_backup_state"
     # Compatibility collector IDs used by other platform profiles and the
     # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
@@ -219,10 +286,11 @@ StoredCPUCheckResult = StoredCheckResult
 
 __all__ = [
     "CPU_CHECK_NAME",
-    "CPU_NETBOX_VALUES",
+    "CHECK_GROUP_CHECKS",
     "CHECK_VALUE_ALIASES",
     "CPUCheckResult",
     "CPUUtilizationValues",
+    "CheckGroupId",
     "CheckId",
     "CheckResult",
     "CollectionStatus",
@@ -238,4 +306,5 @@ __all__ = [
     "StoredCheckResult",
     "SystemMetricValues",
     "UptimeValues",
+    "expand_check_selection",
 ]

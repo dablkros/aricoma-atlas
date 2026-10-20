@@ -436,6 +436,36 @@ class PlatformTests(unittest.TestCase):
             desired["extra_choices"],
         )
 
+    def test_individual_check_choice_set_migrates_to_groups(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["description"] = "options for profylaxia"
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        client.post("/api/extras/custom-field-choice-sets/", previous)
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated"], 1)
+        self.assertEqual(summary["drift"], 0)
+        self.assertEqual(
+            client.tables["/api/extras/custom-field-choice-sets/"][0][
+                "extra_choices"
+            ],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
     def test_stale_mapping_invalidates_cached_build(self):
         manifest = bootstrap_netbox.load_manifest()
         with tempfile.TemporaryDirectory() as directory:

@@ -636,8 +636,8 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - výsledok posledného syncu v aktuálnej browser session,
 - explicitnú operáciu **Queue backup** iba pre zariadenie z runtime inventára,
 - operátorskú operáciu **Run Prophylaxis**, ktorá pre aktívne zariadenia s
-  `profylaxia_enabled=true` asynchrónne spustí presne kontroly vybrané v
-  `profylaxia_checks`,
+  `profylaxia_enabled=true` asynchrónne rozbalí skupiny vybrané v
+  `profylaxia_checks` a spustí podporované platformové collectory,
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
@@ -710,10 +710,10 @@ curl -sS 'http://127.0.0.1:8081/api/prophylaxis/results?limit=5' \
 ```
 
 Pre hromadný flow musí mať cieľ v NetBoxe stav `active` a
-`profylaxia_enabled=true`. Atlas načíta všetky hodnoty vo výbere
-`profylaxia_checks`; implementované kontroly spustí a nepodporované zaznamená
-ako `skipped`. Používa rovnaký runtime operator token ako Monitoring
-Provisioning:
+`profylaxia_enabled=true`. Atlas načíta skupiny vo výbere
+`profylaxia_checks`, rozbalí ich na interné výsledky; implementované collectory
+spustí raz a nepodporované výsledky zaznamená ako `skipped`. Používa rovnaký
+runtime operator token ako Monitoring Provisioning:
 
 ```bash
 read -rsp 'Atlas operator token: ' OPERATOR_TOKEN
@@ -1835,9 +1835,10 @@ SSH platformy očakávajú `username`, `password` a voliteľný
 samostatnú koncovku `/oxidized`.
 Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
-`profylaxia_checks`. `device_facts`, `os_version` a `uptime` zdieľajú jeden
-facts collector job. Cisco CBS systémové metriky zdieľajú jeden read-only SNMP
-GET job; ostatné existujúce CPU platformy používajú pôvodný SSH/API collector.
+skupín v `profylaxia_checks`. Skupina `identity` vytvára výsledky
+`device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
+`resources` na Cisco CBS zdieľa jeden read-only SNMP GET job; ostatné
+existujúce CPU platformy používajú pôvodný SSH/API collector.
 Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
@@ -1942,23 +1943,21 @@ Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto
 odstraňuje onboarding blokovaný neznámym kľúčom, ale neoveruje identitu SSH
 servera a zvyšuje riziko MITM útoku.
 
-Aktuálne možnosti:
+Aktuálne možnosti v NetBoxe:
 
-- `device_facts` — Device identity, serial & uptime (`hostname`, `model`, `os_version`, `serial_number`, `uptime_seconds`)
-- `cpu_utilization` — CPU utilization
-- `os_version` — OS version
-- `cpu_temperature` — CPU temperature
-- `uptime` — Uptime
-- Memory utilization
-- Interface utilization
-- interface errors
-- Routing table
-- Routing protocol neighbors
-- HA status
-- Temperature (legacy choice; nový interný check používa `cpu_temperature`)
+- `identity` — Identity & inventory
+- `resources` — Resources & environment
+- `interfaces` — Interfaces
+- `compliance` — Compliance
+- `operations` — Operations
 
-Nové execution flow používa stabilné interné ID. Počas migrácie backend naďalej
-akceptuje pôvodnú CPU hodnotu `CPU utilization` na už existujúcich zariadeniach.
+Každá skupina sa rozbalí na stabilné interné výsledky a platforma vykoná iba
+collectory, ktoré má explicitne povolené. Neimplementované výsledky zostanú
+viditeľné ako `UNSUPPORTED`; Atlas ich potichu nevynechá. Počas migrácie backend
+naďalej akceptuje rozpoznané staré individuálne hodnoty už uložené na
+zariadeniach. Historické voľby bez interného kontraktu (`Routing table`,
+`Routing protocol neighbors`, `HA status`) zostanú explicitne nepodporované.
+Backup do skupín profylaxie nepatrí; rieši ho samostatný Oxidized flow.
 
 ## Custom Fields
 
@@ -2610,11 +2609,12 @@ Cieľom je zabrániť nechcenej modifikácii existujúcej zákazníckej konfigur
 
 Jedinou úzkou výnimkou je verzovaná migrácia pôvodného Atlas choice setu
 `Profylaxia checks`: ak sa existujúci objekt presne zhoduje so starou Atlas
-schémou, `--apply` nahradí pôvodnú CPU hodnotu stabilnými check ID a pridá nové
-deklarované voľby. Ak sa líši ktorékoľvek ďalšie pole alebo zoznam obsahuje
-zákaznícku úpravu, objekt zostane chránený a bootstrap naďalej oznámi drift.
-Existujúce hodnoty zariadení sa hromadne neprepisujú; backend počas migrácie
-akceptuje aj pôvodnú hodnotu `CPU utilization`.
+schémou, `--apply` nahradí individuálne voľby piatimi skupinami `identity`,
+`resources`, `interfaces`, `compliance` a `operations`. Ak sa líši ktorékoľvek
+ďalšie pole alebo zoznam obsahuje zákaznícku úpravu, objekt zostane chránený a
+bootstrap naďalej oznámi drift. Existujúce hodnoty zariadení sa hromadne
+neprepisujú; backend počas migrácie akceptuje rozpoznané staré individuálne
+hodnoty vrátane `CPU utilization`.
 
 ---
 

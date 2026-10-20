@@ -71,9 +71,20 @@ Kontrakt zodpovedá NetBox 4.7.1, ktorý reprezentuje mapovania ako zoznam
 - [NetBox 4.7.1 Service model](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/models/ipam/service.md)
 - [NetBox 4.7.1 ServiceFilterSet](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/ipam/filtersets.py#L1292-L1368)
 
-## Stabilné check ID
+## Skupiny a stabilné check ID
 
-Interný kontrakt používa:
+NetBox používateľ vyberá skupiny:
+
+```text
+identity
+resources
+interfaces
+compliance
+operations
+```
+
+Atlas ich rozbalí na interné výsledky. Implementované identity/resource
+výsledky v tejto iterácii zahŕňajú:
 
 ```text
 cpu_utilization
@@ -86,12 +97,15 @@ uptime
 V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
 `os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
 sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
-používajú ten istý identity/facts collector, takže pri spoločnom výbere
-nevznikne druhý collector job. Hromadný beh zostaví plán z
+používajú ten istý identity/facts collector, takže výber skupiny `identity`
+nevytvorí tri collector joby. Hromadný beh zostaví plán zo skupín v
 `profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
-neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
-`unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
-hodnotu.
+neimplementovaný výsledok stav `unsupported`; beh ho uloží ako `skipped` s
+kódom `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
+hodnotu. Počas migrácie resolver akceptuje aj rozpoznané staré individuálne
+hodnoty. Historické hodnoty bez interného kontraktu (`Routing table`,
+`Routing protocol neighbors`, `HA status`) zostanú `unsupported`; nové NetBox
+UI individuálne voľby neponúka.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán

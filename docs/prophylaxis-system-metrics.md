@@ -7,13 +7,14 @@ repository on 2026-10-18.
 
 Atlas keeps the existing ownership boundaries:
 
-1. NetBox selects checks through `profylaxia_checks` and supplies device identity,
-   platform, model and management IP.
+1. NetBox selects Profylaxia groups through `profylaxia_checks` and supplies
+   device identity, platform, model and management IP. Atlas expands a group to
+   its stable internal check IDs before platform planning.
 2. OpenBao supplies the device-specific SNMP credential from
    `devices/credentials/<vendor>/<device-name>/snmp`. If that Atlas-managed leaf
    does not exist, the explicitly referenced credential profile is used. No
    credential is written to a result file or the browser.
-3. The existing Profylaxia run service groups selected system checks into one
+3. The existing Profylaxia run service groups expanded system checks into one
    `snmp_system` collector call per device.
 4. The existing Ansible Runner boundary invokes a local, read-only SNMPv2c GET
    module. Only OIDs declared in the platform task are queried; there is no
@@ -27,7 +28,10 @@ Zabbix is not called by this collector. Zabbix remains responsible for periodic
 sampling, trends and alert history; Profylaxia executes only checks selected in
 NetBox.
 
-## Stable check IDs and outcomes
+## Resources group, stable check IDs and outcomes
+
+The NetBox value `resources` expands to the system checks below. Legacy stored
+individual values remain accepted during migration.
 
 | NetBox value | Meaning | CBS350 | Aruba CX |
 | --- | --- | --- | --- |
@@ -37,8 +41,8 @@ NetBox.
 | `fan_health` | Model-aware fan state | Three tested status OIDs | `UNSUPPORTED` |
 
 Legacy stored values `CPU utilization`, `Memory utilization` and `Temperature`
-remain accepted during migration. Fresh NetBox installs use stable machine IDs and
-do not contain the duplicate `Temperature` choice.
+remain accepted during migration. Fresh NetBox installs offer the `resources`
+group instead of individual metric choices.
 
 - `PASS`: a validated healthy result.
 - `FAIL`: a confirmed fault under the documented state model and explicit
@@ -108,7 +112,7 @@ References:
 
 ## Operations
 
-1. Enable Profylaxia on the NetBox device and select the stable check IDs.
+1. Enable Profylaxia on the NetBox device and select the `resources` group.
 2. Ensure the Atlas-managed per-device SNMP secret exists (normally created by
    `Provision & monitor`) or configure the explicit SNMP credential profile.
 3. In Operations UI, enter the operator token and select **Run Profylaxia**.

@@ -23,10 +23,10 @@ from atlas.prophylaxis.errors import (
     ProphylaxisExecutionError,
 )
 from atlas.prophylaxis.models import (
-    CPU_NETBOX_VALUES,
     CheckId,
     CheckResult,
     StoredCheckResult,
+    expand_check_selection,
 )
 from atlas.prophylaxis.platforms import (
     AnsiblePlatformProfile,
@@ -86,9 +86,10 @@ def validate_check_selection(device: dict, check_id: CheckId) -> None:
     fields = fields if isinstance(fields, dict) else {}
     if fields.get("profylaxia_enabled") is not True:
         raise ProphylaxisDisabledError()
-    checks = selected_check_values(fields.get("profylaxia_checks"))
-    accepted = CPU_NETBOX_VALUES if check_id == CheckId.CPU_UTILIZATION else {check_id.value}
-    if checks.isdisjoint(accepted):
+    checks, _unknown = expand_check_selection(
+        selected_check_values(fields.get("profylaxia_checks"))
+    )
+    if check_id not in checks:
         raise CheckNotSelectedError()
 
 

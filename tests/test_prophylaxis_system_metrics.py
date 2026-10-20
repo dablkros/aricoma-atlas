@@ -7,6 +7,7 @@ from atlas.prophylaxis.models import (
     CollectorId,
     EvaluationOutcome,
     RawCollectorResult,
+    expand_check_selection,
 )
 from atlas.prophylaxis.parsers import (
     normalize_snmp_cpu,
@@ -113,19 +114,18 @@ class SystemMetricTests(unittest.TestCase):
 
     def test_cisco_ios_plan_groups_only_verified_thematic_collectors(self):
         profile = AnsiblePlatformRegistry().resolve("cisco-ios")
-        plan = CollectorRegistry().plan(
-            (
-                CheckId.DEVICE_FACTS,
-                CheckId.OS_VERSION,
-                CheckId.UPTIME,
-                CheckId.CPU_UTILIZATION,
-                CheckId.INTERFACE_ERROR_COUNTERS,
-                CheckId.NTP_SYNC,
-                CheckId.BACKUP_FRESHNESS,
-            ),
-            profile,
+        checks, unknown = expand_check_selection(
+            {
+                "identity",
+                "resources",
+                "interfaces",
+                "compliance",
+                "operations",
+            }
         )
+        plan = CollectorRegistry().plan(checks, profile)
 
+        self.assertEqual(unknown, ())
         self.assertEqual(
             [task.collector.id for task in plan.tasks],
             [CollectorId.IOS_IDENTITY, CollectorId.IOS_RESOURCES],
@@ -137,9 +137,19 @@ class SystemMetricTests(unittest.TestCase):
         self.assertEqual(
             plan.unsupported_checks,
             (
+                CheckId.MEMORY_UTILIZATION,
+                CheckId.ENVIRONMENT_HEALTH,
+                CheckId.CPU_TEMPERATURE,
+                CheckId.FAN_HEALTH,
+                CheckId.INTERFACE_STATE,
+                CheckId.INTERFACE_UTILIZATION,
                 CheckId.INTERFACE_ERROR_COUNTERS,
+                CheckId.LICENSE_STATE,
+                CheckId.PKI_CERTIFICATES,
+                CheckId.FIRMWARE_RECOMMENDATION,
+                CheckId.EOL_STATUS,
                 CheckId.NTP_SYNC,
-                CheckId.BACKUP_FRESHNESS,
+                CheckId.RECENT_LOG_EVENTS,
             ),
         )
 

@@ -2,7 +2,11 @@ import unittest
 
 from atlas.device_credentials import DeviceValidationError, credential_path
 from atlas.prophylaxis.errors import AuthenticationFailedError
-from atlas.prophylaxis.models import CheckId, RawCheckResult
+from atlas.prophylaxis.models import (
+    CheckId,
+    RawCheckResult,
+    expand_check_selection,
+)
 from atlas.prophylaxis.service import (
     ProphylaxisService,
     device_target,
@@ -120,6 +124,24 @@ class ProphylaxisServiceTests(unittest.TestCase):
             {"cpu_utilization", "uptime"},
         )
 
+    def test_group_selection_expands_to_stable_checks(self):
+        checks, unknown = expand_check_selection({"identity", "resources"})
+
+        self.assertEqual(
+            checks,
+            (
+                CheckId.DEVICE_FACTS,
+                CheckId.OS_VERSION,
+                CheckId.UPTIME,
+                CheckId.CPU_UTILIZATION,
+                CheckId.MEMORY_UTILIZATION,
+                CheckId.ENVIRONMENT_HEALTH,
+                CheckId.CPU_TEMPERATURE,
+                CheckId.FAN_HEALTH,
+            ),
+        )
+        self.assertEqual(unknown, ())
+
     def test_device_becomes_vendor_neutral_target(self):
         target = device_target(netbox_device())
         self.assertEqual(target.id, 10)
@@ -214,6 +236,13 @@ class ProphylaxisServiceTests(unittest.TestCase):
         device = netbox_device(
             checks=[{"value": "CPU utilization", "label": "CPU utilization"}]
         )
+        self.assertEqual(self.service([device]).collect_cpu(10).status, "ok")
+
+    def test_resources_group_authorizes_cpu_collection(self):
+        device = netbox_device(
+            checks=[{"value": "resources", "label": "Resources & environment"}]
+        )
+
         self.assertEqual(self.service([device]).collect_cpu(10).status, "ok")
 
     def test_platform_is_rejected_before_secret_lookup(self):

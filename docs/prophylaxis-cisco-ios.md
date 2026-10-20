@@ -2,21 +2,32 @@
 
 Stav návrhu: 2026-10-20. Rozsah: iba NetBox platforma `cisco-ios`.
 
-## Stabilné ID a capability register
+## Skupiny, výsledky a capability register
 
-**Fakt:** NetBox naďalej vyberá logické `CheckId`; Atlas preloží vybrané checks
-na `CollectorId`, zoskupí ich a Ansible Runner vykoná každý naplánovaný collector
-raz na zariadenie. Existujúce API polia, OpenBao účel `prophylaxis`, normalizácia,
-uloženie a report flow ostávajú zachované.
+**Fakt:** NetBox ponúka päť používateľských skupín. Atlas vybranú skupinu
+rozbalí na stabilné interné `CheckId`, platformový register priradí podporované
+výsledky ku `CollectorId` a Ansible Runner vykoná každý naplánovaný collector
+raz na zariadenie. Existujúce API polia, OpenBao účel `prophylaxis`,
+normalizácia, uloženie a report flow ostávajú zachované.
+
+| Hodnota v NetBoxe | Výsledky skupiny |
+| --- | --- |
+| `identity` | `device_facts`, `os_version`, `uptime` |
+| `resources` | `cpu_utilization`, `memory_utilization`, `environment_health`, `cpu_temperature`, `fan_health` |
+| `interfaces` | `interface_state`, `interface_utilization`, `interface_error_counters` |
+| `compliance` | `license_state`, `pki_certificates`, `firmware_recommendation`, `eol_status` |
+| `operations` | `ntp_sync`, `recent_log_events` |
+
+**Fakt:** Backup nie je skupina ani výsledok profylaxie. Oxidized inventory,
+polling, konfigurácie a Git história zostávajú samostatným flow.
 
 | `CollectorId` | Zamýšľané `CheckId` | Stav v tomto reze |
 | --- | --- | --- |
 | `ios_identity` | `device_facts`, `os_version`, `uptime`, `serial_inventory`, `model_inventory` | implementované z `show version` + `show inventory` |
 | `ios_resources` | `cpu_utilization`, `memory_utilization`, `environment_health`, `cpu_temperature`, `fan_health` | implementované iba `cpu_utilization` z `show processes cpu` |
 | `ios_interfaces` | `interface_state`, `interface_utilization`, `interface_error_counters` | explicitne unsupported |
-| `ios_compliance` | `license_state`, `pki_certificates` | explicitne unsupported |
+| `ios_compliance` | `license_state`, `pki_certificates`, `firmware_recommendation`, `eol_status` | explicitne unsupported |
 | `ios_operations` | `ntp_sync`, `recent_log_events` | explicitne unsupported |
-| `oxidized_backup_state` | `backup_freshness` | explicitne unsupported; nesmie spúšťať `show running-config` |
 
 **Fakt:** Profil `cisco-ios` preferuje `ios_identity` a `ios_resources`.
 Predchádzajúce interné ID `device_facts` a `cpu_usage` ostávajú vykonateľné ako
@@ -48,9 +59,10 @@ majú nové checks dostať samostatné Pydantic payloady, nie voľné slovníky:
 | `InterfaceErrorCounterValues` | interface, absolútne input/output error countery, čas vzorky; trend iba s druhou vzorkou alebo Zabbix históriou |
 | `LicenseStateValues` | lokálny feature/license názov, stav a explicitný outcome |
 | `PKICertificateValues` | trustpoint/subject, serial, platnosť od/do a outcome expirácie |
+| `FirmwareRecommendationValues` | zistená verzia, odporúčaná kompatibilná verzia, zdroj a dátum aktualizácie zdroja |
+| `EOLStatusValues` | produkt/PID, lifecycle míľniky, stav zdroja a dátum jeho aktualizácie |
 | `NTPStatusValues` | synchronizácia, vybraný peer a stratum, iba ak ich výstup poskytne |
 | `RecentLogValues` | obmedzený počet normalizovaných záznamov bez raw dumpu |
-| `BackupFreshnessValues` | čas posledného úspešného Oxidized/Git backupu, vek a prah politiky |
 
 ## Report
 

@@ -540,6 +540,14 @@ STABLE_ID_PROPHYLAXIS_CHOICES = [
     *LEGACY_PROPHYLAXIS_CHOICES[2:7],
 ]
 
+GROUPED_PROPHYLAXIS_CHOICES = [
+    ["identity", "Identity & inventory"],
+    ["resources", "Resources & environment"],
+    ["interfaces", "Interfaces"],
+    ["compliance", "Compliance"],
+    ["operations", "Operations"],
+]
+
 
 def is_supported_choice_set_migration(
     desired,
@@ -550,7 +558,9 @@ def is_supported_choice_set_migration(
         desired.get("name")
         == PROPHYLAXIS_CHOICE_SET
         and
-        set(drift) == {"extra_choices"}
+        "extra_choices" in drift
+        and
+        set(drift).issubset({"description", "extra_choices"})
         and
         existing.get("extra_choices")
         in (
@@ -558,10 +568,11 @@ def is_supported_choice_set_migration(
             PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
             DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
             STABLE_ID_PROPHYLAXIS_CHOICES_V1,
+            STABLE_ID_PROPHYLAXIS_CHOICES,
         )
         and
         desired.get("extra_choices")
-        == STABLE_ID_PROPHYLAXIS_CHOICES
+        == GROUPED_PROPHYLAXIS_CHOICES
         and
         isinstance(existing.get("id"), int)
         and
@@ -663,9 +674,12 @@ def provision_choice_sets(
             existing = client.patch(
                 f"{endpoint}{existing['id']}/",
                 {
-                    "extra_choices": (
-                        desired["extra_choices"]
-                    ),
+                    field: desired[field]
+                    for field in (
+                        "description",
+                        "extra_choices",
+                    )
+                    if field in drift
                 },
             )
 
