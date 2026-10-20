@@ -4,7 +4,8 @@ from atlas.device_credentials import DeviceValidationError, credential_path
 from atlas.prophylaxis.errors import AuthenticationFailedError
 from atlas.prophylaxis.models import (
     CheckId,
-    RawCheckResult,
+    CollectorId,
+    RawCollectorResult,
     expand_check_selection,
 )
 from atlas.prophylaxis.service import (
@@ -87,15 +88,28 @@ class FakeBackend:
         if self.error:
             raise self.error
         profile = kwargs["profile"]
+        collector_id = kwargs["collector_id"]
         if profile.slug == "fortios":
-            return RawCheckResult(
-                check=CheckId.CPU_UTILIZATION,
+            return RawCollectorResult(
+                collector=collector_id,
                 platform="fortios",
                 status="ok",
                 data={"cpu": [{"current": 12}]},
             )
-        return RawCheckResult(
-            check=CheckId.CPU_UTILIZATION,
+        if collector_id == CollectorId.IOS_RESOURCES:
+            return RawCollectorResult(
+                collector=collector_id,
+                platform=profile.slug,
+                status="ok",
+                data={
+                    "show_processes_cpu": (
+                        "CPU utilization for five seconds: 12%/1%; "
+                        "one minute: 8%; five minutes: 5%"
+                    )
+                },
+            )
+        return RawCollectorResult(
+            collector=collector_id,
             platform=profile.slug,
             status="ok",
             raw_output=(
