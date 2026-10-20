@@ -210,14 +210,23 @@ class AnsibleBackend:
         profile: AnsiblePlatformProfile,
         *,
         transport: str | None = None,
+        remote_tmp: str | None = None,
     ) -> dict:
         transport = transport or profile.transport
+        local_connection = (
+            transport in {"telnet", "snmp"}
+            or profile.ansible_connection == "local"
+        )
         variables = {
             "ansible_host": host,
             "ansible_connect_timeout": self.connect_timeout,
             "ansible_command_timeout": self.command_timeout,
             "ansible_host_key_checking": self.strict_host_keys,
         }
+        if local_connection and remote_tmp is not None:
+            # Local custom modules still use Ansible's remote temporary path.
+            # The runtime UID cannot write to the image user's default home.
+            variables["ansible_remote_tmp"] = remote_tmp
         if transport == "telnet":
             variables.update(
                 {
@@ -392,6 +401,7 @@ class AnsibleBackend:
                             attempt_port,
                             profile,
                             transport=transport,
+                            remote_tmp=str(local_tmp),
                         ),
                         extravars={
                             "atlas_collector": collector_id.value,
