@@ -8,15 +8,31 @@ from atlas.prophylaxis.models import (
     CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     OSVersionValues,
     RawCollectorResult,
     UptimeValues,
     SystemMetricValues,
 )
 from atlas.prophylaxis.parsers import (
+    normalize_command_cpu,
     normalize_cpu,
     normalize_device_facts,
+    normalize_environment_health,
+    normalize_fan_health,
+    normalize_ha_status,
+    normalize_interface_errors,
+    normalize_interface_state,
+    normalize_interface_utilization,
+    normalize_license_state,
+    normalize_memory,
+    normalize_ntp_status,
     normalize_os_version,
+    normalize_pki_certificates,
+    normalize_recent_logs,
+    normalize_routing_neighbors,
+    normalize_routing_table,
+    normalize_temperature,
     normalize_uptime,
     normalize_snmp_cpu,
     normalize_snmp_fans,
@@ -28,7 +44,7 @@ from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 
 NormalizedValues = (
     CPUUtilizationValues | DeviceFactsValues | OSVersionValues | UptimeValues
-    | SystemMetricValues
+    | SystemMetricValues | DiagnosticValues
 )
 Normalizer = Callable[[RawCollectorResult], NormalizedValues]
 
@@ -91,7 +107,80 @@ IOS_IDENTITY_COLLECTOR = CollectorSpec(
 
 IOS_RESOURCES_COLLECTOR = CollectorSpec(
     id=CollectorId.IOS_RESOURCES,
-    normalizers={CheckId.CPU_UTILIZATION: normalize_cpu},
+    normalizers={
+        CheckId.CPU_UTILIZATION: normalize_command_cpu,
+        CheckId.MEMORY_UTILIZATION: normalize_memory,
+        CheckId.ENVIRONMENT_HEALTH: normalize_environment_health,
+        CheckId.CPU_TEMPERATURE: normalize_temperature,
+        CheckId.FAN_HEALTH: normalize_fan_health,
+    },
+)
+
+IOS_INTERFACES_COLLECTOR = CollectorSpec(
+    id=CollectorId.IOS_INTERFACES,
+    normalizers={
+        CheckId.INTERFACE_STATE: normalize_interface_state,
+        CheckId.INTERFACE_UTILIZATION: normalize_interface_utilization,
+        CheckId.INTERFACE_ERROR_COUNTERS: normalize_interface_errors,
+    },
+)
+
+IOS_COMPLIANCE_COLLECTOR = CollectorSpec(
+    id=CollectorId.IOS_COMPLIANCE,
+    normalizers={
+        CheckId.LICENSE_STATE: normalize_license_state,
+        CheckId.PKI_CERTIFICATES: normalize_pki_certificates,
+    },
+)
+
+IOS_OPERATIONS_COLLECTOR = CollectorSpec(
+    id=CollectorId.IOS_OPERATIONS,
+    normalizers={
+        CheckId.NTP_SYNC: normalize_ntp_status,
+        CheckId.RECENT_LOG_EVENTS: normalize_recent_logs,
+        CheckId.ROUTING_TABLE: normalize_routing_table,
+        CheckId.ROUTING_PROTOCOL_NEIGHBORS: normalize_routing_neighbors,
+        CheckId.HA_STATUS: normalize_ha_status,
+    },
+)
+
+CBS_RESOURCES_COLLECTOR = CollectorSpec(
+    id=CollectorId.CBS_RESOURCES,
+    normalizers={
+        CheckId.CPU_UTILIZATION: normalize_command_cpu,
+        CheckId.MEMORY_UTILIZATION: normalize_memory,
+        CheckId.ENVIRONMENT_HEALTH: normalize_environment_health,
+        CheckId.CPU_TEMPERATURE: normalize_temperature,
+        CheckId.FAN_HEALTH: normalize_fan_health,
+    },
+)
+
+CBS_INTERFACES_COLLECTOR = CollectorSpec(
+    id=CollectorId.CBS_INTERFACES,
+    normalizers={
+        CheckId.INTERFACE_STATE: normalize_interface_state,
+        CheckId.INTERFACE_UTILIZATION: normalize_interface_utilization,
+        CheckId.INTERFACE_ERROR_COUNTERS: normalize_interface_errors,
+    },
+)
+
+CBS_COMPLIANCE_COLLECTOR = CollectorSpec(
+    id=CollectorId.CBS_COMPLIANCE,
+    normalizers={
+        CheckId.LICENSE_STATE: normalize_license_state,
+        CheckId.PKI_CERTIFICATES: normalize_pki_certificates,
+    },
+)
+
+CBS_OPERATIONS_COLLECTOR = CollectorSpec(
+    id=CollectorId.CBS_OPERATIONS,
+    normalizers={
+        CheckId.NTP_SYNC: normalize_ntp_status,
+        CheckId.RECENT_LOG_EVENTS: normalize_recent_logs,
+        CheckId.ROUTING_TABLE: normalize_routing_table,
+        CheckId.ROUTING_PROTOCOL_NEIGHBORS: normalize_routing_neighbors,
+        CheckId.HA_STATUS: normalize_ha_status,
+    },
 )
 
 SNMP_SYSTEM_COLLECTOR = CollectorSpec(
@@ -113,6 +202,13 @@ class CollectorRegistry:
             SNMP_SYSTEM_COLLECTOR,
             IOS_IDENTITY_COLLECTOR,
             IOS_RESOURCES_COLLECTOR,
+            IOS_INTERFACES_COLLECTOR,
+            IOS_COMPLIANCE_COLLECTOR,
+            IOS_OPERATIONS_COLLECTOR,
+            CBS_RESOURCES_COLLECTOR,
+            CBS_INTERFACES_COLLECTOR,
+            CBS_COMPLIANCE_COLLECTOR,
+            CBS_OPERATIONS_COLLECTOR,
         ))
         self._by_id: dict[CollectorId, CollectorSpec] = {}
         self._by_check: dict[CheckId, list[CollectorSpec]] = {}
@@ -175,8 +271,15 @@ class CollectorRegistry:
 
 __all__ = [
     "CPU_COLLECTOR",
+    "CBS_COMPLIANCE_COLLECTOR",
+    "CBS_INTERFACES_COLLECTOR",
+    "CBS_OPERATIONS_COLLECTOR",
+    "CBS_RESOURCES_COLLECTOR",
     "DEVICE_FACTS_COLLECTOR",
     "IOS_IDENTITY_COLLECTOR",
+    "IOS_COMPLIANCE_COLLECTOR",
+    "IOS_INTERFACES_COLLECTOR",
+    "IOS_OPERATIONS_COLLECTOR",
     "IOS_RESOURCES_COLLECTOR",
     "SNMP_SYSTEM_COLLECTOR",
     "CollectionPlan",

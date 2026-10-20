@@ -1,6 +1,7 @@
 """Asynchronous orchestration for NetBox-selected Profylaxia groups."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import logging
 import threading
 
@@ -22,6 +23,7 @@ from atlas.prophylaxis.models import (
     CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     EvaluationOutcome,
     OSVersionValues,
     SystemMetricValues,
@@ -76,6 +78,7 @@ class DeviceFactsRunService:
         collector_registry: CollectorRegistry | None = None,
         inventory_reconciliation_enabled: bool = False,
         zabbix_monitoring=None,
+        oxidized=None,
         chart_renderer=render_metric_svg,
     ) -> None:
         self.netbox = netbox
@@ -87,8 +90,12 @@ class DeviceFactsRunService:
         self.collector_registry = collector_registry or CollectorRegistry()
         self.inventory_reconciliation_enabled = inventory_reconciliation_enabled
         self.zabbix_monitoring = zabbix_monitoring
+        self.oxidized = oxidized
         self.chart_renderer = chart_renderer
         self._slots = threading.BoundedSemaphore(concurrency)
+        self._run_lock = threading.Lock()
+        self._oxidized_nodes: dict[str, tuple[dict, ...]] = {}
+        self._oxidized_error: str | None = None
 
     def submit(self) -> ProphylaxisRun:
         return self.store.create()
@@ -97,6 +104,13 @@ class DeviceFactsRunService:
         return self.store.get(run_id)
 
     def run(self, run_id) -> None:
+        # The Oxidized snapshot belongs to one run and is shared by that run's
+        # per-device workers. Serializing run coordinators prevents snapshots
+        # from two API requests from overwriting each other.
+        with self._run_lock:
+            self._run_serial(run_id)
+
+    def _run_serial(self, run_id) -> None:
         pending = self.store.get(run_id)
         running = pending.model_copy(
             update={"status": "RUNNING", "started_at": utc_now()}
@@ -104,6 +118,7 @@ class DeviceFactsRunService:
         self.store.save(running)
         try:
             devices = self.netbox.get_prophylaxis_devices()
+            self._prepare_oxidized_backup_state(devices)
             with ThreadPoolExecutor(
                 max_workers=self.concurrency,
                 thread_name_prefix="atlas-prophylaxis",
@@ -297,6 +312,114 @@ class DeviceFactsRunService:
         raw_values = selected_check_values(fields.get("profylaxia_checks"))
         return expand_check_selection(raw_values)
 
+    def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
+        self._oxidized_nodes = {}
+        self._oxidized_error = None
+        backup_requested = any(
+            CheckId.CONFIGURATION_BACKUP in self._selected_checks(device)[0]
+            for device in devices
+        )
+        if not backup_requested:
+            return
+        if self.oxidized is None:
+            self._oxidized_error = "oxidized_not_configured"
+            return
+        try:
+            nodes = self.oxidized.get_nodes()
+        except DependencyError:
+            self._oxidized_error = "oxidized_unavailable"
+            return
+        grouped: dict[str, list[dict]] = {}
+        for node in nodes:
+            name = node.get("name")
+            if isinstance(name, str) and name.strip():
+                grouped.setdefault(name.strip(), []).append(node)
+        self._oxidized_nodes = {
+            name: tuple(entries) for name, entries in grouped.items()
+        }
+
+    @staticmethod
+    def _oxidized_timestamp(value: object) -> datetime | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
+            try:
+                return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if not isinstance(value, str) or not value.strip():
+            return None
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return (
+            parsed.astimezone(timezone.utc)
+            if parsed.tzinfo
+            else parsed.replace(tzinfo=timezone.utc)
+        )
+
+    def _configuration_backup_values(self, device_name: str) -> DiagnosticValues:
+        if self._oxidized_error is not None:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code=self._oxidized_error,
+                summary="Oxidized backup state is unavailable",
+            )
+        nodes = self._oxidized_nodes.get(device_name, ())
+        if not nodes:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.WARNING,
+                reason_code="oxidized_node_or_backup_missing",
+                summary="No completed Oxidized backup was found for the device",
+                metrics={"manual_backup_required": True},
+            )
+        if len(nodes) != 1:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code="oxidized_node_ambiguous",
+                summary="Multiple Oxidized nodes have the same device name",
+                metrics={"matching_nodes": len(nodes)},
+            )
+        node = nodes[0]
+        last = node.get("last")
+        if not isinstance(last, dict):
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.WARNING,
+                reason_code="oxidized_backup_never_completed",
+                summary="Oxidized has no completed backup result for the device",
+                metrics={"manual_backup_required": True},
+            )
+        status = last.get("status")
+        status_text = status.strip().lower() if isinstance(status, str) else ""
+        completed_at = self._oxidized_timestamp(last.get("end"))
+        metrics: dict[str, str | int | float | bool | None] = {
+            "oxidized_status": status_text or None,
+            "last_completed_at": (
+                completed_at.isoformat() if completed_at is not None else None
+            ),
+        }
+        if completed_at is not None:
+            metrics["age_hours"] = round(
+                (datetime.now(timezone.utc) - completed_at).total_seconds() / 3600,
+                2,
+            )
+        if status_text == "success":
+            metrics["manual_backup_required"] = False
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.PASS,
+                summary="The most recent Oxidized backup completed successfully",
+                metrics=metrics,
+            )
+        metrics["manual_backup_required"] = True
+        return DiagnosticValues(
+            outcome=EvaluationOutcome.FAIL,
+            reason_code="oxidized_backup_failed",
+            summary="The most recent Oxidized backup did not complete successfully",
+            metrics=metrics,
+        )
+
     def _collect_guarded(
         self,
         device: dict,
@@ -356,7 +479,13 @@ class DeviceFactsRunService:
 
     def _collect(self, device: dict) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
-        known_checks, unknown_checks = self._selected_checks(device)
+        selected_checks, unknown_checks = self._selected_checks(device)
+        backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks
+        known_checks = tuple(
+            check
+            for check in selected_checks
+            if check != CheckId.CONFIGURATION_BACKUP
+        )
         results = [
             self._check_error(
                 device_id, name, management_ip, platform, check,
@@ -364,6 +493,18 @@ class DeviceFactsRunService:
             )
             for check in unknown_checks
         ]
+        if backup_selected:
+            backup_values = self._configuration_backup_values(name)
+            results.append(
+                self._success_result(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    CheckId.CONFIGURATION_BACKUP,
+                    backup_values,
+                )
+            )
         try:
             target = device_target(device)
             device_id, name, management_ip, platform = (
@@ -884,6 +1025,7 @@ class DeviceFactsRunService:
             | OSVersionValues
             | UptimeValues
             | SystemMetricValues
+            | DiagnosticValues
         ),
     ) -> ProphylaxisCheckResult:
         if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
@@ -898,7 +1040,7 @@ class DeviceFactsRunService:
                 evaluation=EvaluationOutcome.PASS,
                 facts=values,
             )
-        if isinstance(values, SystemMetricValues):
+        if isinstance(values, (SystemMetricValues, DiagnosticValues)):
             status = {
                 EvaluationOutcome.PASS: "success",
                 EvaluationOutcome.WARNING: "success",

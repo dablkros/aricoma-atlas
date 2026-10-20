@@ -35,14 +35,16 @@ The same NetBox groups are accepted for platform slugs `cisco-cbs` and
 
 | Group | CBS execution | Current result coverage |
 | --- | --- | --- |
-| `identity` | one SSH `device_facts` collector | hostname, model/PID, OS version, serial and uptime |
-| `resources` | one read-only `snmp_system` batch | CPU implemented; memory unsupported; temperature raw/unknown; fan state model-aware |
-| `interfaces` | no collector enabled | all results `UNSUPPORTED` |
-| `compliance` | no collector enabled | all results `UNSUPPORTED` |
-| `operations` | no collector enabled | all results `UNSUPPORTED` |
+| `identity` | one SSH `device_facts` collector | hostname, model/PID, installed-image identifier, serial and uptime; version recommendation remains external |
+| `resources` | SNMP system batch plus read-only CBS CLI batch | CPU, temperature and fan prefer SNMP; environment CLI is parsed; memory stays unknown/unsupported until evidence exists |
+| `interfaces` | one read-only CBS CLI batch | state, rate and counters are collected; policy-dependent results remain `UNKNOWN` |
+| `compliance` | one read-only CBS CLI batch | local certificate dates parsed; CBS license CLI remains `UNSUPPORTED` until a documented source exists; firmware/EOL use a future external source |
+| `operations` | one read-only CBS CLI batch plus Oxidized status | SNTP, logs, routes/neighbors, stack/HA and last configuration-backup outcome |
 
-Unsupported group members remain present in the run report. They are not
-silently dropped and do not trigger guessed CLI commands or an SNMP walk.
+Unsupported or unrecognized group members remain present in the run report.
+They are not silently dropped and do not trigger an SNMP walk. The CLI
+normalizers are conservative: an unknown format stays `UNKNOWN` or
+`UNSUPPORTED` until a fixture proves its meaning.
 
 ## Resources group, stable check IDs and outcomes
 
@@ -83,15 +85,19 @@ counted as skipped, while their structured values and reason remain in JSON and 
 | Fan 1..3 | suffixes `.4.1`, `.5.1`, `.6.1` under `1.3.6.1.4.1.9.6.1.101.53.15.1` | Real device GET + Cisco enumeration | 1 normal; 2 warning; 3 critical; 4 shutdown; 5 notPresent; 6 notFunctioning |
 | RAM | none | Community templates expose IOS `CISCO-MEMORY-POOL-MIB`, not a verified CBS350 object | `UNSUPPORTED` |
 
-The Cisco Business 350 data sheet identifies `CBS350-16T-2G` as fanless. For that
-exact model, status `5/notPresent` is `NOT_APPLICABLE`. Atlas does not extend this
-assumption to unknown models: there it remains `UNKNOWN`. A future explicitly
-declared fan-equipped model must treat a missing expected fan as `FAIL`.
+The Cisco Business 350 data sheet identifies `CBS350-16T-2G` as fanless and
+`CBS350-12XT` as having two fans. For the fanless model, status `5/notPresent`
+is `NOT_APPLICABLE`. For `CBS350-12XT`, either of the first two fans being
+absent is `FAIL`, while the unused third probe is `NOT_APPLICABLE`. Atlas does
+not extend either assumption to unknown models: there `notPresent` remains
+`UNKNOWN`.
 
 Primary sources:
 
 - [Cisco, Common SNMP OIDs for CBS250/CBS350](https://www.cisco.com/c/en/us/support/docs/smb/switches/Cisco-Business-Switching/kmgmt3636-snmpv3-common-oids-cbs350.pdf), reviewed 2026-10-18.
 - [Cisco Business 350 Series Managed Switches Data Sheet](https://www.cisco.com/c/en/us/products/collateral/switches/business-350-series-managed-switches/datasheet-c78-744156.html), 2024 edition, reviewed 2026-10-18.
+- [Cisco Business Switches 350 Series CLI Guide](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-350-cli-/cbs-350-cli-_CLT_chapter.html), updated index reviewed 2026-10-20.
+- [Cisco Business Switches 350 Series CLI Guide, System Management Commands](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-350-cli-/system-management-commands.html), reviewed 2026-10-20.
 
 ### Aruba AOS-CX OVA
 

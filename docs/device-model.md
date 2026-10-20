@@ -16,14 +16,19 @@ Oxidized 0.37.0 and Zabbix 7.0.31 LTS.
 
 `sudo atlasctl deploy` retains the existing `bootstrap_netbox.py` flow:
 
-1. Build the pinned community catalog through `build_catalog.py`.
+1. Build the pinned community catalog plus reviewed local Device Type
+   supplements through `build_catalog.py`.
 2. Enrich generated Device Type YAML with a platform slug or null using `catalog/platforms.yaml`.
 3. Provision existing baseline custom fields, including the optional text field `credential_profile`.
 4. Provision manufacturers, then platforms, Device Types and their components.
 5. Resolve platform slugs to native NetBox IDs. Set `DeviceType.default_platform` on creation; patch only this field on existing types when different.
 6. Perform the existing final dry-run. Repeated deployment adds no duplicate objects or unchanged-field writes.
 
-The mapping SHA-256 is stored in `build/catalog-report.json`. Changing the mapping invalidates a cached catalog and triggers the existing rebuild flow. Direct provisioning also evaluates the current rules, so it cannot apply a stale serialized platform hint.
+The mapping SHA-256 and the deterministic hash of `catalog/device-types/` are
+stored in `build/catalog-report.json`. Changing either input invalidates a
+cached catalog and triggers the existing rebuild flow. Direct provisioning also
+evaluates the current rules, so it cannot apply a stale serialized platform
+hint.
 
 **Fact (high confidence, pinned source):** NetBox 4.7.1 inherits `DeviceType.default_platform` when saving a **new** Device with no explicit platform. It preserves a supplied platform and does not retroactively update existing Devices. Atlas never writes `/api/dcim/devices/` during bootstrap. [NetBox 4.7.1 Device.save](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/dcim/models/devices.py).
 
@@ -36,9 +41,10 @@ Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **
 The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` and the exceptional `CATALYST 3850 48PT 12 MGIG+36 GIG UPOE`; filename-only examples such as `C9500*` are insufficient. Slug patterns cover those verified aliases.
 
 **Fact (reproducible catalog audit):** pinned upstream
-`517549215455824be5e3b89965353fd2210cc20c` selects 238 Cisco, 162
-Fortinet, 290 Juniper, 21 Sophos, 109 HPE Aruba switch and 41 Check Point
-types: 861 total, **666 mapped / 195 unmapped**. The HPE selection is
+`517549215455824be5e3b89965353fd2210cc20c` plus the reviewed local
+`CBS350-12XT` supplement selects 242 Cisco, 162 Fortinet, 290 Juniper, 21
+Sophos, 109 HPE Aruba switch and 41 Check Point types: 865 total,
+**669 mapped / 196 unmapped**. The HPE selection is
 intentionally limited to 68 AOS-CX and 41 AOS-Switch definitions; it does not
 import HPE servers, storage, AP/IAP, mobility controllers, Instant On,
 EdgeConnect or Comware devices. The Check Point selection is intentionally
@@ -51,7 +57,7 @@ build report contains every unmapped model.
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
 | Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
-| Cisco CBS250/350 | `cisco-cbs250-350` | 21 after catalog rebuild | `ciscosmb` (experimental) |
+| Cisco CBS250/350 | `cisco-cbs250-350` | 22 after catalog rebuild | `ciscosmb` (experimental) |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
@@ -122,7 +128,18 @@ python3 scripts/bootstrap_netbox.py
 python3 scripts/provision_netbox.py --all
 ```
 
-The builder requires the manifest-pinned `devicetype-library` checkout; the bootstrap prepares it automatically. Cisco Small Business selection accepts both upstream `.yaml` and `.yml` definitions; this includes `CBS350-16T-2G`, whose pinned upstream filename uses `.yml`. The last two commands require the existing `NETBOX_URL` / `NETBOX_TOKEN` environment and make no NetBox writes without `--apply`. Audit output includes all unmapped models and platform counts; provisioning prints platform create/existing and Device Type update counts. No placeholder credential secrets are seeded by deployment.
+The builder requires the manifest-pinned `devicetype-library` checkout; the
+bootstrap prepares it automatically. Cisco Small Business selection accepts
+both upstream `.yaml` and `.yml` definitions; this includes `CBS350-16T-2G`,
+whose pinned upstream filename uses `.yml`. `CBS350-12XT` is maintained as a
+reviewed Atlas supplement under `catalog/device-types/Cisco/` because neither
+the pinned commit nor upstream `master` contained that definition when reviewed
+on 2026-10-20. A normalized filename collision with upstream is fatal. The last
+two commands require the existing `NETBOX_URL` / `NETBOX_TOKEN` environment and
+make no NetBox writes without `--apply`. Audit output includes all unmapped
+models and platform counts; provisioning prints platform create/existing and
+Device Type update counts. No placeholder credential secrets are seeded by
+deployment.
 
 ### Deploy the Check Point catalog with atlasctl
 
@@ -138,7 +155,7 @@ sudo atlasctl status
 `atlasctl deploy` invokes the existing NetBox bootstrap with `--apply`. The
 expected catalog-build lines are `Check Point 41 device types`,
 `checkpoint-gaia: 25`, `checkpoint-gaia-embedded: 16`, and `Platform mapped:
-666; unmapped: 195`. The platform create/existing counts depend on the target
+669; unmapped: 196`. The platform create/existing counts depend on the target
 NetBox. In NetBox, verify manufacturer `Check Point`, both platform slugs, and
 the imported Device Type defaults. Existing Devices are not changed.
 

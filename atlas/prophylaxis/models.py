@@ -42,6 +42,7 @@ class CheckId(StrEnum):
     ROUTING_TABLE = "routing_table"
     ROUTING_PROTOCOL_NEIGHBORS = "routing_protocol_neighbors"
     HA_STATUS = "ha_status"
+    CONFIGURATION_BACKUP = "configuration_backup"
     SERIAL_INVENTORY = "serial_inventory"
     MODEL_INVENTORY = "model_inventory"
 
@@ -84,6 +85,7 @@ CHECK_GROUP_CHECKS = {
         CheckId.ROUTING_TABLE,
         CheckId.ROUTING_PROTOCOL_NEIGHBORS,
         CheckId.HA_STATUS,
+        CheckId.CONFIGURATION_BACKUP,
     ),
 }
 
@@ -122,6 +124,10 @@ class CollectorId(StrEnum):
     IOS_INTERFACES = "ios_interfaces"
     IOS_COMPLIANCE = "ios_compliance"
     IOS_OPERATIONS = "ios_operations"
+    CBS_RESOURCES = "cbs_resources"
+    CBS_INTERFACES = "cbs_interfaces"
+    CBS_COMPLIANCE = "cbs_compliance"
+    CBS_OPERATIONS = "cbs_operations"
     # Compatibility collector IDs used by other platform profiles and the
     # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
@@ -204,6 +210,29 @@ class SystemMetricValues(BaseModel):
             raise ValueError("passing metric must not contain a reason code")
         if self.outcome != EvaluationOutcome.PASS and self.reason_code is None:
             raise ValueError("non-passing metric requires a reason code")
+        return self
+
+
+class DiagnosticValues(BaseModel):
+    """Normalized, secret-free result for non-scalar diagnostic checks."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
+    summary: str = Field(min_length=1, max_length=512)
+    metrics: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict
+    )
+    affected_items: tuple[str, ...] = ()
+    source_commands: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_evaluation(self):
+        if self.outcome == EvaluationOutcome.PASS and self.reason_code is not None:
+            raise ValueError("passing diagnostic must not contain a reason code")
+        if self.outcome != EvaluationOutcome.PASS and self.reason_code is None:
+            raise ValueError("non-passing diagnostic requires a reason code")
         return self
 
 
@@ -308,6 +337,7 @@ __all__ = [
     "EvaluationOutcome",
     "HardwareSensorValue",
     "DeviceFactsValues",
+    "DiagnosticValues",
     "OSVersionValues",
     "RawCheckResult",
     "RawCollectorResult",

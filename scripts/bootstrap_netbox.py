@@ -12,6 +12,7 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from atlas.catalog import local_device_types_digest
 from atlas.platforms import mapping_digest
 
 SCRIPTS = ROOT / "scripts"
@@ -506,6 +507,9 @@ def catalog_status(
 
     if report.get("platform_mapping_sha256") != mapping_digest():
         reasons.append("platform mapping changed or enrichment is missing")
+
+    if report.get("local_device_types_sha256") != local_device_types_digest():
+        reasons.append("local Device Type definitions changed")
 
     expected_catalog = (
         manifest["catalog"]

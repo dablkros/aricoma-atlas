@@ -83,8 +83,8 @@ compliance
 operations
 ```
 
-Atlas ich rozbalí na interné výsledky. Implementované identity/resource
-výsledky v tejto iterácii zahŕňajú:
+Atlas ich rozbalí na interné výsledky. Implementované alebo explicitne
+plánované výsledky zahŕňajú:
 
 ```text
 cpu_utilization
@@ -92,10 +92,23 @@ device_facts
 os_version
 cpu_temperature
 uptime
+memory_utilization
+environment_health
+fan_health
+interface_state
+interface_utilization
+interface_error_counters
+license_state
+pki_certificates
+ntp_sync
+recent_log_events
+routing_table
+routing_protocol_neighbors
+ha_status
+configuration_backup
 ```
 
-V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
-`os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
+`device_facts` normalizuje hostname, model, nainštalovaný OS identifikátor,
 sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
 používajú ten istý identity/facts collector, takže výber skupiny `identity`
 nevytvorí tri collector joby. Hromadný beh zostaví plán zo skupín v
@@ -104,9 +117,29 @@ neimplementovaný výsledok stav `unsupported`; beh ho uloží ako `skipped` s
 kódom `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
 hodnotu. Počas migrácie resolver akceptuje aj rozpoznané staré individuálne
 hodnoty. Historické hodnoty `Routing table`, `Routing protocol neighbors` a
-`HA status` sa pri migrácii zachovajú prostredníctvom skupiny `operations` a
-zostanú `unsupported`, kým platforma nedostane overený collector. Nové NetBox
-UI individuálne voľby neponúka.
+`HA status` sa pri migrácii zachovajú prostredníctvom skupiny `operations`.
+Cisco IOS, IOS-XE a CBS majú pre tematické skupiny read-only collectory;
+neznámy formát ostáva `UNKNOWN`/`UNSUPPORTED`. `firmware_recommendation` a
+`eol_status` sa zámerne nevyhodnocujú z CLI a čakajú na samostatný externý
+zdroj. Nové NetBox UI individuálne voľby neponúka.
+
+`configuration_backup` je vyhodnotenie existujúceho Oxidized flow. Atlas načíta
+`nodes.json`, vyžaduje presnú zhodu názvu zariadenia a kontroluje `last.status`.
+Úspešný posledný job je `PASS`; chýbajúci uzol alebo ešte neukončený backup je
+`WARNING` s požiadavkou na manuálnu kontrolu; neúspešný posledný job je `FAIL`.
+Čas posledného dokončenia a vek v hodinách sú iba informačné metriky, pretože
+prahová hodnota čerstvosti ešte nie je nakonfigurovaná. Profylaxia nespúšťa
+backup ani nečíta jeho obsah.
+
+Oxidized 0.37.0 serializuje pre uzol `name`, `mtime` a voliteľný posledný job s
+poľami `start`, `end`, `status` a `time`:
+[Oxidized 0.37.0 `Node#serialize`](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/node.rb#L86-L105).
+
+PKI parser používa v tomto reze konzervatívne hranice: expirovaný alebo najviac
+30 dní zostávajúci certifikát je `FAIL`, 31 až 60 dní je `WARNING` a viac než
+60 dní je `PASS`. Stav automatickej obnovy zostáva `unverified`; samotná dlhá
+platnosť ho nedokazuje. Prahy sú zatiaľ explicitné konštanty parsera, nie
+zákaznícka konfigurácia.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
@@ -186,8 +219,9 @@ pretože zdokumentovaný `cpstat -f cpu os` používa Expert mode; jeho povoleni
 vyžaduje samostatne overený read-only zdroj (napríklad konkrétny SNMP OID alebo
 API kontrakt). `checkpoint-gaia-embedded` zostáva mimo tohto profilu.
 
-Cisco IOS plánuje tento príkaz cez `ios_resources`; IOS XE používa kompatibilný
-`cpu_usage` collector. Obe platformy používajú `show processes cpu`. Cisco CBS
+Cisco IOS aj IOS-XE plánujú tematické collectory `ios_identity`,
+`ios_resources`, `ios_interfaces`, `ios_compliance` a `ios_operations`. Obe
+platformy používajú `show processes cpu`. Cisco CBS
 samostatne používa `show cpu utilization`. FortiOS používa monitor selector
 `system_resource_usage` s `resource: cpu` a API tokenom.
 
@@ -241,7 +275,8 @@ ho povolí iba vtedy, keď má konkrétne zariadenie v NetBoxe práve jednu TCP
 službu s presným názvom `telnet`; použije port tejto služby, štandardne 23.
 Fallback sa vykoná iba po `ssh_negotiation_failed`. Neaktivuje sa pri zlom
 hesle, neznámom alebo zmenenom SSH host key ani pri inom zlyhaní. Telnet úlohy
-sú read-only a zbierajú iba CPU alebo `show version` + `show inventory`.
+sú read-only a zrkadlia tematické IOS sady pre identity, resources, interfaces,
+compliance a operations.
 Výstupy device facts parsujú pripnuté NTC Templates `cisco_ios`; prihlasovacie
 údaje ostávajú v procesnom environment a Telnet task používa `no_log`.
 Telnet neprenáša prihlásenie ani dáta šifrovane, preto služba v NetBoxe slúži

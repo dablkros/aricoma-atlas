@@ -1,0 +1,20 @@
+---
+- name: Collect Cisco CBS interface-health commands
+  community.ciscosmb.command:
+    commands:
+      - show interfaces status
+      - show interfaces counters
+      - show interfaces description
+      - show fiber-ports optical-transceiver
+  register: atlas_cbs_interfaces
+  changed_when: false
+
+- name: Prepare Cisco CBS interface outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_interfaces_status: "{{ atlas_cbs_interfaces.stdout[0] }}"
+        show_interfaces_counters: "{{ atlas_cbs_interfaces.stdout[1] }}"
+        show_interfaces_description: "{{ atlas_cbs_interfaces.stdout[2] }}"
+        show_fiber_ports_optical_transceiver: >-
+          {{ atlas_cbs_interfaces.stdout[3] }}

@@ -95,6 +95,7 @@ class PlatformTests(unittest.TestCase):
             ("Cisco", "cisco-ws-c2960x-24ts-ll", "WS-C2960X-24TS-LL", "cisco-ios"),
             ("Cisco", "cisco-cbs220-24t-4g", "CBS220-24T-4G", "cisco-cbs"),
             ("Cisco", "cisco-cbs250-24t-4g", "CBS250-24T-4G", "cisco-cbs250-350"),
+            ("Cisco", "cisco-cbs350-12xt", "CBS350-12XT", "cisco-cbs250-350"),
             ("Cisco", "cisco-cbs350-48t-4g", "CBS350-48T-4G", "cisco-cbs250-350"),
             ("Fortinet", "fortinet-fg-60f", "FortiGate 60F", "fortios"),
             ("Fortinet", "fortinet-fap-231f", "FortiAP 231F", "fortiap"),
@@ -656,13 +657,78 @@ class PlatformTests(unittest.TestCase):
             (build / "Cisco/a.yaml").write_text("{}")
             report = {"total": 1, "catalog": manifest["catalog"], "upstream_commit": manifest["upstream"]["commit"],
                       "vendors": {v: {"patterns": p} for v, p in bootstrap_netbox.expected_vendor_patterns(manifest).items()},
-                      "platform_mapping_sha256": "outdated"}
+                      "platform_mapping_sha256": "outdated",
+                      "local_device_types_sha256": bootstrap_netbox.local_device_types_digest()}
             with patch.object(bootstrap_netbox, "DEVICE_TYPE_BUILD", build), \
                  patch.object(bootstrap_netbox, "load_catalog_report", return_value=report), \
                  patch.object(bootstrap_netbox, "get_upstream_origin", return_value=manifest["upstream"]["repository"]):
                 current, reasons = bootstrap_netbox.catalog_status(manifest)
             self.assertFalse(current)
             self.assertIn("platform mapping changed or enrichment is missing", reasons)
+
+    def test_local_cbs350_12xt_definition_is_conservative(self):
+        path = ROOT / "catalog/device-types/Cisco/CBS350-12XT.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(data["model"], "CBS350-12XT")
+        self.assertEqual(data["slug"], "cisco-cbs350-12xt")
+        self.assertEqual(
+            default_platform(data, self.config),
+            "cisco-cbs250-350",
+        )
+        physical = [
+            interface
+            for interface in data["interfaces"]
+            if interface["type"] == "10gbase-t"
+        ]
+        self.assertEqual(len(physical), 12)
+        self.assertEqual(
+            [
+                interface["name"]
+                for interface in data["interfaces"]
+                if interface.get("mgmt_only")
+            ],
+            ["OOB"],
+        )
+
+    def test_local_device_type_change_invalidates_cached_build(self):
+        manifest = bootstrap_netbox.load_manifest()
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "Cisco").mkdir()
+            (build / "Cisco/a.yaml").write_text("{}")
+            report = {
+                "total": 1,
+                "catalog": manifest["catalog"],
+                "upstream_commit": manifest["upstream"]["commit"],
+                "vendors": {
+                    vendor: {"patterns": patterns}
+                    for vendor, patterns in (
+                        bootstrap_netbox.expected_vendor_patterns(
+                            manifest
+                        ).items()
+                    )
+                },
+                "platform_mapping_sha256": bootstrap_netbox.mapping_digest(),
+                "local_device_types_sha256": "outdated",
+            }
+            with patch.object(
+                bootstrap_netbox,
+                "DEVICE_TYPE_BUILD",
+                build,
+            ), patch.object(
+                bootstrap_netbox,
+                "load_catalog_report",
+                return_value=report,
+            ), patch.object(
+                bootstrap_netbox,
+                "get_upstream_origin",
+                return_value=manifest["upstream"]["repository"],
+            ):
+                current, reasons = bootstrap_netbox.catalog_status(manifest)
+
+            self.assertFalse(current)
+            self.assertIn("local Device Type definitions changed", reasons)
 
 
 class CredentialTests(unittest.TestCase):

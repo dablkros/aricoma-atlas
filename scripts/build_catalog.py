@@ -11,6 +11,10 @@ import yaml
 
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
+from atlas.catalog import (
+    local_device_type_files,
+    local_device_types_digest,
+)
 from atlas.platforms import (load_platform_config, default_platform, mapping_digest,
                              catalog_platform_report, print_platform_report)
 
@@ -102,6 +106,16 @@ def main():
     print()
 
     vendors = manifest.get("vendors", {})
+    local_vendors = {
+        path.parent.name
+        for path in local_device_type_files()
+    }
+    unknown_local_vendors = local_vendors - set(vendors)
+    if unknown_local_vendors:
+        sys.exit(
+            "[ERROR] Local Device Types use vendors missing from the "
+            f"manifest: {', '.join(sorted(unknown_local_vendors))}"
+        )
 
     if BUILD.exists():
         shutil.rmtree(BUILD)
@@ -111,6 +125,7 @@ def main():
     report = {
         "catalog": manifest.get("catalog", {}),
         "upstream_commit": actual_commit,
+        "local_device_types_sha256": local_device_types_digest(),
         "vendors": {},
         "total": 0,
     }
@@ -149,24 +164,30 @@ def main():
         destination = BUILD / vendor
         destination.mkdir(parents=True, exist_ok=True)
 
+        local_sources = local_device_type_files(vendor)
         output_names = set()
-        for source in sorted(selected):
+        for source in [*sorted(selected), *local_sources]:
             output_name = source.with_suffix(".yaml").name
             if output_name in output_names:
                 print(
-                    f"[ERROR] {vendor}: duplicate normalized filename: "
-                    f"{output_name}"
+                    f"[ERROR] {vendor}: upstream/local duplicate "
+                    f"normalized filename: {output_name}"
                 )
                 sys.exit(1)
             output_names.add(output_name)
             data = yaml.safe_load(source.read_text(encoding="utf-8"))
+            if not isinstance(data, dict) or data.get("manufacturer") != vendor:
+                print(
+                    f"[ERROR] {source}: manufacturer must be {vendor!r}"
+                )
+                sys.exit(1)
             data["default_platform"] = default_platform(data, platform_config)
             catalog_data.append(data)
             (destination / output_name).write_text(
                 yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
             )
 
-        count = len(selected)
+        count = len(selected) + len(local_sources)
         total += count
 
         report["vendors"][vendor] = {

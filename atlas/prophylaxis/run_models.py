@@ -10,6 +10,7 @@ from atlas.prophylaxis.models import (
     CollectionStatus,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     OSVersionValues,
     UptimeValues,
     EvaluationOutcome,
@@ -82,6 +83,7 @@ class ProphylaxisCheckResult(BaseModel):
         | OSVersionValues
         | UptimeValues
         | SystemMetricValues
+        | DiagnosticValues
         | SerialInventoryValues
         | ModelInventoryValues
         | None

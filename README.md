@@ -1840,8 +1840,9 @@ v ľudskom formáte, kým JSON/API zachováva sekundy. Operations UI poskytuje
 manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Skupina
 `identity` vytvára výsledky
 `device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
-`resources` na Cisco CBS zdieľa jeden read-only SNMP GET job; ostatné
-existujúce CPU platformy používajú pôvodný SSH/API collector.
+`resources` na Cisco CBS používa jeden read-only SNMP GET job pre overené
+CPU/teplotné/fan OID a samostatný read-only CLI job pre prostredie a pokus o
+normalizáciu pamäte. Cisco IOS/IOS-XE používajú tematické SSH collectory.
 Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
@@ -1901,11 +1902,12 @@ percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. 
 CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
 dostupné aj v `result.json` a API behu.
 
-Pre platformu `cisco-ios` Atlas plánuje overené checks cez tematické collectory
-`ios_identity` a `ios_resources`, takže jeden zber môže vytvoriť viac
-normalizovaných výsledkov bez opakovania rovnakého príkazu. Ostatné navrhnuté
-IOS collectory ostávajú explicitne unsupported, kým nemajú overený parser a
-fixture. Výsledok oddeľuje `collection_status` od `evaluation` a textový report
+Pre platformy `cisco-ios` a `cisco-ios-xe` Atlas plánuje tematické collectory
+`ios_identity`, `ios_resources`, `ios_interfaces`, `ios_compliance` a
+`ios_operations`, takže jeden zber môže vytvoriť viac normalizovaných výsledkov
+bez opakovania rovnakej sady príkazov. Neznámy výstup zostáva explicitne
+`UNKNOWN` alebo `UNSUPPORTED`, kým nemá overený parser a fixture. Výsledok
+oddeľuje `collection_status` od `evaluation` a textový report
 je zoskupený podľa zariadenia do častí Vyžaduje zásah, Naplánovať, Zdravie,
 Inventár a Nepodporované/neoverené. Presný návrh a parser gate dokumentuje
 [Cisco IOS tematický collector plán](docs/prophylaxis-cisco-ios.md).
@@ -1959,9 +1961,11 @@ collectory, ktoré má explicitne povolené. Neimplementované výsledky zostan�
 viditeľné ako `UNSUPPORTED`; Atlas ich potichu nevynechá. Počas migrácie backend
 naďalej akceptuje rozpoznané staré individuálne hodnoty už uložené na
 zariadeniach. Historické voľby `Routing table`, `Routing protocol neighbors` a
-`HA status` sa zachovajú cez skupinu `operations` a zostanú explicitne
-nepodporované, kým platforma nemá overený collector.
-Backup do skupín profylaxie nepatrí; rieši ho samostatný Oxidized flow.
+`HA status` sa zachovajú cez skupinu `operations`; na IOS/IOS-XE/CBS ich
+vyhodnotia tematické collectory a neznámy formát zostane neoverený.
+Skupina `operations` navyše zobrazuje stav posledného Oxidized backup jobu.
+Profylaxia nespúšťa vlastnú zálohu, nečíta konfiguráciu a nemení samostatný
+Oxidized polling ani Git históriu.
 
 ## Custom Fields
 
@@ -2093,6 +2097,9 @@ manifest
    ▼
 local Device Type Library
    │
+   ├── reviewed Atlas supplements
+   │   catalog/device-types/
+   │
    ▼
 generated Atlas catalog
 ```
@@ -2130,18 +2137,19 @@ build/
 # Architektúra NetBox bootstrapu
 
 ```text
-NetBox Community Device Type Library
-                │
-                │ pinned Git commit
-                ▼
-        catalog/manifest.yaml
-                │
-                ▼
-        build_catalog.py
-                │
-                ▼
-       Atlas Device Catalog
-          820 Device Types
+NetBox Community Device Type Library     catalog/device-types/
+                │                              │
+                │ pinned Git commit            │ reviewed supplements
+                └──────────────┬───────────────┘
+                               ▼
+                       catalog/manifest.yaml
+                               │
+                               ▼
+                       build_catalog.py
+                               │
+                               ▼
+                      Atlas Device Catalog
+                         865 Device Types
                 │
          ┌──────┴──────┐
          │             │

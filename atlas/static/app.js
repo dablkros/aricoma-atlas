@@ -795,6 +795,17 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
         details.push(`Uptime: ${formatUptimeSeconds(value)}`);
         continue;
       }
+      if (Array.isArray(value)) {
+        if (value.length) details.push(`${titleCase(key)}: ${value.join(", ")}`);
+        continue;
+      }
+      if (typeof value === "object") {
+        const fields = Object.entries(value)
+          .filter(([, item]) => item !== null && item !== undefined)
+          .map(([field, item]) => `${titleCase(field)}=${item}`);
+        if (fields.length) details.push(`${titleCase(key)}: ${fields.join(", ")}`);
+        continue;
+      }
       details.push(`${titleCase(key)}: ${value}`);
     }
     if (Array.isArray(payload.sensors)) {

@@ -1,13 +1,14 @@
 {
   "catalog": {
     "name": "Atlas Device Catalog",
-    "version": "0.1.0-beta",
+    "version": "0.1.1-beta",
     "stage": "beta"
   },
   "upstream_commit": "517549215455824be5e3b89965353fd2210cc20c",
+  "local_device_types_sha256": "d00d759996b6d4322fd49b7c7d07d686aa5960c070e2dbeee2d505db547904fe",
   "vendors": {
     "Cisco": {
-      "count": 241,
+      "count": 242,
       "patterns": [
         "CBS*.yaml",
         "CBS*.yml",
@@ -130,10 +131,10 @@
       ]
     }
   },
-  "total": 864,
+  "total": 865,
   "platform_mapping_sha256": "5bc11cc965021ff2a5ee41e4e58f92aefca61d321397d8067bc3aef82ed511d3",
   "platforms": {
-    "mapped": 668,
+    "mapped": 669,
     "unmapped": 196,
     "by_platform": {
       "aruba-aos-cx": 68,
@@ -141,7 +142,7 @@
       "checkpoint-gaia": 25,
       "checkpoint-gaia-embedded": 16,
       "cisco-cbs": 2,
-      "cisco-cbs250-350": 21,
+      "cisco-cbs250-350": 22,
       "cisco-ios": 20,
       "cisco-ios-xe": 155,
       "fortianalyzer": 3,

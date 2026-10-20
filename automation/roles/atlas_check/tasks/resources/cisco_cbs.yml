@@ -1,0 +1,15 @@
+---
+- name: Collect Cisco CBS resource and environment commands
+  community.ciscosmb.command:
+    commands:
+      - show cpu utilization
+      - show environment all
+  register: atlas_cbs_resources
+  changed_when: false
+
+- name: Prepare Cisco CBS resource outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_cpu_utilization: "{{ atlas_cbs_resources.stdout[0] }}"
+        show_environment_all: "{{ atlas_cbs_resources.stdout[1] }}"

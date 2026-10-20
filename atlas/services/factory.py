@@ -123,6 +123,7 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             concurrency=settings.prophylaxis_concurrency,
             inventory_reconciliation_enabled=True,
             zabbix_monitoring=zabbix_monitoring,
+            oxidized=oxidized,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,
