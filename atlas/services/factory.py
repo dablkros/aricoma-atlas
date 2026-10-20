@@ -88,6 +88,7 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         ansible_backend=ansible_backend,
     )
     inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
+    zabbix_monitoring = ZabbixMonitoringService(zabbix)
     return DependencyServices(
         monitoring=monitoring,
         openbao=openbao,
@@ -121,10 +122,11 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             store=FileRunStore(settings.prophylaxis_runs_directory),
             concurrency=settings.prophylaxis_concurrency,
             inventory_reconciliation_enabled=True,
+            zabbix_monitoring=zabbix_monitoring,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,
-        zabbix_monitoring=ZabbixMonitoringService(zabbix),
+        zabbix_monitoring=zabbix_monitoring,
     )
 
 

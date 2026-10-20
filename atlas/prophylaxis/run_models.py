@@ -138,6 +138,35 @@ class RunSummary(BaseModel):
     skipped: int = Field(default=0, ge=0)
 
 
+class ProphylaxisChart(BaseModel):
+    """Best-effort Zabbix chart attached without changing run evaluation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    device_id: int = Field(gt=0)
+    device_name: str = Field(min_length=1, max_length=255)
+    check: str = Field(min_length=1, max_length=128)
+    metric: str = Field(min_length=1, max_length=64)
+    window: Literal["1h", "24h", "7d", "30d"]
+    status: Literal["generated", "unavailable"]
+    artifact: str | None = Field(default=None, max_length=128)
+    point_count: int = Field(default=0, ge=0)
+    error: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_artifact(self):
+        if self.status == "generated":
+            if (
+                not self.artifact
+                or self.point_count < 1
+                or self.error is not None
+            ):
+                raise ValueError("generated chart requires an artifact and points")
+        elif self.artifact is not None or self.point_count != 0 or not self.error:
+            raise ValueError("unavailable chart requires only a safe error code")
+        return self
+
+
 class ProphylaxisRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -150,6 +179,7 @@ class ProphylaxisRun(BaseModel):
     finished_at: datetime | None = None
     summary: RunSummary = Field(default_factory=RunSummary)
     results: tuple[ProphylaxisCheckResult, ...] = ()
+    charts: tuple[ProphylaxisChart, ...] = ()
     report_path: str
     error: str | None = Field(default=None, max_length=128)
 
@@ -157,6 +187,7 @@ class ProphylaxisRun(BaseModel):
 __all__ = [
     "DeviceFactsResult",
     "ModelInventoryValues",
+    "ProphylaxisChart",
     "ProphylaxisCheckResult",
     "ProphylaxisRun",
     "RunSummary",

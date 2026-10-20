@@ -3,6 +3,7 @@
 import json
 import os
 from pathlib import Path
+import re
 import threading
 from uuid import UUID, uuid4
 
@@ -18,6 +19,8 @@ class RunNotFoundError(RuntimeError):
 
 
 class FileRunStore:
+    ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,126}\.svg")
+
     def __init__(self, root: Path) -> None:
         self.root = Path(root)
         self._lock = threading.Lock()
@@ -80,6 +83,30 @@ class FileRunStore:
                 run.model_dump_json(indent=2) + "\n",
             )
             self._atomic_write(directory / "report.txt", self._report(run))
+
+    def write_chart(self, run_id: UUID, name: str, content: str) -> None:
+        if not self.ARTIFACT_NAME.fullmatch(name):
+            raise RunStoreError()
+        with self._lock:
+            self._prepare_root()
+            directory = self._directory(run_id)
+            if directory.is_symlink() or not directory.is_dir():
+                raise RunStoreError()
+            charts = directory / "charts"
+            if charts.is_symlink():
+                raise RunStoreError()
+            charts.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(charts, 0o700)
+            self._atomic_write(charts / name, content)
+
+    def chart_path(self, run_id: UUID, name: str) -> Path:
+        if not self.ARTIFACT_NAME.fullmatch(name):
+            raise RunNotFoundError()
+        with self._lock:
+            path = self._directory(run_id) / "charts" / name
+            if path.is_symlink() or not path.is_file():
+                raise RunNotFoundError()
+            return path
 
     def get(self, run_id: UUID) -> ProphylaxisRun:
         with self._lock:
@@ -160,6 +187,14 @@ class FileRunStore:
                     f"- {result.device_name} [{result.platform or 'unknown'}] "
                     f"{result.check}: "
                     f"{result.evaluation.value} / {result.status} ({detail})"
+                )
+        if run.charts:
+            lines.extend(("", "Zabbix charts (best effort):"))
+            for chart in run.charts:
+                detail = chart.artifact or chart.error or "unavailable"
+                lines.append(
+                    f"- {chart.device_name} {chart.check} [{chart.window}]: "
+                    f"{chart.status} ({detail})"
                 )
         return "\n".join(lines) + "\n"
 

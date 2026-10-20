@@ -663,6 +663,7 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/prophylaxis/results?limit=50` | Vráti najnovšie lokálne uložené výsledky bez credentials a raw CLI výstupu. |
 | `POST /api/prophylaxis/runs` | Po autorizácii operator tokenom vytvorí asynchrónny beh kontrol vybraných v NetBoxe a vráti `202` so stavom `PENDING`. |
 | `GET /api/prophylaxis/runs/{run_id}` | Po autorizácii vráti stav, súhrn a normalizované výsledky konkrétneho behu. |
+| `GET /api/prophylaxis/runs/{run_id}/charts/{artifact}` | Po autorizácii vráti lokálne vygenerovaný SVG graf uvedený v poli `charts`. |
 
 Profylaxia história je SQLite databáza v kontajneri na
 `/run/atlas/prophylaxis/results.sqlite3`. Deployment pripája persistentný host
@@ -674,7 +675,10 @@ raw príkazový výstup.
 
 Každý hromadný beh vybraných kontrol má samostatný adresár
 `/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
-`result.json` a čitateľným `report.txt`. Adresáre majú režim `0700` a súbory
+`result.json`, čitateľným `report.txt` a voliteľnými Zabbix SVG grafmi v
+`charts/`. CPU graf sa vytvorí iba vtedy, keď Atlas-managed Zabbix host s
+rovnakým `netbox_id` poskytne numerickú CPU históriu. Nedostupný graf nemení
+výsledok profylaxie. Adresáre majú režim `0700` a súbory
 `0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
 ID kontroly, normalizované hodnoty a bezpečné chybové kódy.
 Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbežne

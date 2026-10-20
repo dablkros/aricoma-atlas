@@ -26,15 +26,18 @@ from atlas.prophylaxis.models import (
     SystemMetricValues,
     UptimeValues,
 )
+from atlas.prophylaxis.charts import render_metric_svg
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
     ModelInventoryValues,
+    ProphylaxisChart,
     ProphylaxisCheckResult,
     ProphylaxisRun,
     RunSummary,
     SerialInventoryValues,
     utc_now,
 )
+from atlas.prophylaxis.run_store import RunStoreError
 from atlas.prophylaxis.service import (
     device_target,
     resolve_service_port,
@@ -48,6 +51,8 @@ OPERATION = "selected_checks"
 SERIAL_INVENTORY_CHECK = "serial_inventory"
 MODEL_INVENTORY_CHECK = "model_inventory"
 INVENTORY_CHECKS = (SERIAL_INVENTORY_CHECK, MODEL_INVENTORY_CHECK)
+ZABBIX_CHART_METRICS = {CheckId.CPU_UTILIZATION.value: "cpu"}
+ZABBIX_CHART_WINDOW = "1h"
 
 
 class DeviceFactsRunService:
@@ -64,6 +69,8 @@ class DeviceFactsRunService:
         registry: AnsiblePlatformRegistry | None = None,
         collector_registry: CollectorRegistry | None = None,
         inventory_reconciliation_enabled: bool = False,
+        zabbix_monitoring=None,
+        chart_renderer=render_metric_svg,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -73,6 +80,8 @@ class DeviceFactsRunService:
         self.registry = registry or AnsiblePlatformRegistry()
         self.collector_registry = collector_registry or CollectorRegistry()
         self.inventory_reconciliation_enabled = inventory_reconciliation_enabled
+        self.zabbix_monitoring = zabbix_monitoring
+        self.chart_renderer = chart_renderer
         self._slots = threading.BoundedSemaphore(concurrency)
 
     def submit(self) -> ProphylaxisRun:
@@ -110,6 +119,7 @@ class DeviceFactsRunService:
                     "finished_at": utc_now(),
                     "summary": summary,
                     "results": results,
+                    "charts": self._generate_charts_guarded(run_id, results),
                 }
             )
             self.store.save(completed)
@@ -136,6 +146,130 @@ class DeviceFactsRunService:
                 },
             )
             self._fail_run(running, "execution_failed")
+
+    def _generate_charts_guarded(
+        self,
+        run_id,
+        results: tuple[ProphylaxisCheckResult, ...],
+    ) -> tuple[ProphylaxisChart, ...]:
+        try:
+            return self._generate_charts(run_id, results)
+        except Exception as exc:
+            logger.warning(
+                "prophylaxis_chart_generation_failed",
+                extra={
+                    "event": "prophylaxis_chart_generation_failed",
+                    "run_id": str(run_id),
+                    "reason_code": "chart_generation_failed",
+                    "exception_type": type(exc).__name__,
+                },
+            )
+            return ()
+
+    def _generate_charts(
+        self,
+        run_id,
+        results: tuple[ProphylaxisCheckResult, ...],
+    ) -> tuple[ProphylaxisChart, ...]:
+        if self.zabbix_monitoring is None:
+            return ()
+        candidates = {
+            (result.device_id, result.device_name, result.check)
+            for result in results
+            if result.device_id is not None and result.check in ZABBIX_CHART_METRICS
+        }
+        if not candidates:
+            return ()
+        try:
+            hosts = {
+                self.zabbix_monitoring._tags(host).get("netbox_id"): host
+                for host in self.zabbix_monitoring.hosts()
+            }
+        except DependencyError:
+            return tuple(
+                self._unavailable_chart(
+                    device_id, device_name, check, "zabbix_unavailable"
+                )
+                for device_id, device_name, check in sorted(candidates)
+            )
+
+        charts = []
+        for device_id, device_name, check in sorted(candidates):
+            metric = ZABBIX_CHART_METRICS[check]
+            host = hosts.get(str(device_id))
+            if host is None:
+                charts.append(
+                    self._unavailable_chart(
+                        device_id, device_name, check, "monitoring_host_not_found"
+                    )
+                )
+                continue
+            try:
+                data = self.zabbix_monitoring.metric(
+                    str(host["hostid"]), metric, ZABBIX_CHART_WINDOW
+                )
+                points = list(data["points"])
+                if not points:
+                    charts.append(
+                        self._unavailable_chart(
+                            device_id,
+                            device_name,
+                            check,
+                            "metric_history_unavailable",
+                        )
+                    )
+                    continue
+                artifact = f"device-{device_id}-{metric}-{ZABBIX_CHART_WINDOW}.svg"
+                svg = self.chart_renderer(
+                    device_name=device_name,
+                    metric=metric,
+                    unit=str(data.get("unit") or ""),
+                    window=ZABBIX_CHART_WINDOW,
+                    points=points,
+                )
+                self.store.write_chart(run_id, artifact, svg)
+                charts.append(
+                    ProphylaxisChart(
+                        device_id=device_id,
+                        device_name=device_name,
+                        check=check,
+                        metric=metric,
+                        window=ZABBIX_CHART_WINDOW,
+                        status="generated",
+                        artifact=artifact,
+                        point_count=len(points),
+                    )
+                )
+            except (
+                DependencyError,
+                KeyError,
+                TypeError,
+                ValueError,
+                RunStoreError,
+            ):
+                charts.append(
+                    self._unavailable_chart(
+                        device_id, device_name, check, "chart_generation_failed"
+                    )
+                )
+        return tuple(charts)
+
+    @staticmethod
+    def _unavailable_chart(
+        device_id: int,
+        device_name: str,
+        check: str,
+        error: str,
+    ) -> ProphylaxisChart:
+        return ProphylaxisChart(
+            device_id=device_id,
+            device_name=device_name,
+            check=check,
+            metric=ZABBIX_CHART_METRICS[check],
+            window=ZABBIX_CHART_WINDOW,
+            status="unavailable",
+            error=error,
+        )
 
     def _fail_run(self, running: ProphylaxisRun, code: str) -> None:
         self.store.save(

@@ -48,6 +48,7 @@ const elements = {
   prophylaxisSkipped: document.querySelector("#prophylaxis-skipped"),
   prophylaxisReport: document.querySelector("#prophylaxis-report"),
   prophylaxisResults: document.querySelector("#prophylaxis-results"),
+  prophylaxisCharts: document.querySelector("#prophylaxis-charts"),
   monitoringToken: document.querySelector("#monitoring-token"),
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
@@ -741,6 +742,7 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     ? `Run ${run.run_id} · Report: ${run.report_path}`
     : "No run has been launched.";
   elements.prophylaxisRun.disabled = ["PENDING", "RUNNING"].includes(status);
+  renderProphylaxisCharts(run);
   const results = run?.results || [];
   if (!results.length) {
     const row = document.createElement("tr");
@@ -779,6 +781,42 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     return row;
   });
   elements.prophylaxisResults.replaceChildren(...rows);
+}
+
+async function renderProphylaxisCharts(run) {
+  elements.prophylaxisCharts.replaceChildren();
+  const charts = (run?.charts || []).filter((chart) =>
+    chart.status === "generated" && chart.artifact);
+  for (const chart of charts) {
+    const figure = document.createElement("figure");
+    figure.className = "prophylaxis-chart";
+    const caption = document.createElement("figcaption");
+    caption.textContent = [
+      chart.device_name,
+      titleCase(chart.check),
+      chart.window,
+    ].join(" · ");
+    try {
+      const response = await fetch(
+        `/api/prophylaxis/runs/${run.run_id}/charts/${encodeURIComponent(chart.artifact)}`,
+        { headers: prophylaxisHeaders() },
+      );
+      if (!response.ok) throw new Error("chart_unavailable");
+      const image = document.createElement("img");
+      image.alt = caption.textContent;
+      image.src = URL.createObjectURL(await response.blob());
+      image.addEventListener(
+        "load",
+        () => URL.revokeObjectURL(image.src),
+        { once: true },
+      );
+      figure.append(image, caption);
+    } catch (_) {
+      caption.textContent += " · unavailable";
+      figure.append(caption);
+    }
+    elements.prophylaxisCharts.append(figure);
+  }
 }
 
 function addResultEvent(symbol, kind, device, detail = "") {

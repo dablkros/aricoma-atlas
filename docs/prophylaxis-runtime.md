@@ -192,6 +192,14 @@ hodnoty: CPU percentá, hostname, model, OS verziu, sériové číslo a uptime v
 sekundách. Report neobsahuje raw CLI výstup ani credentials. Rovnaké typované
 hodnoty sú uložené v `result.json` a vrátené cez API behu.
 
+Pre check `cpu_utilization` sa Atlas po dokončení behu pokúsi načítať jednu
+hodinu histórie z Atlas-managed Zabbix hosta označeného rovnakým `netbox_id`.
+Ak existuje numerický CPU item a história, uloží lokálny SVG graf do
+`runs/<run_id>/charts/` a zobrazí ho v Operations UI. Graf je voliteľný
+artefakt: chýbajúci Zabbix host, item, história alebo chyba Zabbixu nemení
+výsledok checku ani súhrnný stav behu. Stav je uvedený v poli `charts` a v
+`report.txt`; credentials ani raw SNMP dáta sa do grafu neukladajú.
+
 ## Runtime a secrets
 
 Atlas vytvorí pre každý job jediný in-memory inventory host `atlas_target`.
