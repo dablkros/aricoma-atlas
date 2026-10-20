@@ -42,6 +42,28 @@ class SerialInventoryValues(BaseModel):
         return self
 
 
+class ModelInventoryValues(BaseModel):
+    """Result of comparing the collected hardware model with NetBox."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    state: Literal["matched", "mismatch"]
+    collected_model: str = Field(min_length=1, max_length=255)
+    netbox_model: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        expected = (
+            EvaluationOutcome.FAIL
+            if self.state == "mismatch"
+            else EvaluationOutcome.PASS
+        )
+        if self.outcome != expected:
+            raise ValueError("model inventory state does not match outcome")
+        return self
+
+
 class ProphylaxisCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -59,6 +81,7 @@ class ProphylaxisCheckResult(BaseModel):
         | UptimeValues
         | SystemMetricValues
         | SerialInventoryValues
+        | ModelInventoryValues
         | None
     ) = None
     error: str | None = Field(default=None, max_length=128)
@@ -133,6 +156,7 @@ class ProphylaxisRun(BaseModel):
 
 __all__ = [
     "DeviceFactsResult",
+    "ModelInventoryValues",
     "ProphylaxisCheckResult",
     "ProphylaxisRun",
     "RunSummary",

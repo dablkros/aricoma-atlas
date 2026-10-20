@@ -28,6 +28,7 @@ from atlas.prophylaxis.models import (
 )
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
+    ModelInventoryValues,
     ProphylaxisCheckResult,
     ProphylaxisRun,
     RunSummary,
@@ -45,10 +46,12 @@ from atlas.services.errors import DependencyError
 logger = logging.getLogger("atlas.prophylaxis.runs")
 OPERATION = "selected_checks"
 SERIAL_INVENTORY_CHECK = "serial_inventory"
+MODEL_INVENTORY_CHECK = "model_inventory"
+INVENTORY_CHECKS = (SERIAL_INVENTORY_CHECK, MODEL_INVENTORY_CHECK)
 
 
 class DeviceFactsRunService:
-    """Run selected checks plus the serial inventory control for each device."""
+    """Run selected checks plus inventory identity controls for each device."""
 
     def __init__(
         self,
@@ -60,7 +63,7 @@ class DeviceFactsRunService:
         concurrency: int,
         registry: AnsiblePlatformRegistry | None = None,
         collector_registry: CollectorRegistry | None = None,
-        serial_inventory_enabled: bool = False,
+        inventory_reconciliation_enabled: bool = False,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -69,7 +72,7 @@ class DeviceFactsRunService:
         self.concurrency = concurrency
         self.registry = registry or AnsiblePlatformRegistry()
         self.collector_registry = collector_registry or CollectorRegistry()
-        self.serial_inventory_enabled = serial_inventory_enabled
+        self.inventory_reconciliation_enabled = inventory_reconciliation_enabled
         self._slots = threading.BoundedSemaphore(concurrency)
 
     def submit(self) -> ProphylaxisRun:
@@ -248,22 +251,16 @@ class DeviceFactsRunService:
                 )
                 for check in known_checks
             )
-            if self.serial_inventory_enabled:
-                results.append(
-                    self._check_error(
-                        device_id,
-                        name,
-                        management_ip,
-                        platform,
-                        SERIAL_INVENTORY_CHECK,
-                        status,
-                        code,
+            if self.inventory_reconciliation_enabled:
+                results.extend(
+                    self._inventory_errors(
+                        device_id, name, management_ip, platform, status, code,
                     )
                 )
             return tuple(results)
 
         if (
-            self.serial_inventory_enabled
+            self.inventory_reconciliation_enabled
             and profile.supports_collector(CollectorId.DEVICE_FACTS)
         ):
             if not any(
@@ -276,13 +273,12 @@ class DeviceFactsRunService:
                         profile,
                     )
                 except ValueError:
-                    results.append(
-                        self._check_error(
+                    results.extend(
+                        self._inventory_errors(
                             device_id,
                             name,
                             management_ip,
                             platform,
-                            SERIAL_INVENTORY_CHECK,
                             "skipped",
                             "unsupported_check",
                         )
@@ -293,14 +289,13 @@ class DeviceFactsRunService:
                         + (CollectorTask(collector=facts_collector, checks=()),),
                         unsupported_checks=plan.unsupported_checks,
                     )
-        elif self.serial_inventory_enabled:
-            results.append(
-                self._check_error(
+        elif self.inventory_reconciliation_enabled:
+            results.extend(
+                self._inventory_errors(
                     device_id,
                     name,
                     management_ip,
                     platform,
-                    SERIAL_INVENTORY_CHECK,
                     "skipped",
                     "unsupported_check",
                 )
@@ -404,16 +399,15 @@ class DeviceFactsRunService:
                     for check in task.checks
                 )
                 if (
-                    self.serial_inventory_enabled
+                    self.inventory_reconciliation_enabled
                     and task.collector.id == CollectorId.DEVICE_FACTS
                 ):
-                    results.append(
-                        self._check_error(
+                    results.extend(
+                        self._inventory_errors(
                             device_id,
                             name,
                             management_ip,
                             platform,
-                            SERIAL_INVENTORY_CHECK,
                             status,
                             code,
                         )
@@ -430,16 +424,15 @@ class DeviceFactsRunService:
                     for check in task.checks
                 )
                 if (
-                    self.serial_inventory_enabled
+                    self.inventory_reconciliation_enabled
                     and task.collector.id == CollectorId.DEVICE_FACTS
                 ):
-                    results.append(
-                        self._check_error(
+                    results.extend(
+                        self._inventory_errors(
                             device_id,
                             name,
                             management_ip,
                             platform,
-                            SERIAL_INVENTORY_CHECK,
                             status,
                             raw.error_code or "execution_failed",
                         )
@@ -447,15 +440,15 @@ class DeviceFactsRunService:
                 continue
 
             if (
-                self.serial_inventory_enabled
+                self.inventory_reconciliation_enabled
                 and task.collector.id == CollectorId.DEVICE_FACTS
             ):
                 try:
                     facts = task.collector.normalize(CheckId.DEVICE_FACTS, raw)
                     if not isinstance(facts, DeviceFactsValues):
                         raise ValueError("collector returned invalid device facts")
-                    results.append(
-                        self._reconcile_serial(
+                    results.extend(
+                        self._reconcile_inventory(
                             device_id,
                             name,
                             management_ip,
@@ -465,13 +458,12 @@ class DeviceFactsRunService:
                     )
                 except Exception as exc:
                     status, code = self._classify_exception(exc)
-                    results.append(
-                        self._check_error(
+                    results.extend(
+                        self._inventory_errors(
                             device_id,
                             name,
                             management_ip,
                             platform,
-                            SERIAL_INVENTORY_CHECK,
                             status,
                             code,
                         )
@@ -493,11 +485,82 @@ class DeviceFactsRunService:
         return tuple(results)
 
     @staticmethod
-    def _normalized_serial(value: object) -> str | None:
+    def _normalized_inventory_value(value: object) -> str | None:
         if not isinstance(value, str):
             return None
         normalized = " ".join(value.split())
         return normalized or None
+
+    def _inventory_errors(
+        self,
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        status: str,
+        code: str,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        return tuple(
+            self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                check,
+                status,
+                code,
+            )
+            for check in INVENTORY_CHECKS
+        )
+
+    def _reconcile_inventory(
+        self,
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        facts: DeviceFactsValues,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        if device_id is None:
+            return self._inventory_errors(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                "failed",
+                "device_not_found",
+            )
+        try:
+            current = self.netbox.get(f"/api/dcim/devices/{device_id}/")
+        except DependencyError:
+            return (
+                self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    SERIAL_INVENTORY_CHECK,
+                    "failed",
+                    "serial_netbox_read_failed",
+                ),
+                self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    MODEL_INVENTORY_CHECK,
+                    "failed",
+                    "model_netbox_read_failed",
+                ),
+            )
+        return (
+            self._reconcile_serial(
+                device_id, name, management_ip, platform, facts, current,
+            ),
+            self._reconcile_model(
+                device_id, name, management_ip, platform, facts, current,
+            ),
+        )
 
     def _reconcile_serial(
         self,
@@ -506,9 +569,10 @@ class DeviceFactsRunService:
         management_ip: str | None,
         platform: str | None,
         facts: DeviceFactsValues,
+        current: dict,
     ) -> ProphylaxisCheckResult:
-        collected = self._normalized_serial(facts.serial_number)
-        if device_id is None or collected is None:
+        collected = self._normalized_inventory_value(facts.serial_number)
+        if collected is None:
             return self._check_error(
                 device_id,
                 name,
@@ -519,19 +583,7 @@ class DeviceFactsRunService:
                 "serial_not_collected",
             )
 
-        try:
-            current = self.netbox.get(f"/api/dcim/devices/{device_id}/")
-        except DependencyError:
-            return self._check_error(
-                device_id,
-                name,
-                management_ip,
-                platform,
-                SERIAL_INVENTORY_CHECK,
-                "failed",
-                "serial_netbox_read_failed",
-            )
-        stored = self._normalized_serial(current.get("serial"))
+        stored = self._normalized_inventory_value(current.get("serial"))
         state = "matched"
 
         if stored is None:
@@ -550,7 +602,7 @@ class DeviceFactsRunService:
                     "failed",
                     "serial_netbox_update_failed",
                 )
-            stored = self._normalized_serial(updated.get("serial"))
+            stored = self._normalized_inventory_value(updated.get("serial"))
             if stored is None:
                 return self._check_error(
                     device_id,
@@ -599,6 +651,82 @@ class DeviceFactsRunService:
                 state=state,
                 collected_serial=collected,
                 netbox_serial=stored,
+            ),
+        )
+
+    def _reconcile_model(
+        self,
+        device_id: int,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        facts: DeviceFactsValues,
+        current: dict,
+    ) -> ProphylaxisCheckResult:
+        collected = self._normalized_inventory_value(facts.model)
+        if collected is None:
+            return self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                MODEL_INVENTORY_CHECK,
+                "incomplete",
+                "model_not_collected",
+            )
+
+        device_type = current.get("device_type")
+        stored = self._normalized_inventory_value(
+            device_type.get("model") if isinstance(device_type, dict) else None
+        )
+        if stored is None:
+            return self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                MODEL_INVENTORY_CHECK,
+                "incomplete",
+                "model_not_available_in_netbox",
+            )
+
+        state = (
+            "matched"
+            if stored.casefold() == collected.casefold()
+            else "mismatch"
+        )
+        outcome = (
+            EvaluationOutcome.PASS
+            if state == "matched"
+            else EvaluationOutcome.FAIL
+        )
+        status = "success" if state == "matched" else "failed"
+        log = logger.info if state == "matched" else logger.warning
+        log(
+            "prophylaxis_model_reconciled",
+            extra={
+                "event": "prophylaxis_model_reconciled",
+                "device": name,
+                "platform": platform,
+                "operation": OPERATION,
+                "check": MODEL_INVENTORY_CHECK,
+                "status": status,
+                "state": state,
+            },
+        )
+        return ProphylaxisCheckResult(
+            check=MODEL_INVENTORY_CHECK,
+            device_id=device_id,
+            device_name=name,
+            management_ip=management_ip,
+            platform=platform,
+            status=status,
+            evaluation=outcome,
+            values=ModelInventoryValues(
+                outcome=outcome,
+                state=state,
+                collected_model=collected,
+                netbox_model=stored,
             ),
         )
 

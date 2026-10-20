@@ -84,10 +84,13 @@ neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódo
 `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
 hodnotu.
 
-Profylaxia zároveň vykonáva internú kontrolu `serial_inventory` pre každý
-aktívny device s `profylaxia_enabled=true`. Ak plán ešte neobsahuje
-`device_facts`, pridá jeden facts collector job bez pridania používateľského
-checku. Získané sériové číslo porovná s natívnym poľom NetBox Device `serial`:
+Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
+`model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
+ešte neobsahuje `device_facts`, pridá jeden facts collector job bez pridania
+používateľského checku. Jeden čerstvý detail zariadenia z NetBoxu poskytne
+uložené hodnoty pre obe porovnania.
+
+Sériové číslo sa porovná s natívnym poľom NetBox Device `serial`:
 
 | Stav | Správanie |
 | --- | --- |
@@ -103,6 +106,14 @@ Zápis sa vykonáva iba pri prázdnom poli. Existujúca rozdielna hodnota zostá
 zachovaná, aby profylaxia nemohla zakryť fyzickú výmenu zariadenia. Ručne
 dodaný NetBox API token preto potrebuje oprávnenie na zmenu `dcim.device`;
 štandardný deployment používa token automaticky vytvoreného superusera.
+
+Model z collectora sa porovná s `device_type.model` v NetBoxe. `matched` je
+`PASS`; `mismatch` je `FAIL` a spôsobí najmenej stav behu `PARTIAL`. Atlas
+Device Type automaticky neprepisuje, pretože zmena typu môže ovplyvniť model
+komponentov a interpretáciu inventára. Chýbajúce údaje majú explicitné kódy
+`model_not_collected`, `model_netbox_read_failed` a
+`model_not_available_in_netbox`. Aj tu porovnanie ignoruje iba veľkosť písmen
+a nadbytočné medzery; produktové aliasy ani podobné názvy sa neodhadujú.
 
 Použité NetBox kontrakty:
 

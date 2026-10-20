@@ -1868,10 +1868,10 @@ percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. 
 CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
 dostupné aj v `result.json` a API behu.
 
-Každý aktívny NetBox device s `profylaxia_enabled=true` vykoná aj internú
-kontrolu `serial_inventory`. Atlas na to použije `device_facts` collector aj
-vtedy, keď používateľ vybral iba inú profylaktickú kontrolu. Výsledok sa riadi
-nasledujúcimi pravidlami:
+Každý aktívny NetBox device s `profylaxia_enabled=true` vykoná aj interné
+kontroly `serial_inventory` a `model_inventory`. Atlas na ne použije jeden
+spoločný `device_facts` collector aj vtedy, keď používateľ vybral iba inú
+profylaktickú kontrolu. Výsledok sa riadi nasledujúcimi pravidlami:
 
 - ak je natívne pole NetBox Device `serial` prázdne a zariadenie vráti sériové
   číslo, Atlas ho doplní cez NetBox REST API;
@@ -1881,13 +1881,19 @@ nasledujúcimi pravidlami:
   vráti `FAIL`/`mismatch` a celý beh bude najmenej `PARTIAL`;
 - ak platforma sériové číslo neposkytne alebo NetBox zápis zlyhá, výsledok je
   explicitne `serial_not_collected`, `serial_netbox_read_failed` alebo
-  `serial_netbox_update_failed`.
+  `serial_netbox_update_failed`;
+- model z collectora sa porovná s `device_type.model` v NetBoxe; zhoda vráti
+  `matched`, rozdiel `FAIL`/`mismatch` a NetBox Device Type sa automaticky
+  nemení;
+- chýbajúci model používa `model_not_collected`, `model_netbox_read_failed`
+  alebo `model_not_available_in_netbox`.
 
 Štandardne vytvorený Atlas NetBox token patrí NetBox superuserovi. Pri ručne
 dodanom tokene musí mať účet okrem čítania aj oprávnenie meniť `dcim.device`,
 inak sa prázdne sériové číslo nedoplní. Porovnanie používa čerstvý detail
 zariadenia z NetBoxu; zoznam načítaný na začiatku behu sa nepovažuje za
-aktuálny podklad pre zápis.
+aktuálny podklad pre zápis. Serial aj model sa z tohto detailu vyhodnotia
+spoločne, bez druhého NetBox GET requestu.
 
 FortiOS ostáva pripojený cez HTTPS API, ale beta deployment profil má
 `fortios_validate_certs: false`, aby self-signed certifikát neblokoval zber.
