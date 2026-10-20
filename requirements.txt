@@ -2,7 +2,7 @@ ansible-core==2.21.5
 ansible-pylibssh==1.4.0
 ansible-runner==2.4.3
 pysnmp==7.1.30
-paramiko==5.0.0
+paramiko==4.0.0
 ntc-templates==9.3.0
 textfsm==2.1.0
 certifi==2026.7.22

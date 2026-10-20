@@ -52,6 +52,11 @@ ALLOWED_COMMANDS = {
     "show version all",
     "show uptime",
 }
+LEGACY_KEX_ALGORITHMS = (
+    "diffie-hellman-group14-sha1",
+    "diffie-hellman-group1-sha1",
+)
+LEGACY_HOST_KEY_ALGORITHMS = ("ssh-rsa",)
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[>#]\s*$")
 
 
@@ -88,6 +93,27 @@ def _clean_output(text, command, prompt):
     return "\n".join(lines).strip()
 
 
+def _append_algorithms(current, additions):
+    return tuple(dict.fromkeys((*current, *additions)))
+
+
+def _gaia_transport_factory(paramiko):
+    def factory(sock, **kwargs):
+        transport = paramiko.Transport(sock, **kwargs)
+        security = transport.get_security_options()
+        security.kex = _append_algorithms(
+            security.kex,
+            LEGACY_KEX_ALGORITHMS,
+        )
+        security.key_types = _append_algorithms(
+            security.key_types,
+            LEGACY_HOST_KEY_ALGORITHMS,
+        )
+        return transport
+
+    return factory
+
+
 def _connect(params):
     import paramiko
 
@@ -115,6 +141,7 @@ def _connect(params):
         auth_timeout=params["connect_timeout"],
         allow_agent=False,
         look_for_keys=False,
+        transport_factory=_gaia_transport_factory(paramiko),
     )
     return client
 
@@ -169,6 +196,22 @@ def main():
                 module.fail_json(msg="Authentication failed for Gaia Clish user")
             if isinstance(exc, paramiko.BadHostKeyException):
                 module.fail_json(msg="bad host key for Gaia device")
+            if isinstance(exc, paramiko.IncompatiblePeer):
+                detail = str(exc).lower()
+                if "kex algorithm" in detail:
+                    stage = "key exchange"
+                elif "host key" in detail:
+                    stage = "host key"
+                elif "ciphers" in detail:
+                    stage = "cipher"
+                elif "macs" in detail:
+                    stage = "message authentication"
+                else:
+                    stage = "algorithm selection"
+                module.fail_json(
+                    msg=f"SSH negotiation failed during {stage}",
+                    error_type=type(exc).__name__,
+                )
             if isinstance(exc, paramiko.SSHException):
                 message = str(exc).lower()
                 if "known_hosts" in message or "host key" in message:

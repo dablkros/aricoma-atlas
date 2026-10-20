@@ -88,6 +88,7 @@ def _failure_from_event(event: dict | None):
     if any(
         phrase in message
         for phrase in (
+            "ssh negotiation failed",
             "kex error",
             "key exchange failed",
             "no match for method",

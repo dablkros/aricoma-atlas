@@ -171,13 +171,21 @@ Primárne zdroje:
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
 - [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
-- [Paramiko 5.0.0](https://pypi.org/project/paramiko/5.0.0/)
+- [Paramiko 4.0.0](https://pypi.org/project/paramiko/4.0.0/)
 - [NTC Templates 9.3.0](https://github.com/networktocode/ntc-templates/tree/v9.3.0/ntc_templates/templates)
 
 Aruba `aoscx_command` používaný cez `network_cli` vyžaduje na Ansible control
 node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
 pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
 Python requirements kolekcie neinštaluje.
+
+Pozorovaný Check Point Gaia R80.10 endpoint skončil proti Paramiko 5.0.0
+chybou `IncompatiblePeer`. Paramiko 5.0.0 už neobsahuje SHA-1 KEX ani
+`ssh-rsa`, preto je runtime pripnutý na 4.0.0. Vlastný Gaia Clish modul pridáva
+`diffie-hellman-group14-sha1`, následne `diffie-hellman-group1-sha1`, a
+`ssh-rsa` až za modernejšie algoritmy. Legacy algoritmus sa preto použije iba
+vtedy, keď Gaia neponúkne spoločný modernejší algoritmus; ostatné platformové
+profily tento Gaia transport nepoužívajú.
 
 Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
 `diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
