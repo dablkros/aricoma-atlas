@@ -51,7 +51,7 @@ build report contains every unmapped model.
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
 | Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
-| Cisco CBS250/350 | `cisco-cbs250-350` | 19 | `ciscosmb` (experimental) |
+| Cisco CBS250/350 | `cisco-cbs250-350` | 21 after catalog rebuild | `ciscosmb` (experimental) |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
@@ -121,7 +121,7 @@ python3 scripts/bootstrap_netbox.py
 python3 scripts/provision_netbox.py --all
 ```
 
-The builder requires the manifest-pinned `devicetype-library` checkout; the bootstrap prepares it automatically. The last two commands require the existing `NETBOX_URL` / `NETBOX_TOKEN` environment and make no NetBox writes without `--apply`. Audit output includes all unmapped models and platform counts; provisioning prints platform create/existing and Device Type update counts. No placeholder credential secrets are seeded by deployment.
+The builder requires the manifest-pinned `devicetype-library` checkout; the bootstrap prepares it automatically. Cisco Small Business selection accepts both upstream `.yaml` and `.yml` definitions; this includes `CBS350-16T-2G`, whose pinned upstream filename uses `.yml`. The last two commands require the existing `NETBOX_URL` / `NETBOX_TOKEN` environment and make no NetBox writes without `--apply`. Audit output includes all unmapped models and platform counts; provisioning prints platform create/existing and Device Type update counts. No placeholder credential secrets are seeded by deployment.
 
 ### Deploy the Check Point catalog with atlasctl
 

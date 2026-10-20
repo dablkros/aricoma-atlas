@@ -143,17 +143,26 @@ def main():
                 )
 
             for match in matches:
-                if match.is_file() and match.suffix == ".yaml":
+                if match.is_file() and match.suffix in {".yaml", ".yml"}:
                     selected.add(match)
 
         destination = BUILD / vendor
         destination.mkdir(parents=True, exist_ok=True)
 
+        output_names = set()
         for source in sorted(selected):
+            output_name = source.with_suffix(".yaml").name
+            if output_name in output_names:
+                print(
+                    f"[ERROR] {vendor}: duplicate normalized filename: "
+                    f"{output_name}"
+                )
+                sys.exit(1)
+            output_names.add(output_name)
             data = yaml.safe_load(source.read_text(encoding="utf-8"))
             data["default_platform"] = default_platform(data, platform_config)
             catalog_data.append(data)
-            (destination / source.name).write_text(
+            (destination / output_name).write_text(
                 yaml.safe_dump(data, sort_keys=False, allow_unicode=True), encoding="utf-8"
             )
 
