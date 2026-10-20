@@ -120,6 +120,7 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             backend=ansible_backend,
             store=FileRunStore(settings.prophylaxis_runs_directory),
             concurrency=settings.prophylaxis_concurrency,
+            serial_inventory_enabled=True,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,

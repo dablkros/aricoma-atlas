@@ -84,6 +84,31 @@ neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódo
 `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
 hodnotu.
 
+Profylaxia zároveň vykonáva internú kontrolu `serial_inventory` pre každý
+aktívny device s `profylaxia_enabled=true`. Ak plán ešte neobsahuje
+`device_facts`, pridá jeden facts collector job bez pridania používateľského
+checku. Získané sériové číslo porovná s natívnym poľom NetBox Device `serial`:
+
+| Stav | Správanie |
+| --- | --- |
+| `populated` | NetBox pole bolo prázdne; Atlas ho doplnil z collectora. |
+| `matched` | NetBox a zariadenie majú rovnaké sériové číslo. |
+| `mismatch` | Hodnoty sú rozdielne; Atlas NetBox neprepíše a vráti `FAIL`. |
+| `serial_not_collected` | Collector neposkytol použiteľné sériové číslo. |
+| `serial_netbox_read_failed` | Pred porovnaním nebolo možné načítať čerstvý detail zariadenia. |
+| `serial_netbox_update_failed` | Prázdne pole nebolo možné zapísať alebo NetBox nevrátil uloženú hodnotu. |
+
+Porovnanie ignoruje rozdiel vo veľkosti písmen a okrajové/nadbytočné medzery.
+Zápis sa vykonáva iba pri prázdnom poli. Existujúca rozdielna hodnota zostáva
+zachovaná, aby profylaxia nemohla zakryť fyzickú výmenu zariadenia. Ručne
+dodaný NetBox API token preto potrebuje oprávnenie na zmenu `dcim.device`;
+štandardný deployment používa token automaticky vytvoreného superusera.
+
+Použité NetBox kontrakty:
+
+- [NetBox 4.7.1 Device model — Serial Number](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/models/dcim/device.md#serial-number)
+- [NetBox 4.7.1 REST API — detail endpoint pre update objektu](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/integrations/rest-api.md#endpoints)
+
 NetBox choice set používa stabilné ID ako value a ľudský text ako label.
 Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
 už uložené zariadenia neprestali fungovať okamžite po upgrade.

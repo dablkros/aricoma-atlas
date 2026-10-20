@@ -20,6 +20,28 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class SerialInventoryValues(BaseModel):
+    """Result of comparing the collected chassis serial with NetBox."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    state: Literal["populated", "matched", "mismatch"]
+    collected_serial: str = Field(min_length=1, max_length=255)
+    netbox_serial: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        expected = (
+            EvaluationOutcome.FAIL
+            if self.state == "mismatch"
+            else EvaluationOutcome.PASS
+        )
+        if self.outcome != expected:
+            raise ValueError("serial inventory state does not match outcome")
+        return self
+
+
 class ProphylaxisCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -31,7 +53,14 @@ class ProphylaxisCheckResult(BaseModel):
     status: Literal["success", "failed", "incomplete", "skipped"]
     evaluation: EvaluationOutcome
     facts: DeviceFactsValues | None = None
-    values: CPUUtilizationValues | OSVersionValues | UptimeValues | SystemMetricValues | None = None
+    values: (
+        CPUUtilizationValues
+        | OSVersionValues
+        | UptimeValues
+        | SystemMetricValues
+        | SerialInventoryValues
+        | None
+    ) = None
     error: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="before")
@@ -107,5 +136,6 @@ __all__ = [
     "ProphylaxisCheckResult",
     "ProphylaxisRun",
     "RunSummary",
+    "SerialInventoryValues",
     "utc_now",
 ]
