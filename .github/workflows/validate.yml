@@ -1259,9 +1259,11 @@ jobs:
               if isinstance(choice, dict)
           ] if isinstance(checks, list) else []
 
-          if check_values != ["cpu_utilization", "os_version"]:
+          if check_values != ["identity", "resources"]:
               raise SystemExit(
-                  "[ERROR] Prophylaxis selections changed during upgrade"
+                  "[ERROR] Prophylaxis selections were not migrated "
+                  "to the expected groups during upgrade: "
+                  f"{check_values!r}"
               )
 
           print("[OK] NetBox data and custom fields survived upgrade")

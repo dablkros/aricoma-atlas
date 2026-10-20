@@ -610,6 +610,44 @@ class PlatformTests(unittest.TestCase):
             provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
         )
 
+    def test_upgrade_fixture_selections_migrate_to_expected_groups(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        client.post("/api/extras/custom-field-choice-sets/", previous)
+        client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": [
+                        "cpu_utilization",
+                        "os_version",
+                    ],
+                },
+            },
+        )
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated_device_values"], 1)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["identity", "resources"],
+        )
+
     def test_stale_mapping_invalidates_cached_build(self):
         manifest = bootstrap_netbox.load_manifest()
         with tempfile.TemporaryDirectory() as directory:
