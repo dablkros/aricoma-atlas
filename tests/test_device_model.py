@@ -466,6 +466,150 @@ class PlatformTests(unittest.TestCase):
             provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
         )
 
+    def test_referenced_choices_are_remapped_before_removal(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["description"] = "options for profylaxia"
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        choice_set = client.post(
+            "/api/extras/custom-field-choice-sets/", previous
+        )
+        device = client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": [
+                        {"value": "uptime", "label": "Uptime"},
+                        {
+                            "value": "cpu_utilization",
+                            "label": "CPU utilization",
+                        },
+                        {
+                            "value": "interface errors",
+                            "label": "interface errors",
+                        },
+                        {"value": "Routing table", "label": "Routing table"},
+                    ],
+                },
+            },
+        )
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+            writes = copy.deepcopy(client.writes)
+            second = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(first["migrated"], 1)
+        self.assertEqual(first["migrated_device_values"], 1)
+        self.assertEqual(second["migrated_device_values"], 0)
+        self.assertEqual(client.writes, writes)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["identity", "resources", "interfaces", "operations"],
+        )
+        self.assertEqual(
+            writes[0],
+            (
+                "PATCH",
+                f"/api/extras/custom-field-choice-sets/{choice_set['id']}/",
+                {
+                    "description": desired["description"],
+                    "extra_choices": (
+                        provision_baseline.transitional_prophylaxis_choices(
+                            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+                        )
+                    ),
+                },
+            ),
+        )
+        self.assertEqual(
+            writes[1],
+            (
+                "PATCH",
+                f"/api/dcim/devices/{device['id']}/",
+                {
+                    "custom_fields": {
+                        "profylaxia_checks": [
+                            "identity",
+                            "resources",
+                            "interfaces",
+                            "operations",
+                        ],
+                    },
+                },
+            ),
+        )
+        self.assertEqual(
+            writes[2][2]["extra_choices"],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
+    def test_interrupted_group_migration_resumes_from_transitional_choices(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        transitional = copy.deepcopy(desired)
+        transitional["extra_choices"] = (
+            provision_baseline.transitional_prophylaxis_choices(
+                provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+            )
+        )
+        client.post("/api/extras/custom-field-choice-sets/", transitional)
+        device = client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": ["cpu_utilization"],
+                },
+            },
+        )
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated"], 1)
+        self.assertEqual(summary["migrated_device_values"], 1)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["resources"],
+        )
+        self.assertEqual(
+            client.writes[0],
+            (
+                "PATCH",
+                f"/api/dcim/devices/{device['id']}/",
+                {"custom_fields": {"profylaxia_checks": ["resources"]}},
+            ),
+        )
+        self.assertEqual(
+            client.writes[1][2]["extra_choices"],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
     def test_stale_mapping_invalidates_cached_build(self):
         manifest = bootstrap_netbox.load_manifest()
         with tempfile.TemporaryDirectory() as directory:

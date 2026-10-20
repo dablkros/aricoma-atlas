@@ -214,7 +214,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261018-1", page.text)
+        self.assertIn("/static/app.js?v=20261020-1", page.text)
         self.assertIn("/static/styles.css?v=20261018-1", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)

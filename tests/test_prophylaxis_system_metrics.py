@@ -98,19 +98,41 @@ class SystemMetricTests(unittest.TestCase):
             EvaluationOutcome.UNSUPPORTED,
         )
 
-    def test_cbs_selected_system_checks_share_one_snmp_collector(self):
-        profile = AnsiblePlatformRegistry().resolve("cisco-cbs")
-        plan = CollectorRegistry().plan(
-            (
-                CheckId.CPU_UTILIZATION,
-                CheckId.MEMORY_UTILIZATION,
-                CheckId.CPU_TEMPERATURE,
-                CheckId.FAN_HEALTH,
-            ),
-            profile,
-        )
-        self.assertEqual(len(plan.tasks), 1)
-        self.assertEqual(plan.tasks[0].collector.id, CollectorId.SNMP_SYSTEM)
+    def test_cbs_groups_share_identity_and_resource_collectors(self):
+        for platform in ("cisco-cbs", "cisco-cbs250-350"):
+            with self.subTest(platform=platform):
+                profile = AnsiblePlatformRegistry().resolve(platform)
+                checks, unknown = expand_check_selection(
+                    {"identity", "resources"}
+                )
+                plan = CollectorRegistry().plan(checks, profile)
+
+                self.assertEqual(unknown, ())
+                self.assertEqual(
+                    [task.collector.id for task in plan.tasks],
+                    [CollectorId.DEVICE_FACTS, CollectorId.SNMP_SYSTEM],
+                )
+                self.assertEqual(
+                    plan.tasks[0].checks,
+                    (
+                        CheckId.DEVICE_FACTS,
+                        CheckId.OS_VERSION,
+                        CheckId.UPTIME,
+                    ),
+                )
+                self.assertEqual(
+                    plan.tasks[1].checks,
+                    (
+                        CheckId.CPU_UTILIZATION,
+                        CheckId.MEMORY_UTILIZATION,
+                        CheckId.CPU_TEMPERATURE,
+                        CheckId.FAN_HEALTH,
+                    ),
+                )
+                self.assertEqual(
+                    plan.unsupported_checks,
+                    (CheckId.ENVIRONMENT_HEALTH,),
+                )
 
     def test_cisco_ios_plan_groups_only_verified_thematic_collectors(self):
         profile = AnsiblePlatformRegistry().resolve("cisco-ios")
@@ -150,6 +172,9 @@ class SystemMetricTests(unittest.TestCase):
                 CheckId.EOL_STATUS,
                 CheckId.NTP_SYNC,
                 CheckId.RECENT_LOG_EVENTS,
+                CheckId.ROUTING_TABLE,
+                CheckId.ROUTING_PROTOCOL_NEIGHBORS,
+                CheckId.HA_STATUS,
             ),
         )
 
@@ -210,12 +235,7 @@ class SystemMetricTests(unittest.TestCase):
             },
             "custom_fields": {
                 "credential_profile": "default",
-                "profylaxia_checks": [
-                    "cpu_utilization",
-                    "memory_utilization",
-                    "cpu_temperature",
-                    "fan_health",
-                ],
+                "profylaxia_checks": ["resources"],
             },
         })
 

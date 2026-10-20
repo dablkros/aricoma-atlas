@@ -103,8 +103,9 @@ nevytvorí tri collector joby. Hromadný beh zostaví plán zo skupín v
 neimplementovaný výsledok stav `unsupported`; beh ho uloží ako `skipped` s
 kódom `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
 hodnotu. Počas migrácie resolver akceptuje aj rozpoznané staré individuálne
-hodnoty. Historické hodnoty bez interného kontraktu (`Routing table`,
-`Routing protocol neighbors`, `HA status`) zostanú `unsupported`; nové NetBox
+hodnoty. Historické hodnoty `Routing table`, `Routing protocol neighbors` a
+`HA status` sa pri migrácii zachovajú prostredníctvom skupiny `operations` a
+zostanú `unsupported`, kým platforma nedostane overený collector. Nové NetBox
 UI individuálne voľby neponúka.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
@@ -112,6 +113,25 @@ Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 ešte neobsahuje identity/facts collector, pridá jeden collector job bez pridania
 používateľského checku. Jeden čerstvý detail zariadenia z NetBoxu poskytne
 uložené hodnoty pre obe porovnania.
+
+## Všeobecná uptime politika
+
+Uptime sa vyhodnocuje až nad normalizovanou hodnotou `uptime_seconds`, preto je
+politika spoločná pre všetky platformy a transporty:
+
+| Hodnota | Evaluation | Reason code |
+| --- | --- | --- |
+| menej než 3 dni | `WARNING` | `uptime_too_short` |
+| 3 až 365 dní vrátane | `PASS` | bez reason kódu |
+| viac než 365 dní | `WARNING` | `uptime_too_long` |
+
+Krátky uptime upozorňuje na nedávny reload alebo výpadok. Uptime dlhší než rok
+upozorňuje na zariadenie bez reštartu a potrebu preveriť patch/reboot okno.
+Oba stavy patria v reporte do časti `Naplánovať`; samotný zber pritom zostáva
+`COLLECTED` a nestratí pôvodnú hodnotu v sekundách. Operations UI a textový
+report zobrazia uptime v ľudskom formáte, napríklad
+`1 rok 2 dni 3 hodiny 4 minúty`; JSON/API naďalej uchováva presné
+`uptime_seconds` pre strojové spracovanie.
 
 Sériové číslo sa porovná s natívnym poľom NetBox Device `serial`:
 

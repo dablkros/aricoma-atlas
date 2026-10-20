@@ -15,6 +15,7 @@ from atlas.prophylaxis.errors import (
     ProphylaxisExecutionError,
     UnsupportedPlatformError,
 )
+from atlas.prophylaxis.evaluation import evaluate_uptime
 from atlas.prophylaxis.models import (
     CheckId,
     CollectionStatus,
@@ -917,13 +918,26 @@ class DeviceFactsRunService:
                 evaluation=values.outcome,
                 values=values,
             )
+        if check == CheckId.UPTIME and isinstance(values, UptimeValues):
+            outcome, reason_code = evaluate_uptime(values)
+            return ProphylaxisCheckResult(
+                check=check.value,
+                device_id=device_id,
+                device_name=name,
+                management_ip=management_ip,
+                platform=platform,
+                status="success",
+                collection_status=CollectionStatus.COLLECTED,
+                evaluation=outcome,
+                values=values.model_copy(
+                    update={"reason_code": reason_code}
+                ),
+            )
         valid_values = (
             check == CheckId.CPU_UTILIZATION
             and isinstance(values, CPUUtilizationValues)
         ) or (
             check == CheckId.OS_VERSION and isinstance(values, OSVersionValues)
-        ) or (
-            check == CheckId.UPTIME and isinstance(values, UptimeValues)
         )
         if not valid_values:
             raise ValueError("collector returned an invalid normalized value")

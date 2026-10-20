@@ -690,7 +690,7 @@ spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
 
 ```bash
-curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261017-1' \
+curl -sSI 'http://127.0.0.1:8081/static/app.js?v=20261020-1' \
   | grep -i '^cache-control:'
 ```
 
@@ -1833,9 +1833,12 @@ devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 SSH platformy očakávajú `username`, `password` a voliteľný
 `enable_password`; FortiOS očakáva `api_token`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
-Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
-vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
-skupín v `profylaxia_checks`. Skupina `identity` vytvára výsledky
+Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
+vrstvy. Spoločná uptime politika však vracia `WARNING` pri hodnote pod 3 dni
+alebo nad 365 dní bez ohľadu na platformu. UI a textový report zobrazujú uptime
+v ľudskom formáte, kým JSON/API zachováva sekundy. Operations UI poskytuje
+manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Skupina
+`identity` vytvára výsledky
 `device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
 `resources` na Cisco CBS zdieľa jeden read-only SNMP GET job; ostatné
 existujúce CPU platformy používajú pôvodný SSH/API collector.
@@ -1955,8 +1958,9 @@ Každá skupina sa rozbalí na stabilné interné výsledky a platforma vykoná 
 collectory, ktoré má explicitne povolené. Neimplementované výsledky zostanú
 viditeľné ako `UNSUPPORTED`; Atlas ich potichu nevynechá. Počas migrácie backend
 naďalej akceptuje rozpoznané staré individuálne hodnoty už uložené na
-zariadeniach. Historické voľby bez interného kontraktu (`Routing table`,
-`Routing protocol neighbors`, `HA status`) zostanú explicitne nepodporované.
+zariadeniach. Historické voľby `Routing table`, `Routing protocol neighbors` a
+`HA status` sa zachovajú cez skupinu `operations` a zostanú explicitne
+nepodporované, kým platforma nemá overený collector.
 Backup do skupín profylaxie nepatrí; rieši ho samostatný Oxidized flow.
 
 ## Custom Fields
@@ -2612,9 +2616,11 @@ Jedinou úzkou výnimkou je verzovaná migrácia pôvodného Atlas choice setu
 schémou, `--apply` nahradí individuálne voľby piatimi skupinami `identity`,
 `resources`, `interfaces`, `compliance` a `operations`. Ak sa líši ktorékoľvek
 ďalšie pole alebo zoznam obsahuje zákaznícku úpravu, objekt zostane chránený a
-bootstrap naďalej oznámi drift. Existujúce hodnoty zariadení sa hromadne
-neprepisujú; backend počas migrácie akceptuje rozpoznané staré individuálne
-hodnoty vrátane `CPU utilization`.
+bootstrap naďalej oznámi drift. Pri podporovanej Atlas migrácii provisioner
+najprv dočasne pridá nové skupiny bez odstránenia starých choices, premapuje
+`profylaxia_checks` na zariadeniach a až potom odstráni staré choices. Postup je
+idempotentný a bezpečne pokračuje po prerušení. Backend počas migrácie akceptuje
+aj rozpoznané staré individuálne hodnoty vrátane `CPU utilization`.
 
 ---
 

@@ -7,6 +7,7 @@ import re
 import threading
 from uuid import UUID, uuid4
 
+from atlas.prophylaxis.formatting import format_uptime_seconds
 from atlas.prophylaxis.models import CheckId, CollectionStatus, EvaluationOutcome
 from atlas.prophylaxis.run_models import ProphylaxisRun
 
@@ -129,7 +130,11 @@ class FileRunStore:
         if result.facts is not None:
             values = result.facts.model_dump()
             return ", ".join(
-                f"{field}={value}"
+                (
+                    f"uptime={format_uptime_seconds(value)}"
+                    if field == "uptime_seconds"
+                    else f"{field}={value}"
+                )
                 for field, value in values.items()
                 if value is not None
             )
@@ -155,7 +160,9 @@ class FileRunStore:
                         )
                     continue
                 label = labels.get(field, field)
-                if field.endswith("_percent"):
+                if field == "uptime_seconds":
+                    detail.append(f"uptime={format_uptime_seconds(value)}")
+                elif field.endswith("_percent"):
                     detail.append(f"{label}={value:g}%")
                 else:
                     detail.append(f"{label}={value}")

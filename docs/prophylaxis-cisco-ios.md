@@ -16,7 +16,7 @@ normalizácia, uloženie a report flow ostávajú zachované.
 | `resources` | `cpu_utilization`, `memory_utilization`, `environment_health`, `cpu_temperature`, `fan_health` |
 | `interfaces` | `interface_state`, `interface_utilization`, `interface_error_counters` |
 | `compliance` | `license_state`, `pki_certificates`, `firmware_recommendation`, `eol_status` |
-| `operations` | `ntp_sync`, `recent_log_events` |
+| `operations` | `ntp_sync`, `recent_log_events`, `routing_table`, `routing_protocol_neighbors`, `ha_status` |
 
 **Fakt:** Backup nie je skupina ani výsledok profylaxie. Oxidized inventory,
 polling, konfigurácie a Git história zostávajú samostatným flow.
@@ -27,7 +27,7 @@ polling, konfigurácie a Git história zostávajú samostatným flow.
 | `ios_resources` | `cpu_utilization`, `memory_utilization`, `environment_health`, `cpu_temperature`, `fan_health` | implementované iba `cpu_utilization` z `show processes cpu` |
 | `ios_interfaces` | `interface_state`, `interface_utilization`, `interface_error_counters` | explicitne unsupported |
 | `ios_compliance` | `license_state`, `pki_certificates`, `firmware_recommendation`, `eol_status` | explicitne unsupported |
-| `ios_operations` | `ntp_sync`, `recent_log_events` | explicitne unsupported |
+| `ios_operations` | `ntp_sync`, `recent_log_events`, `routing_table`, `routing_protocol_neighbors`, `ha_status` | explicitne unsupported |
 
 **Fakt:** Profil `cisco-ios` preferuje `ios_identity` a `ios_resources`.
 Predchádzajúce interné ID `device_facts` a `cpu_usage` ostávajú vykonateľné ako

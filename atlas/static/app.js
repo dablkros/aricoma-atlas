@@ -725,6 +725,35 @@ function renderDevicesUnavailable() {
   tableMessage("The runtime device list is unavailable.");
 }
 
+function formatSlovakUnit(value, one, few, many) {
+  const label = value === 1 ? one : value >= 2 && value <= 4 ? few : many;
+  return `${value} ${label}`;
+}
+
+function formatUptimeSeconds(totalSeconds) {
+  if (!Number.isInteger(totalSeconds) || totalSeconds < 0) {
+    return String(totalSeconds);
+  }
+  let remaining = totalSeconds;
+  const years = Math.floor(remaining / 31536000);
+  remaining %= 31536000;
+  const days = Math.floor(remaining / 86400);
+  remaining %= 86400;
+  const hours = Math.floor(remaining / 3600);
+  remaining %= 3600;
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const parts = [
+    [years, "rok", "roky", "rokov"],
+    [days, "deň", "dni", "dní"],
+    [hours, "hodina", "hodiny", "hodín"],
+    [minutes, "minúta", "minúty", "minút"],
+    [seconds, "sekunda", "sekundy", "sekúnd"],
+  ].filter(([value]) => value > 0)
+    .map(([value, one, few, many]) => formatSlovakUnit(value, one, few, many));
+  return parts.join(" ") || "0 sekúnd";
+}
+
 function renderProphylaxisRun(run = state.prophylaxisRun) {
   const status = run?.status || "IDLE";
   const visualStatus = status === "COMPLETED"
@@ -762,6 +791,10 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     const details = [];
     for (const [key, value] of Object.entries(payload)) {
       if (value === null || value === undefined || key === "outcome" || key === "sensors") continue;
+      if (key === "uptime_seconds") {
+        details.push(`Uptime: ${formatUptimeSeconds(value)}`);
+        continue;
+      }
       details.push(`${titleCase(key)}: ${value}`);
     }
     if (Array.isArray(payload.sensors)) {

@@ -548,6 +548,115 @@ GROUPED_PROPHYLAXIS_CHOICES = [
     ["operations", "Operations"],
 ]
 
+PROPHYLAXIS_GROUP_ORDER = tuple(
+    choice[0] for choice in GROUPED_PROPHYLAXIS_CHOICES
+)
+
+PROPHYLAXIS_GROUP_BY_LEGACY_VALUE = {
+    "device_facts": "identity",
+    "os_version": "identity",
+    "uptime": "identity",
+    "CPU utilization": "resources",
+    "cpu_utilization": "resources",
+    "Memory utilization": "resources",
+    "memory_utilization": "resources",
+    "Temperature": "resources",
+    "cpu_temperature": "resources",
+    "fan_health": "resources",
+    "Interface utilization": "interfaces",
+    "interface errors": "interfaces",
+    "Routing table": "operations",
+    "Routing protocol neighbors": "operations",
+    "HA status": "operations",
+}
+
+PROPHYLAXIS_CHOICE_MIGRATION_SOURCES = (
+    LEGACY_PROPHYLAXIS_CHOICES,
+    PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
+    DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
+    STABLE_ID_PROPHYLAXIS_CHOICES_V1,
+    STABLE_ID_PROPHYLAXIS_CHOICES,
+)
+
+
+def transitional_prophylaxis_choices(source_choices):
+    existing_values = {choice[0] for choice in source_choices}
+    return [
+        *source_choices,
+        *(
+            choice
+            for choice in GROUPED_PROPHYLAXIS_CHOICES
+            if choice[0] not in existing_values
+        ),
+    ]
+
+
+def is_prophylaxis_migration_source(extra_choices):
+    return any(
+        extra_choices == source
+        or extra_choices == transitional_prophylaxis_choices(source)
+        for source in PROPHYLAXIS_CHOICE_MIGRATION_SOURCES
+    )
+
+
+def selected_prophylaxis_values(raw_values):
+    if not isinstance(raw_values, list):
+        return []
+    values = []
+    for item in raw_values:
+        if isinstance(item, str):
+            value = item
+        elif isinstance(item, dict):
+            value = item.get("value")
+        else:
+            value = None
+        if isinstance(value, str) and value not in values:
+            values.append(value)
+    return values
+
+
+def migrate_prophylaxis_device_values(client):
+    migrated = 0
+    for device in client.get_all("/api/dcim/devices/"):
+        identifier = device.get("id")
+        if isinstance(identifier, bool) or not isinstance(identifier, int):
+            raise RuntimeError("NetBox returned a device without a valid id")
+        fields = device.get("custom_fields")
+        if not isinstance(fields, dict):
+            raise RuntimeError(
+                f"Device {identifier} returned invalid custom_fields"
+            )
+        selected = selected_prophylaxis_values(
+            fields.get("profylaxia_checks")
+        )
+        if not selected:
+            continue
+
+        groups = []
+        for value in selected:
+            if value in PROPHYLAXIS_GROUP_ORDER:
+                group = value
+            else:
+                group = PROPHYLAXIS_GROUP_BY_LEGACY_VALUE.get(value)
+            if group is None:
+                raise RuntimeError(
+                    f"Device {identifier} has unsupported Profylaxia "
+                    f"choice {value!r}"
+                )
+            if group not in groups:
+                groups.append(group)
+        target = [
+            group for group in PROPHYLAXIS_GROUP_ORDER if group in groups
+        ]
+        if selected == target:
+            continue
+        client.patch(
+            f"/api/dcim/devices/{identifier}/",
+            {"custom_fields": {"profylaxia_checks": target}},
+        )
+        migrated += 1
+    return migrated
+
 
 def is_supported_choice_set_migration(
     desired,
@@ -562,14 +671,7 @@ def is_supported_choice_set_migration(
         and
         set(drift).issubset({"description", "extra_choices"})
         and
-        existing.get("extra_choices")
-        in (
-            LEGACY_PROPHYLAXIS_CHOICES,
-            PRE_DEVICE_FACTS_PROPHYLAXIS_CHOICES,
-            DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
-            STABLE_ID_PROPHYLAXIS_CHOICES_V1,
-            STABLE_ID_PROPHYLAXIS_CHOICES,
-        )
+        is_prophylaxis_migration_source(existing.get("extra_choices"))
         and
         desired.get("extra_choices")
         == GROUPED_PROPHYLAXIS_CHOICES
@@ -604,6 +706,7 @@ def provision_choice_sets(
     missing_count = 0
     drift_count = 0
     migrated_count = 0
+    migrated_device_count = 0
 
     print()
     print(
@@ -671,15 +774,31 @@ def provision_choice_sets(
                 "supported Atlas choice-set upgrade"
             )
 
+            current_choices = existing["extra_choices"]
+            if current_choices in PROPHYLAXIS_CHOICE_MIGRATION_SOURCES:
+                existing = client.patch(
+                    f"{endpoint}{existing['id']}/",
+                    {
+                        "description": desired["description"],
+                        "extra_choices": transitional_prophylaxis_choices(
+                            current_choices
+                        ),
+                    },
+                )
+                existing_by_name[name] = existing
+
+            migrated_devices = migrate_prophylaxis_device_values(client)
+            migrated_device_count += migrated_devices
+            print(
+                f"[MIGRATE] {name}: "
+                f"{migrated_devices} device value(s) remapped"
+            )
+
             existing = client.patch(
                 f"{endpoint}{existing['id']}/",
                 {
-                    field: desired[field]
-                    for field in (
-                        "description",
-                        "extra_choices",
-                    )
-                    if field in drift
+                    "description": desired["description"],
+                    "extra_choices": desired["extra_choices"],
                 },
             )
 
@@ -727,6 +846,7 @@ def provision_choice_sets(
         "missing": missing_count,
         "created": created_count,
         "migrated": migrated_count,
+        "migrated_device_values": migrated_device_count,
         "drift": drift_count,
     }
 
@@ -1086,6 +1206,11 @@ def main():
         print(
             f"  migrated: "
             f"{choice_summary['migrated']}"
+        )
+
+        print(
+            f"  device values migrated: "
+            f"{choice_summary['migrated_device_values']}"
         )
 
     print(

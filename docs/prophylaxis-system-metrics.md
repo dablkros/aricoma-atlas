@@ -1,4 +1,4 @@
-# Profylaxia system metrics: Cisco CBS350 and Aruba AOS-CX
+# Profylaxia system metrics: Cisco CBS250/350 and Aruba AOS-CX
 
 Status: implementation contract and evidence register, reviewed against the
 repository on 2026-10-18.
@@ -27,6 +27,22 @@ Atlas keeps the existing ownership boundaries:
 Zabbix is not called by this collector. Zabbix remains responsible for periodic
 sampling, trends and alert history; Profylaxia executes only checks selected in
 NetBox.
+
+## Cisco CBS group capability map
+
+The same NetBox groups are accepted for platform slugs `cisco-cbs` and
+`cisco-cbs250-350`. The platform registry currently plans them as follows:
+
+| Group | CBS execution | Current result coverage |
+| --- | --- | --- |
+| `identity` | one SSH `device_facts` collector | hostname, model/PID, OS version, serial and uptime |
+| `resources` | one read-only `snmp_system` batch | CPU implemented; memory unsupported; temperature raw/unknown; fan state model-aware |
+| `interfaces` | no collector enabled | all results `UNSUPPORTED` |
+| `compliance` | no collector enabled | all results `UNSUPPORTED` |
+| `operations` | no collector enabled | all results `UNSUPPORTED` |
+
+Unsupported group members remain present in the run report. They are not
+silently dropped and do not trigger guessed CLI commands or an SNMP walk.
 
 ## Resources group, stable check IDs and outcomes
 
@@ -122,4 +138,6 @@ References:
 Current limitation: this collector supports SNMPv2c. An SNMPv3 credential is not
 silently downgraded. Live validation against the named CBS350 and Aruba OVA remains
 required after deployment; repository tests validate normalization and planning,
-not device reachability.
+not device reachability. The shared CBS250/350 OID document covers both product
+families, but the current stored real-device fixture is from CBS350; CBS250 runtime
+behavior therefore remains unverified until a live CBS250 sample is supplied.

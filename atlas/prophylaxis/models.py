@@ -15,6 +15,9 @@ CHECK_VALUE_ALIASES = {
     "Temperature": "cpu_temperature",
     "Interface utilization": "interface_utilization",
     "interface errors": "interface_error_counters",
+    "Routing table": "routing_table",
+    "Routing protocol neighbors": "routing_protocol_neighbors",
+    "HA status": "ha_status",
 }
 
 
@@ -36,6 +39,9 @@ class CheckId(StrEnum):
     EOL_STATUS = "eol_status"
     NTP_SYNC = "ntp_sync"
     RECENT_LOG_EVENTS = "recent_log_events"
+    ROUTING_TABLE = "routing_table"
+    ROUTING_PROTOCOL_NEIGHBORS = "routing_protocol_neighbors"
+    HA_STATUS = "ha_status"
     SERIAL_INVENTORY = "serial_inventory"
     MODEL_INVENTORY = "model_inventory"
 
@@ -75,6 +81,9 @@ CHECK_GROUP_CHECKS = {
     CheckGroupId.OPERATIONS: (
         CheckId.NTP_SYNC,
         CheckId.RECENT_LOG_EVENTS,
+        CheckId.ROUTING_TABLE,
+        CheckId.ROUTING_PROTOCOL_NEIGHBORS,
+        CheckId.HA_STATUS,
     ),
 }
 
@@ -155,6 +164,7 @@ class UptimeValues(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     uptime_seconds: int = Field(ge=0)
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class CPUUtilizationValues(BaseModel):
