@@ -12,6 +12,7 @@ atlas_transport_files:
       cisco-cbs: device_facts/cisco_cbs.yml
       cisco-cbs250-350: device_facts/cisco_cbs.yml
       aruba-aos-cx: device_facts/aruba_aoscx.yml
+      checkpoint-gaia: device_facts/checkpoint_gaia.yml
   https:
     cpu_usage:
       fortios: cpu/fortios.yml

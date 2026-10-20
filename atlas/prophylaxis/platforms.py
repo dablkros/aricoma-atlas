@@ -16,7 +16,7 @@ class AnsiblePlatformProfile:
     default_port: int
     netbox_service_name: str | None
     ansible_connection: str
-    ansible_network_os: str
+    ansible_network_os: str | None
     authentication: AuthenticationType
     collection: str
     module_family: str
@@ -121,6 +121,21 @@ ANSIBLE_PLATFORMS = {
         collection="fortinet.fortios",
         module_family="fortinet.fortios.fortios_monitor_fact",
         supported_collectors=CPU_AND_FACTS,
+    ),
+    "checkpoint-gaia": AnsiblePlatformProfile(
+        slug="checkpoint-gaia",
+        transport="ssh",
+        default_port=22,
+        netbox_service_name=None,
+        # Gaia Clish is an interactive restricted shell.  The role therefore
+        # executes the allow-listed collector locally through atlas_gaia_clish
+        # instead of pretending Gaia has an ansible.netcommon cliconf plugin.
+        ansible_connection="local",
+        ansible_network_os=None,
+        authentication="ssh",
+        collection="atlas.builtin",
+        module_family="atlas_gaia_clish",
+        supported_collectors=FACTS_ONLY,
     ),
     "aruba-aos-cx": AnsiblePlatformProfile(
         slug="aruba-aos-cx",

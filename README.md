@@ -1817,13 +1817,22 @@ Reusable runtime collection vrstva je popísaná v
 [Profylaxia runtime dokumentácii](docs/prophylaxis-runtime.md). Podporuje
 CPU collector pre explicitné platformy `cisco-ios`, `cisco-ios-xe`,
 `cisco-cbs`, `cisco-cbs250-350` a `fortios`. Collector `device_facts` navyše
-podporuje `aruba-aos-cx` a zbiera `hostname`, `model`, `os_version`, sériové
-číslo a uptime v sekundách.
+podporuje `aruba-aos-cx` a `checkpoint-gaia` a zbiera `hostname`, `model`,
+`os_version`, sériové číslo a uptime v sekundách.
 Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
-výrobcu. Vrstva
-načítava admin credentials cez existujúcu OpenBao AppRole vrstvu a vracia
+výrobcu. Vrstva načítava účelové `prophylaxis` credentials cez existujúcu
+OpenBao AppRole vrstvu a vracia
 secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
 Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
+Profylaxia číta výhradne účelový OpenBao secret bez fallbacku na `/admin`:
+
+```text
+devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
+```
+
+SSH platformy očakávajú `username`, `password` a voliteľný
+`enable_password`; FortiOS očakáva `api_token`. Oxidized naďalej používa
+samostatnú koncovku `/oxidized`.
 Threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Operations UI poskytuje manuálne spustenie asynchrónneho behu podľa
 `profylaxia_checks`. `device_facts`, `os_version` a `uptime` zdieľajú jeden
@@ -1841,6 +1850,22 @@ manuálna CPU kontrola zostáva dostupná cez API.
 | `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
 | `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
+| `checkpoint-gaia` | SSH do Gaia Clish | `show hostname`, `show asset all`, `show version all`, `show uptime` |
+
+Check Point Gaia používa vlastný allow-list Ansible modul nad Paramiko, pretože
+Gaia Clish nie je POSIX shell a Atlas nemá pre túto platformu overený
+`network_cli` plugin. Modul odmietne Expert prompt a nikdy neposiela ľubovoľný
+príkaz zo vstupu používateľa. V tejto iterácii podporuje iba spoločný
+`device_facts` collector, z ktorého vzniknú aj kontroly `os_version`, `uptime`,
+`serial_inventory` a `model_inventory`. CPU ostáva explicitne nepodporované:
+oficiálny príkaz `cpstat -f cpu os` je v CLI dokumentácii zobrazovaný v Expert
+mode a Atlas profylaxia Expert credentials nevyžaduje.
+
+Použité Check Point kontrakty:
+
+- [Gaia R82.10 System Information Overview](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_Gaia_AdminGuide/Content/Topics-GAG/System-Information-Overview.htm)
+- [Gaia Hardware Health Monitoring — `show asset`](https://sc1.checkpoint.com/documents/R80.30/WebAdminGuides/EN/CP_R80.30_Gaia_AdminGuide/214758.htm)
+- [R82.10 CLI Reference — `cpstat`](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_CLI_ReferenceGuide/CP_R82.10_CLI_ReferenceGuide.pdf)
 
 Aruba SSH/CLI modul potrebuje v backend image aj Python knižnicu Paramiko.
 Atlas ju pripína v `requirements.txt`; zmena sa prejaví až po novom zostavení

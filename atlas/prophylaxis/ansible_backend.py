@@ -233,12 +233,9 @@ class AnsibleBackend:
                 }
             )
         else:
-            variables.update(
-                {
-                    "ansible_connection": profile.ansible_connection,
-                    "ansible_network_os": profile.ansible_network_os,
-                }
-            )
+            variables["ansible_connection"] = profile.ansible_connection
+            if profile.ansible_network_os is not None:
+                variables["ansible_network_os"] = profile.ansible_network_os
         if transport == "ssh":
             variables.update(
                 {

@@ -272,6 +272,7 @@ class ProphylaxisService:
                 target.vendor,
                 target.credential_profile,
                 authentication=profile.authentication,
+                purpose="prophylaxis",
             )
             raw_result = self.backend.execute(
                 host=target.host,

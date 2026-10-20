@@ -586,6 +586,107 @@ def parse_fortios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     return _device_facts(enriched)
 
 
+def _gaia_field(text: str, labels: tuple[str, ...]) -> str | None:
+    alternatives = "|".join(re.escape(label) for label in labels)
+    match = re.search(
+        rf"(?im)^\s*(?:{alternatives})\s*:\s*(?P<value>\S.*?)\s*$",
+        text,
+    )
+    return match.group("value").strip() if match else None
+
+
+def _gaia_model(text: str) -> str | None:
+    model = _gaia_field(
+        text,
+        ("Platform", "Appliance Model", "Model", "Product Name"),
+    )
+    if model is None:
+        return None
+    security_gateway = re.fullmatch(r"(?i)Check\s+Point\s+(\d+)", model)
+    if security_gateway:
+        return "SG" + security_gateway.group(1)
+    return model
+
+
+def _gaia_uptime_seconds(text: str) -> int:
+    normalized = " ".join(text.split())
+    labelled = re.search(r"(?i)\buptime\s*:\s*(?P<value>.+)$", normalized)
+    linux_uptime = re.search(
+        r"(?i)\bup\s+(?P<value>.+?)"
+        r"(?:,\s*\d+\s+users?\b|,\s*load\s+average\b|$)",
+        normalized,
+    )
+    value = (
+        labelled.group("value")
+        if labelled
+        else linux_uptime.group("value")
+        if linux_uptime
+        else normalized
+    )
+    total = 0
+    found = False
+    for amount, unit in re.findall(
+        r"(?i)(\d+)\s*(years?|weeks?|days?|hours?|minutes?|seconds?)",
+        value,
+    ):
+        name = unit.lower().rstrip("s") + "s"
+        total += _duration_seconds(**{name: int(amount)})
+        found = True
+    clock = re.search(
+        r"(?<!\d)(?P<hours>\d{1,3}):(?P<minutes>\d{2})(?::(?P<seconds>\d{2}))?(?!\d)",
+        value,
+    )
+    if clock:
+        total += _duration_seconds(**{
+            key: int(amount or 0) for key, amount in clock.groupdict().items()
+        })
+        found = True
+    if not found:
+        raise ParseFailedError()
+    return total
+
+
+def parse_checkpoint_gaia_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    data = raw.data
+    if not isinstance(data, dict):
+        raise ParseFailedError()
+    outputs = {}
+    for key in ("show_hostname", "show_asset_all", "show_version_all", "show_uptime"):
+        value = data.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise ParseFailedError()
+        outputs[key] = value
+
+    hostname = _gaia_field(outputs["show_hostname"], ("Hostname",))
+    if hostname is None:
+        hostname_lines = [
+            line.strip()
+            for line in outputs["show_hostname"].splitlines()
+            if line.strip()
+        ]
+        if len(hostname_lines) == 1 and " " not in hostname_lines[0]:
+            hostname = hostname_lines[0]
+    model = _gaia_model(outputs["show_asset_all"])
+    serial_number = _gaia_field(
+        outputs["show_asset_all"],
+        ("Serial Number", "Serial"),
+    )
+    os_version = _gaia_field(
+        outputs["show_version_all"],
+        ("Product version", "Gaia version", "Version"),
+    )
+    if os_version is None:
+        match = re.search(r"(?i)\b(R\d+(?:\.\d+)+)\b", outputs["show_version_all"])
+        os_version = match.group(1) if match else None
+    return _device_facts({
+        "hostname": hostname,
+        "model": model,
+        "os_version": os_version,
+        "serial_number": serial_number,
+        "uptime_seconds": _gaia_uptime_seconds(outputs["show_uptime"]),
+    })
+
+
 DEVICE_FACTS_PARSERS = {
     "cisco-ios": parse_cisco_ios_device_facts,
     "cisco-ios-xe": parse_cisco_ios_device_facts,
@@ -593,6 +694,7 @@ DEVICE_FACTS_PARSERS = {
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
     "fortios": parse_fortios_device_facts,
     "aruba-aos-cx": parse_aruba_aoscx_device_facts,
+    "checkpoint-gaia": parse_checkpoint_gaia_device_facts,
 }
 
 
@@ -627,6 +729,7 @@ __all__ = [
     "parse_cisco_cbs_device_facts",
     "parse_cisco_cbs_cpu",
     "parse_cisco_ios_device_facts",
+    "parse_checkpoint_gaia_device_facts",
     "parse_cisco_ios_cpu",
     "parse_fortios_cpu",
     "parse_fortios_device_facts",

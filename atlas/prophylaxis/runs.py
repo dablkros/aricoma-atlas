@@ -445,7 +445,7 @@ class DeviceFactsRunService:
         if not plan.tasks:
             return tuple(results)
 
-        admin_connection = None
+        prophylaxis_connection = None
         snmp_credentials = None
         for task in plan.tasks:
             try:
@@ -476,7 +476,7 @@ class DeviceFactsRunService:
                             )
                     credentials = snmp_credentials
                 else:
-                    if admin_connection is None:
+                    if prophylaxis_connection is None:
                         services = (
                             self.netbox.get_device_services(
                                 target.id,
@@ -506,9 +506,18 @@ class DeviceFactsRunService:
                             target.vendor,
                             target.credential_profile,
                             authentication=profile.authentication,
+                            purpose="prophylaxis",
                         )
-                        admin_connection = (port, telnet_fallback_port, credentials)
-                    port, telnet_fallback_port, credentials = admin_connection
+                        prophylaxis_connection = (
+                            port,
+                            telnet_fallback_port,
+                            credentials,
+                        )
+                    (
+                        port,
+                        telnet_fallback_port,
+                        credentials,
+                    ) = prophylaxis_connection
                 raw = self.backend.execute(
                     host=target.host,
                     port=port,

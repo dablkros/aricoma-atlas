@@ -57,8 +57,15 @@ class FakeOpenBao:
         self.error = error
         self.calls = []
 
-    def get_device_credentials(self, vendor, profile, *, authentication="ssh"):
-        self.calls.append((vendor, profile, authentication))
+    def get_device_credentials(
+        self,
+        vendor,
+        profile,
+        *,
+        authentication="ssh",
+        purpose="admin",
+    ):
+        self.calls.append((vendor, profile, authentication, purpose))
         if self.error:
             raise self.error
         if authentication == "api_token":
@@ -130,7 +137,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.check, CheckId.CPU_UTILIZATION)
         self.assertEqual(result.values.current_percent, 12.0)
-        self.assertEqual(openbao.calls, [("cisco", "default", "ssh")])
+        self.assertEqual(
+            openbao.calls,
+            [("cisco", "default", "ssh", "prophylaxis")],
+        )
         self.assertEqual(backend.calls[0]["host"], "10.10.10.1")
         self.assertEqual(backend.calls[0]["port"], 22)
         self.assertNotIn("password", result.model_dump_json())
@@ -148,7 +158,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         result = service.collect_cpu(10)
 
         self.assertEqual(result.values.current_percent, 12.0)
-        self.assertEqual(openbao.calls, [("fortinet", "default", "api_token")])
+        self.assertEqual(
+            openbao.calls,
+            [("fortinet", "default", "api_token", "prophylaxis")],
+        )
         self.assertEqual(backend.calls[0]["port"], 444)
         self.assertIn(
             (
@@ -236,6 +249,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         self.assertEqual(
             credential_path("cisco", "default"),
             "devices/credentials/cisco/default/admin",
+        )
+        self.assertEqual(
+            credential_path("check-point", "default", purpose="prophylaxis"),
+            "devices/credentials/check-point/default/prophylaxis",
         )
 
 

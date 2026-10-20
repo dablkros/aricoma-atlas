@@ -98,7 +98,8 @@ manufacturer. Rack shelves, SandBlast, older 1100/1400/2200/4400/5000-family
 definitions and any other unreviewed type are not imported. `checkpoint-gaia`
 maps to the pinned Oxidized `gaiaos` model. Gaia Embedded remains unmapped
 because the complete `gaiaos` command set has not been verified on physical
-Spark hardware. Neither Check Point platform has an Ansible mapping.
+Spark hardware. `checkpoint-gaia` má read-only Ansible profylaxiu cez SSH do
+Gaia Clish; `checkpoint-gaia-embedded` naďalej nemá Ansible mapping.
 
 Unmapped types include Cisco RV/SF/SG/SX; Fortinet FortiSwitch, FortiExtender, FortiAuthenticator, FortiWeb, modules, power supplies and trays; Juniper AP, ACX, PTX, NFX, NetScreen, SRX and newer QFX. These await reviewed rules; “unmapped” does not mean the hardware is unsupported by every product. Newer QFX families are not blindly assigned classic Junos because some run Junos OS Evolved. This conservative boundary can be extended in the same YAML.
 

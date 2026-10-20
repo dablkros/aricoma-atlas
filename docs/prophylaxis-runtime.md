@@ -12,7 +12,7 @@ Atlas UI/API
   -> active + profylaxia_enabled + profylaxia_checks
   -> device/IP/platform/vendor/credential_profile
   -> NetBox Application Service -> connection port
-  -> existujúci OpenBaoService a admin credential namespace
+  -> existujúci OpenBaoService a prophylaxis credential namespace
   -> AnsiblePlatformRegistry
   -> AnsibleBackend / ansible-runner
   -> read-only Ansible collection module
@@ -26,18 +26,24 @@ Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH poli
 `username`, `password` a voliteľné `enable_password` z:
 
 ```text
-devices/credentials/<manufacturer>/<credential_profile>/admin
+devices/credentials/<manufacturer>/<credential_profile>/oxidized
 ```
 
-FortiGate profylaxia používa z toho istého secretu pole `api_token`. Kombinovaný
-Fortinet secret preto môže obsahovať SSH údaje pre Oxidized aj API token pre
-Ansible. Resolver vráti iba polia požadované konkrétnym consumerom.
+Profylaxia používa samostatný účelový secret:
 
-Pri upgrade existujúceho Fortinet profilu pridaj `api_token` do rovnakého
-`admin` secretu cez autentifikované OpenBao UI. Zachovaj existujúce
-`username`/`password`, ak profil používa aj Oxidized. Chýbajúci alebo neplatný
-token sa vracia ako `api_token_missing_or_invalid`; nejde o Ansible connection
-failure.
+```text
+devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
+```
+
+SSH platformy z neho načítajú
+`username`, `password` a voliteľný `enable_password`; FortiGate z neho načíta
+iba `api_token`. Resolver vráti iba polia požadované konkrétnym transportom.
+
+Pri upgrade skopíruj iba potrebné hodnoty z existujúceho `admin` secretu do
+nového `prophylaxis` secretu cez autentifikované OpenBao UI. Atlas nemá fallback
+na `admin`, aby profylaxia nemohla omylom použiť širšie administrátorské
+oprávnenia. Chýbajúci alebo neplatný FortiGate token sa vracia ako
+`api_token_missing_or_invalid`; nejde o Ansible connection failure.
 
 ## Port služby z NetBoxu
 
@@ -134,6 +140,14 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
 | `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
+| `checkpoint-gaia` | lokálny Ansible modul cez SSH/Paramiko | Gaia Clish | allow-list `show hostname`, `show asset all`, `show version all`, `show uptime` |
+
+`checkpoint-gaia` podporuje v tejto iterácii `device_facts`, `os_version`,
+`uptime`, `serial_inventory` a `model_inventory`. Modul vyžaduje, aby SSH účet
+otváral Gaia Clish, a odmietne Expert prompt. CPU collector nie je zapnutý,
+pretože zdokumentovaný `cpstat -f cpu os` používa Expert mode; jeho povolenie
+vyžaduje samostatne overený read-only zdroj (napríklad konkrétny SNMP OID alebo
+API kontrakt). `checkpoint-gaia-embedded` zostáva mimo tohto profilu.
 
 Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
 `show cpu utilization`. FortiOS používa monitor selector

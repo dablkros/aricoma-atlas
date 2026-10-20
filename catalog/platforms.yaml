@@ -194,6 +194,6 @@ oxidized_platform_mapping:
 # FortiAnalyzer remain unmapped pending driver/hardware validation.
 # Sophos platforms are inventory/monitoring identities only; no unverified
 # Oxidized model is assigned.
-# Check Point Gaia uses the pinned gaiaos model. Gaia Embedded remains
-# unmapped until the model command set is verified on physical Spark hardware.
-# Neither Check Point platform has an automation backend yet.
+# Check Point Gaia uses the pinned gaiaos model and a read-only Gaia Clish
+# prophylaxis collector. Gaia Embedded remains unmapped until its command set
+# is verified on physical Spark hardware.

@@ -37,7 +37,13 @@ def credential_path(vendor, profile, purpose="admin"):
             "Invalid credential_profile",
             code="missing_credential_profile",
         )
-    if purpose not in {"admin", "snmp", "automation", "oxidized"}:
+    if purpose not in {
+        "admin",
+        "snmp",
+        "automation",
+        "oxidized",
+        "prophylaxis",
+    }:
         raise DeviceValidationError("Invalid credential purpose")
     return f"devices/credentials/{vendor}/{profile}/{purpose}"
 
