@@ -18,6 +18,7 @@ from atlas.prophylaxis.errors import (
 from atlas.prophylaxis.models import (
     CHECK_VALUE_ALIASES,
     CheckId,
+    CollectionStatus,
     CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
@@ -48,9 +49,13 @@ from atlas.services.errors import DependencyError
 
 logger = logging.getLogger("atlas.prophylaxis.runs")
 OPERATION = "selected_checks"
-SERIAL_INVENTORY_CHECK = "serial_inventory"
-MODEL_INVENTORY_CHECK = "model_inventory"
+SERIAL_INVENTORY_CHECK = CheckId.SERIAL_INVENTORY.value
+MODEL_INVENTORY_CHECK = CheckId.MODEL_INVENTORY.value
 INVENTORY_CHECKS = (SERIAL_INVENTORY_CHECK, MODEL_INVENTORY_CHECK)
+IDENTITY_COLLECTORS = frozenset({
+    CollectorId.DEVICE_FACTS,
+    CollectorId.IOS_IDENTITY,
+})
 ZABBIX_CHART_METRICS = {CheckId.CPU_UTILIZATION.value: "cpu"}
 ZABBIX_CHART_WINDOW = "1h"
 
@@ -107,9 +112,9 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
-            if summary.failure and not summary.success:
+            if summary.failure and not summary.success and not summary.warning:
                 status = "FAILED"
-            elif summary.failure or summary.skipped:
+            elif summary.failure or summary.skipped or summary.warning:
                 status = "PARTIAL"
             else:
                 status = "COMPLETED"
@@ -395,10 +400,13 @@ class DeviceFactsRunService:
 
         if (
             self.inventory_reconciliation_enabled
-            and profile.supports_collector(CollectorId.DEVICE_FACTS)
+            and any(
+                profile.supports_collector(collector_id)
+                for collector_id in IDENTITY_COLLECTORS
+            )
         ):
             if not any(
-                task.collector.id == CollectorId.DEVICE_FACTS
+                task.collector.id in IDENTITY_COLLECTORS
                 for task in plan.tasks
             ):
                 try:
@@ -543,7 +551,7 @@ class DeviceFactsRunService:
                 )
                 if (
                     self.inventory_reconciliation_enabled
-                    and task.collector.id == CollectorId.DEVICE_FACTS
+                    and task.collector.id in IDENTITY_COLLECTORS
                 ):
                     results.extend(
                         self._inventory_errors(
@@ -568,7 +576,7 @@ class DeviceFactsRunService:
                 )
                 if (
                     self.inventory_reconciliation_enabled
-                    and task.collector.id == CollectorId.DEVICE_FACTS
+                    and task.collector.id in IDENTITY_COLLECTORS
                 ):
                     results.extend(
                         self._inventory_errors(
@@ -584,7 +592,7 @@ class DeviceFactsRunService:
 
             if (
                 self.inventory_reconciliation_enabled
-                and task.collector.id == CollectorId.DEVICE_FACTS
+                and task.collector.id in IDENTITY_COLLECTORS
             ):
                 try:
                     facts = task.collector.normalize(CheckId.DEVICE_FACTS, raw)
@@ -896,12 +904,14 @@ class DeviceFactsRunService:
                 management_ip=management_ip,
                 platform=platform,
                 status="success",
+                collection_status=CollectionStatus.COLLECTED,
                 evaluation=EvaluationOutcome.PASS,
                 facts=values,
             )
         if isinstance(values, SystemMetricValues):
             status = {
                 EvaluationOutcome.PASS: "success",
+                EvaluationOutcome.WARNING: "success",
                 EvaluationOutcome.FAIL: "failed",
                 EvaluationOutcome.UNKNOWN: "incomplete",
                 EvaluationOutcome.NOT_APPLICABLE: "skipped",
@@ -914,6 +924,7 @@ class DeviceFactsRunService:
                 management_ip=management_ip,
                 platform=platform,
                 status=status,
+                collection_status=CollectionStatus.COLLECTED,
                 evaluation=values.outcome,
                 values=values,
             )
@@ -934,6 +945,7 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status="success",
+            collection_status=CollectionStatus.COLLECTED,
             evaluation=EvaluationOutcome.PASS,
             values=values,
         )
@@ -992,6 +1004,13 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status=status,
+            collection_status=(
+                CollectionStatus.UNSUPPORTED
+                if status == "skipped"
+                else CollectionStatus.COLLECTED
+                if status == "incomplete"
+                else CollectionStatus.FAILED
+            ),
             evaluation=(
                 EvaluationOutcome.UNSUPPORTED
                 if status == "skipped"
@@ -1004,7 +1023,14 @@ class DeviceFactsRunService:
 
     @staticmethod
     def _summary(results: tuple[ProphylaxisCheckResult, ...]) -> RunSummary:
-        success = sum(result.status == "success" for result in results)
+        success = sum(
+            result.status == "success"
+            and result.evaluation != EvaluationOutcome.WARNING
+            for result in results
+        )
+        warning = sum(
+            result.evaluation == EvaluationOutcome.WARNING for result in results
+        )
         skipped = sum(result.status == "skipped" for result in results)
         failure = sum(
             result.status in {"failed", "incomplete"} for result in results
@@ -1012,6 +1038,7 @@ class DeviceFactsRunService:
         return RunSummary(
             total=len(results),
             success=success,
+            warning=warning,
             failure=failure,
             skipped=skipped,
         )

@@ -1,6 +1,9 @@
 # Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Stav dokumentácie: 2026-10-16. Implementácia zachováva Atlas ako orchestrátor;
+Cisco IOS tematický collector plán, výsledkové stavy a report kontrakt sú
+zdokumentované v [prophylaxis-cisco-ios.md](prophylaxis-cisco-ios.md).
+
+Stav dokumentácie: 2026-10-20. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
@@ -83,8 +86,8 @@ uptime
 V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
 `os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
 sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
-používajú ten istý facts collector, takže pri spoločnom výbere nevznikne druhý
-collector job. Hromadný beh zostaví plán z
+používajú ten istý identity/facts collector, takže pri spoločnom výbere
+nevznikne druhý collector job. Hromadný beh zostaví plán z
 `profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
 neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
 `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
@@ -92,7 +95,7 @@ hodnotu.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
-ešte neobsahuje `device_facts`, pridá jeden facts collector job bez pridania
+ešte neobsahuje identity/facts collector, pridá jeden collector job bez pridania
 používateľského checku. Jeden čerstvý detail zariadenia z NetBoxu poskytne
 uložené hodnoty pre obe porovnania.
 
@@ -132,7 +135,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 ## Platform registry
 
-| NetBox platform | Connection | Network OS | `device_facts` modul |
+| NetBox platform | Connection | Network OS | identity/facts collector |
 | --- | --- | --- | --- |
 | `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
@@ -149,8 +152,9 @@ pretože zdokumentovaný `cpstat -f cpu os` používa Expert mode; jeho povoleni
 vyžaduje samostatne overený read-only zdroj (napríklad konkrétny SNMP OID alebo
 API kontrakt). `checkpoint-gaia-embedded` zostáva mimo tohto profilu.
 
-Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
-`show cpu utilization`. FortiOS používa monitor selector
+Cisco IOS plánuje tento príkaz cez `ios_resources`; IOS XE používa kompatibilný
+`cpu_usage` collector. Obe platformy používajú `show processes cpu`. Cisco CBS
+samostatne používa `show cpu utilization`. FortiOS používa monitor selector
 `system_resource_usage` s `resource: cpu` a API tokenom.
 
 Cisco CBS facts collector zachováva výstupy `show system`, `show version` a

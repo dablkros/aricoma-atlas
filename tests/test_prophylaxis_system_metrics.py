@@ -111,6 +111,38 @@ class SystemMetricTests(unittest.TestCase):
         self.assertEqual(len(plan.tasks), 1)
         self.assertEqual(plan.tasks[0].collector.id, CollectorId.SNMP_SYSTEM)
 
+    def test_cisco_ios_plan_groups_only_verified_thematic_collectors(self):
+        profile = AnsiblePlatformRegistry().resolve("cisco-ios")
+        plan = CollectorRegistry().plan(
+            (
+                CheckId.DEVICE_FACTS,
+                CheckId.OS_VERSION,
+                CheckId.UPTIME,
+                CheckId.CPU_UTILIZATION,
+                CheckId.INTERFACE_ERROR_COUNTERS,
+                CheckId.NTP_SYNC,
+                CheckId.BACKUP_FRESHNESS,
+            ),
+            profile,
+        )
+
+        self.assertEqual(
+            [task.collector.id for task in plan.tasks],
+            [CollectorId.IOS_IDENTITY, CollectorId.IOS_RESOURCES],
+        )
+        self.assertEqual(
+            plan.tasks[0].checks,
+            (CheckId.DEVICE_FACTS, CheckId.OS_VERSION, CheckId.UPTIME),
+        )
+        self.assertEqual(
+            plan.unsupported_checks,
+            (
+                CheckId.INTERFACE_ERROR_COUNTERS,
+                CheckId.NTP_SYNC,
+                CheckId.BACKUP_FRESHNESS,
+            ),
+        )
+
     def test_evaluation_controls_run_status_without_losing_values(self):
         result = DeviceFactsRunService._success_result(
             6,

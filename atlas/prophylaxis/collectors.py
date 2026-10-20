@@ -80,6 +80,20 @@ DEVICE_FACTS_COLLECTOR = CollectorSpec(
     },
 )
 
+IOS_IDENTITY_COLLECTOR = CollectorSpec(
+    id=CollectorId.IOS_IDENTITY,
+    normalizers={
+        CheckId.DEVICE_FACTS: normalize_device_facts,
+        CheckId.OS_VERSION: normalize_os_version,
+        CheckId.UPTIME: normalize_uptime,
+    },
+)
+
+IOS_RESOURCES_COLLECTOR = CollectorSpec(
+    id=CollectorId.IOS_RESOURCES,
+    normalizers={CheckId.CPU_UTILIZATION: normalize_cpu},
+)
+
 SNMP_SYSTEM_COLLECTOR = CollectorSpec(
     id=CollectorId.SNMP_SYSTEM,
     normalizers={
@@ -97,6 +111,8 @@ class CollectorRegistry:
             CPU_COLLECTOR,
             DEVICE_FACTS_COLLECTOR,
             SNMP_SYSTEM_COLLECTOR,
+            IOS_IDENTITY_COLLECTOR,
+            IOS_RESOURCES_COLLECTOR,
         ))
         self._by_id: dict[CollectorId, CollectorSpec] = {}
         self._by_check: dict[CheckId, list[CollectorSpec]] = {}
@@ -121,7 +137,10 @@ class CollectorRegistry:
         preferred = profile.preferred_collector(check_id)
         if preferred is not None:
             for collector in candidates:
-                if collector.id == preferred and profile.supports_collector(collector.id):
+                if (
+                    collector.id == preferred
+                    and profile.supports_collector(collector.id)
+                ):
                     return collector
         for collector in candidates:
             if profile.supports_collector(collector.id):
@@ -157,6 +176,8 @@ class CollectorRegistry:
 __all__ = [
     "CPU_COLLECTOR",
     "DEVICE_FACTS_COLLECTOR",
+    "IOS_IDENTITY_COLLECTOR",
+    "IOS_RESOURCES_COLLECTOR",
     "SNMP_SYSTEM_COLLECTOR",
     "CollectionPlan",
     "CollectorRegistry",

@@ -7,6 +7,7 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from atlas.prophylaxis.models import (
+    CollectionStatus,
     CPUUtilizationValues,
     DeviceFactsValues,
     OSVersionValues,
@@ -73,6 +74,7 @@ class ProphylaxisCheckResult(BaseModel):
     management_ip: str | None = None
     platform: str | None = None
     status: Literal["success", "failed", "incomplete", "skipped"]
+    collection_status: CollectionStatus
     evaluation: EvaluationOutcome
     facts: DeviceFactsValues | None = None
     values: (
@@ -89,7 +91,9 @@ class ProphylaxisCheckResult(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def infer_legacy_evaluation(cls, value):
-        if isinstance(value, dict) and "evaluation" not in value:
+        if not isinstance(value, dict):
+            return value
+        if "evaluation" not in value:
             status = value.get("status")
             inferred = {
                 "success": EvaluationOutcome.PASS,
@@ -99,12 +103,21 @@ class ProphylaxisCheckResult(BaseModel):
             }.get(status)
             if inferred is not None:
                 value = {**value, "evaluation": inferred}
+        if "collection_status" not in value:
+            if value.get("facts") is not None or value.get("values") is not None:
+                collection_status = CollectionStatus.COLLECTED
+            elif value.get("status") == "skipped":
+                collection_status = CollectionStatus.UNSUPPORTED
+            else:
+                collection_status = CollectionStatus.FAILED
+            value = {**value, "collection_status": collection_status}
         return value
 
     @model_validator(mode="after")
     def validate_payload(self):
         expected_status = {
             EvaluationOutcome.PASS: "success",
+            EvaluationOutcome.WARNING: "success",
             EvaluationOutcome.FAIL: "failed",
             EvaluationOutcome.UNKNOWN: "incomplete",
             EvaluationOutcome.NOT_APPLICABLE: "skipped",
@@ -134,6 +147,7 @@ class RunSummary(BaseModel):
 
     total: int = Field(default=0, ge=0)
     success: int = Field(default=0, ge=0)
+    warning: int = Field(default=0, ge=0)
     failure: int = Field(default=0, ge=0)
     skipped: int = Field(default=0, ge=0)
 

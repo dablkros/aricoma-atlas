@@ -13,6 +13,8 @@ CHECK_VALUE_ALIASES = {
     "CPU utilization": "cpu_utilization",
     "Memory utilization": "memory_utilization",
     "Temperature": "cpu_temperature",
+    "Interface utilization": "interface_utilization",
+    "interface errors": "interface_error_counters",
 }
 
 
@@ -24,16 +26,42 @@ class CheckId(StrEnum):
     MEMORY_UTILIZATION = "memory_utilization"
     FAN_HEALTH = "fan_health"
     UPTIME = "uptime"
+    INTERFACE_UTILIZATION = "interface_utilization"
+    INTERFACE_STATE = "interface_state"
+    INTERFACE_ERROR_COUNTERS = "interface_error_counters"
+    ENVIRONMENT_HEALTH = "environment_health"
+    LICENSE_STATE = "license_state"
+    PKI_CERTIFICATES = "pki_certificates"
+    NTP_SYNC = "ntp_sync"
+    RECENT_LOG_EVENTS = "recent_log_events"
+    BACKUP_FRESHNESS = "backup_freshness"
+    SERIAL_INVENTORY = "serial_inventory"
+    MODEL_INVENTORY = "model_inventory"
 
 
 class CollectorId(StrEnum):
+    IOS_IDENTITY = "ios_identity"
+    IOS_RESOURCES = "ios_resources"
+    IOS_INTERFACES = "ios_interfaces"
+    IOS_COMPLIANCE = "ios_compliance"
+    IOS_OPERATIONS = "ios_operations"
+    OXIDIZED_BACKUP_STATE = "oxidized_backup_state"
+    # Compatibility collector IDs used by other platform profiles and the
+    # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
     CPU_USAGE = "cpu_usage"
     SNMP_SYSTEM = "snmp_system"
 
 
+class CollectionStatus(StrEnum):
+    COLLECTED = "COLLECTED"
+    FAILED = "FAILED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
 class EvaluationOutcome(StrEnum):
     PASS = "PASS"
+    WARNING = "WARNING"
     FAIL = "FAIL"
     NOT_APPLICABLE = "NOT_APPLICABLE"
     UNKNOWN = "UNKNOWN"
@@ -197,6 +225,7 @@ __all__ = [
     "CPUUtilizationValues",
     "CheckId",
     "CheckResult",
+    "CollectionStatus",
     "CollectorId",
     "EvaluationOutcome",
     "HardwareSensorValue",

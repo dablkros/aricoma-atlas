@@ -7,6 +7,7 @@ import re
 import threading
 from uuid import UUID, uuid4
 
+from atlas.prophylaxis.models import CheckId, CollectionStatus, EvaluationOutcome
 from atlas.prophylaxis.run_models import ProphylaxisRun
 
 
@@ -173,29 +174,93 @@ class FileRunStore:
             f"Finished: {run.finished_at.isoformat() if run.finished_at else '-'}",
             "",
             f"Success: {run.summary.success}",
+            f"Warning: {run.summary.warning}",
             f"Failure: {run.summary.failure}",
             f"Skipped: {run.summary.skipped}",
             f"Total: {run.summary.total}",
         ]
         if run.error:
             lines.extend(("", f"Run error: {run.error}"))
-        if run.results:
-            lines.extend(("", "Checks:"))
-            for result in run.results:
+        devices: dict[tuple, list] = {}
+        for result in run.results:
+            key = (
+                result.device_id,
+                result.device_name,
+                result.management_ip,
+                result.platform,
+            )
+            devices.setdefault(key, []).append(result)
+        charts_by_device: dict[tuple[int, str], list] = {}
+        for chart in run.charts:
+            charts_by_device.setdefault(
+                (chart.device_id, chart.device_name),
+                [],
+            ).append(chart)
+
+        inventory_checks = {
+            CheckId.DEVICE_FACTS.value,
+            CheckId.OS_VERSION.value,
+            CheckId.SERIAL_INVENTORY.value,
+            CheckId.MODEL_INVENTORY.value,
+        }
+        section_names = (
+            "Vyžaduje zásah",
+            "Naplánovať",
+            "Zdravie",
+            "Inventár",
+            "Nepodporované/neoverené",
+        )
+
+        for key, results in devices.items():
+            device_id, device_name, management_ip, platform = key
+            address = management_ip or "unknown"
+            lines.extend((
+                "",
+                f"Zariadenie: {device_name} "
+                f"(id={device_id or '-'}, ip={address}, "
+                f"platform={platform or 'unknown'})",
+            ))
+            sections = {name: [] for name in section_names}
+            for result in results:
+                if (
+                    result.evaluation == EvaluationOutcome.FAIL
+                    or result.collection_status == CollectionStatus.FAILED
+                ):
+                    section = "Vyžaduje zásah"
+                elif result.evaluation == EvaluationOutcome.WARNING:
+                    section = "Naplánovať"
+                elif (
+                    result.collection_status == CollectionStatus.UNSUPPORTED
+                    or result.evaluation in {
+                        EvaluationOutcome.UNKNOWN,
+                        EvaluationOutcome.UNSUPPORTED,
+                        EvaluationOutcome.NOT_APPLICABLE,
+                    }
+                ):
+                    section = "Nepodporované/neoverené"
+                elif result.check in inventory_checks:
+                    section = "Inventár"
+                else:
+                    section = "Zdravie"
                 detail = FileRunStore._result_detail(result)
-                lines.append(
-                    f"- {result.device_name} [{result.platform or 'unknown'}] "
-                    f"{result.check}: "
-                    f"{result.evaluation.value} / {result.status} ({detail})"
+                sections[section].append(
+                    f"  - {result.check}: collection="
+                    f"{result.collection_status.value}, evaluation="
+                    f"{result.evaluation.value}, status={result.status} ({detail})"
                 )
-        if run.charts:
-            lines.extend(("", "Zabbix charts (best effort):"))
-            for chart in run.charts:
-                detail = chart.artifact or chart.error or "unavailable"
-                lines.append(
-                    f"- {chart.device_name} {chart.check} [{chart.window}]: "
-                    f"{chart.status} ({detail})"
-                )
+            for section in section_names:
+                entries = sections[section] or ("  - bez záznamu",)
+                lines.extend((f"  {section}:", *entries))
+
+            device_charts = charts_by_device.get((device_id, device_name), ())
+            if device_charts:
+                lines.append("  Zabbix grafy (best effort):")
+                for chart in device_charts:
+                    detail = chart.artifact or chart.error or "unavailable"
+                    lines.append(
+                        f"  - {chart.check} [{chart.window}]: "
+                        f"{chart.status} ({detail})"
+                    )
         return "\n".join(lines) + "\n"
 
 

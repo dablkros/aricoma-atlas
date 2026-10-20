@@ -37,6 +37,20 @@ class AnsiblePlatformProfile:
 
 
 CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
+IOS_IMPLEMENTED_COLLECTORS = frozenset({
+    CollectorId.IOS_IDENTITY,
+    CollectorId.IOS_RESOURCES,
+    # Keep the previous IDs executable for compatibility with direct backend
+    # callers. The planner explicitly prefers the thematic IDs below.
+    CollectorId.CPU_USAGE,
+    CollectorId.DEVICE_FACTS,
+})
+IOS_COLLECTOR_PREFERENCES = (
+    (CheckId.DEVICE_FACTS, CollectorId.IOS_IDENTITY),
+    (CheckId.OS_VERSION, CollectorId.IOS_IDENTITY),
+    (CheckId.UPTIME, CollectorId.IOS_IDENTITY),
+    (CheckId.CPU_UTILIZATION, CollectorId.IOS_RESOURCES),
+)
 FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS})
 CBS_COLLECTORS = frozenset({
     CollectorId.CPU_USAGE,
@@ -57,7 +71,8 @@ ANSIBLE_PLATFORMS = {
         authentication="ssh",
         collection="cisco.ios",
         module_family="cisco.ios.ios_command",
-        supported_collectors=CPU_AND_FACTS,
+        supported_collectors=IOS_IMPLEMENTED_COLLECTORS,
+        preferred_collectors=IOS_COLLECTOR_PREFERENCES,
         legacy_kex_algorithms=("diffie-hellman-group1-sha1",),
         legacy_hostkey_algorithms=(
             "ssh-ed25519",

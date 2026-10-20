@@ -1897,9 +1897,18 @@ percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. 
 CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
 dostupné aj v `result.json` a API behu.
 
+Pre platformu `cisco-ios` Atlas plánuje overené checks cez tematické collectory
+`ios_identity` a `ios_resources`, takže jeden zber môže vytvoriť viac
+normalizovaných výsledkov bez opakovania rovnakého príkazu. Ostatné navrhnuté
+IOS collectory ostávajú explicitne unsupported, kým nemajú overený parser a
+fixture. Výsledok oddeľuje `collection_status` od `evaluation` a textový report
+je zoskupený podľa zariadenia do častí Vyžaduje zásah, Naplánovať, Zdravie,
+Inventár a Nepodporované/neoverené. Presný návrh a parser gate dokumentuje
+[Cisco IOS tematický collector plán](docs/prophylaxis-cisco-ios.md).
+
 Každý aktívny NetBox device s `profylaxia_enabled=true` vykoná aj interné
 kontroly `serial_inventory` a `model_inventory`. Atlas na ne použije jeden
-spoločný `device_facts` collector aj vtedy, keď používateľ vybral iba inú
+spoločný identity/facts collector aj vtedy, keď používateľ vybral iba inú
 profylaktickú kontrolu. Výsledok sa riadi nasledujúcimi pravidlami:
 
 - ak je natívne pole NetBox Device `serial` prázdne a zariadenie vráti sériové

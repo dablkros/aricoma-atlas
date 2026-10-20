@@ -1,6 +1,10 @@
 ---
 atlas_transport_files:
   ssh:
+    ios_resources:
+      cisco-ios: cpu/cisco_ios.yml
+    ios_identity:
+      cisco-ios: device_facts/cisco_ios.yml
     cpu_usage:
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
@@ -19,6 +23,10 @@ atlas_transport_files:
     device_facts:
       fortios: device_facts/fortios.yml
   telnet:
+    ios_resources:
+      cisco-ios: telnet/cpu/cisco_ios.yml
+    ios_identity:
+      cisco-ios: telnet/device_facts/cisco_ios.yml
     cpu_usage:
       cisco-ios: telnet/cpu/cisco_ios.yml
     device_facts:

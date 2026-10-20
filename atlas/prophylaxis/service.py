@@ -247,7 +247,10 @@ class ProphylaxisService:
             platform = target.platform
             profile = self.registry.resolve(target.platform)
             try:
-                collector = self.collector_registry.resolve_check(check_id)
+                collector = self.collector_registry.resolve_check(
+                    check_id,
+                    profile,
+                )
             except ValueError:
                 return self._error(
                     target.name,
@@ -339,7 +342,8 @@ class ProphylaxisService:
                 target = device_target(device)
                 profile = self.registry.resolve(target.platform)
                 collector = self.collector_registry.resolve_check(
-                    CheckId.CPU_UTILIZATION
+                    CheckId.CPU_UTILIZATION,
+                    profile,
                 )
                 if not profile.supports_collector(collector.id):
                     continue
