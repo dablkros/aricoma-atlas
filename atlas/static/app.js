@@ -595,6 +595,12 @@ function setPill(element, status, text = titleCase(status)) {
 function renderPlatformStatus(payload) {
   for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const card = document.querySelector(`[data-component="${name}"]`);
+    const disabled = payload.components?.[name]?.status === "disabled";
+    card.hidden = disabled;
+    document.querySelectorAll(`[data-requires-component="${name}"]`).forEach(
+      (section) => { section.hidden = disabled; },
+    );
+    if (disabled) continue;
     const target = card.querySelector(".component-status");
     const componentStatus = payload.components?.[name]?.status || "unknown";
     const componentUrl = payload.components?.[name]?.url;
@@ -929,11 +935,9 @@ function setSyncBusy(busy) {
 async function loadDashboard() {
   elements.refreshButton.disabled = true;
   setPageMessage();
-  const [platform, overview, devices] = await Promise.allSettled([
-    apiRequest("/api/status"),
-    apiRequest("/api/oxidized/status"),
-    apiRequest("/api/oxidized/devices"),
-  ]);
+  const platform = await Promise.resolve(apiRequest("/api/status"))
+    .then((value) => ({ status: "fulfilled", value }))
+    .catch((reason) => ({ status: "rejected", reason }));
 
   if (platform.status === "fulfilled") {
     renderPlatformStatus(platform.value);
@@ -941,20 +945,25 @@ async function loadDashboard() {
     renderPlatformUnavailable();
   }
 
-  if (overview.status === "fulfilled") {
-    renderOxidizedStatus(overview.value);
-  } else {
-    renderOxidizedStatusUnavailable();
+  const oxidizedEnabled = platform.status === "fulfilled"
+    && platform.value.components?.oxidized?.status !== "disabled";
+  const oxidizedResults = oxidizedEnabled
+    ? await Promise.allSettled([
+        apiRequest("/api/oxidized/status"),
+        apiRequest("/api/oxidized/devices"),
+      ])
+    : [];
+  const [overview, devices] = oxidizedResults;
+  if (oxidizedEnabled) {
+    if (overview.status === "fulfilled") renderOxidizedStatus(overview.value);
+    else renderOxidizedStatusUnavailable();
+    if (devices.status === "fulfilled") {
+      state.devices = devices.value;
+      renderDevices();
+    } else renderDevicesUnavailable();
   }
 
-  if (devices.status === "fulfilled") {
-    state.devices = devices.value;
-    renderDevices();
-  } else {
-    renderDevicesUnavailable();
-  }
-
-  if ([platform, overview, devices].some(
+  if ([platform, ...oxidizedResults].some(
     (result) => result.status === "rejected",
   )) {
     setPageMessage("Some operational data is currently unavailable. Refresh after the dependency recovers.");

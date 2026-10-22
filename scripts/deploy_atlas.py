@@ -20,6 +20,7 @@ from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
 )
+from atlas.components import load_components  # noqa: E402
 from atlas.proxy import load_config as load_proxy_config  # noqa: E402
 
 
@@ -77,7 +78,7 @@ def parse_args():
         "--prepare-only",
         action="store_true",
         help=(
-            "Prepare NetBox, Oxidized, Zabbix, Atlas backend and Nginx runtimes "
+            "Prepare the Atlas core, selected optional components and Nginx runtimes "
             "and secrets "
             "without starting their containers. "
             "OpenBao is still started because it "
@@ -523,17 +524,24 @@ def print_result(args):
     print(
         "Secrets source of truth: OpenBao"
     )
-    print(
-        "Oxidized: prepared only"
-        if args.prepare_only
-        else "Oxidized: ready (waits for inventory when empty)"
-    )
+    selection = load_components()
+    if selection.enabled("oxidized"):
+        print(
+            "Oxidized: prepared only"
+            if args.prepare_only
+            else "Oxidized: ready (waits for inventory when empty)"
+        )
+    else:
+        print("Oxidized: not selected")
     print(
         "Atlas backend: prepared only"
         if args.prepare_only
         else "Atlas backend: ready on 127.0.0.1:8081"
     )
-    print("Zabbix: prepared only" if args.prepare_only else "Zabbix: ready")
+    if selection.enabled("zabbix"):
+        print("Zabbix: prepared only" if args.prepare_only else "Zabbix: ready")
+    else:
+        print("Zabbix: not selected")
     print("Nginx: prepared only" if args.prepare_only else "Nginx: ready")
 
 
@@ -544,6 +552,7 @@ def print_result(args):
 
 def main():
     args = parse_args()
+    selection = load_components()
 
     try:
         # Validate customer DNS, subnets and CA certificates before any deployment.
@@ -563,8 +572,14 @@ def main():
         deploy_netbox(
             args
         )
-        deploy_oxidized(args)
-        deploy_zabbix(args)
+        if selection.enabled("oxidized"):
+            deploy_oxidized(args)
+        else:
+            info("Oxidized was not selected; skipping stage")
+        if selection.enabled("zabbix"):
+            deploy_zabbix(args)
+        else:
+            info("Zabbix was not selected; skipping stage")
         deploy_backend(args)
         deploy_proxy(args)
 

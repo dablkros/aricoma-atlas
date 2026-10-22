@@ -13,6 +13,8 @@ tls:
   ca_certificate: ./tls/ca.crt
 
 services:
+  # Keep netbox and only the optional components selected during install.
+  # Example: --components zabbix means netbox + zabbix, without oxidized.
   netbox:
     hostname: netbox.atlas.example.internal
     certificate: ./tls/server-fullchain.pem

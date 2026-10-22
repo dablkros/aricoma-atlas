@@ -5,7 +5,7 @@ from typing import Literal, Optional
 from pydantic import BaseModel, ConfigDict
 
 
-HealthState = Literal["healthy", "degraded", "unhealthy"]
+HealthState = Literal["healthy", "degraded", "unhealthy", "disabled"]
 
 
 class ComponentStatusResponse(BaseModel):

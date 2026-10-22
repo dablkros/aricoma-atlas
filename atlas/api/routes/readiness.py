@@ -21,17 +21,21 @@ router = APIRouter(tags=["health"])
 def readiness(request: Request, response: Response) -> ReadinessResponse:
     result = request.app.state.dependencies.platform_status.check()
     dependency_names = ("openbao", "netbox", "oxidized", "zabbix")
-    states = {
-        name: "ok" if result.components[name].status == "healthy" else "error"
-        for name in dependency_names
-    }
+    states = {}
+    for name in dependency_names:
+        component_status = result.components[name].status
+        states[name] = (
+            "disabled" if component_status == "disabled"
+            else "ok" if component_status == "healthy"
+            else "error"
+        )
     reasons = {
         name: result.components[name].reason
         for name in dependency_names
         if result.components[name].reason
     }
 
-    ready = all(value == "ok" for value in states.values())
+    ready = all(value in {"ok", "disabled"} for value in states.values())
     if not ready:
         response.status_code = status.HTTP_503_SERVICE_UNAVAILABLE
 

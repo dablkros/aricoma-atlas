@@ -55,13 +55,16 @@ def create_app(
 
     install_request_middleware(application)
     register_error_handlers(application)
-    application.include_router(monitoring.router, prefix=settings.api_prefix)
+    if settings.zabbix_enabled:
+        application.include_router(monitoring.router, prefix=settings.api_prefix)
     application.include_router(health.router, prefix=settings.api_prefix)
     application.include_router(readiness.router, prefix=settings.api_prefix)
     application.include_router(status.router, prefix=settings.api_prefix)
-    application.include_router(oxidized.router, prefix=settings.api_prefix)
+    if settings.oxidized_enabled:
+        application.include_router(oxidized.router, prefix=settings.api_prefix)
     application.include_router(prophylaxis.router, prefix=settings.api_prefix)
-    application.include_router(zabbix.router, prefix=settings.api_prefix)
+    if settings.zabbix_enabled:
+        application.include_router(zabbix.router, prefix=settings.api_prefix)
     application.mount(
         "/static",
         NoCacheStaticFiles(directory=STATIC_DIRECTORY),

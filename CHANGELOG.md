@@ -4,6 +4,43 @@ All notable changes to Aricoma Atlas are documented here. A release section is
 final only after its commit passes the complete release workflow and receives
 the corresponding Git tag.
 
+## [0.4.2] - 2026-10-22
+
+### Added
+
+- First-install selection of Oxidized and Zabbix while NetBox, OpenBao,
+  Ansible and prophylaxis remain the fixed Atlas core. The protected component
+  manifest is preserved by updates and supports add-only expansion.
+- Categorized Cisco IOS and Cisco CBS prophylaxis collectors for resources,
+  interfaces, operations and compliance, including legacy Cisco SSH algorithms
+  and an explicit NetBox service-driven Telnet path.
+- Check Point Gaia device-facts collection through a dedicated clish module and
+  explicit Gaia platform/catalog mappings.
+- Serial-number and model inventory checks with guarded NetBox reconciliation,
+  plus normalized report formatting and optional Zabbix chart artifacts.
+- Cisco CBS350-12XT catalog data and expanded platform/device mappings.
+
+### Changed
+
+- Deploy, ingress, backend networks, readiness, Operations UI and `atlasctl`
+  now follow the persisted optional-component selection.
+- Prophylaxis results retain normalized values, evidence and evaluation status
+  instead of reducing successful collection to a generic `collected` message.
+- Existing installations without a component manifest retain the legacy full
+  Oxidized and Zabbix stack during upgrade.
+- Align package, deployment image, README and example environment versions to
+  0.4.2.
+
+### Known limitations
+
+- Optional-component removal is deliberately unsupported; deployed components
+  may only be retained or extended.
+- Cisco licensing, recommended-software and product end-of-life lookups are not
+  part of this release.
+- New first-install component combinations require GitHub Actions and VM
+  acceptance after the release commit is pushed; no local test suite was run
+  during release preparation.
+
 ## [0.4.1-beta] - 2026-10-18
 
 ### Added

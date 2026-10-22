@@ -59,16 +59,20 @@ def main():
     args = parser.parse_args()
     config = load_config()
     verify_listen_address(config["proxy"]["listen_address"])
-    client, token = connect_openbao()
-    try:
-        secret = ensure_web_secret(client, token)
-        file = prepare_runtime(config, secret)
-    finally:
-        client.revoke_self(token)
+    secret = None
+    if "oxidized" in config["services"]:
+        client, token = connect_openbao()
+        try:
+            secret = ensure_web_secret(client, token)
+        finally:
+            client.revoke_self(token)
+    file = prepare_runtime(config, secret)
     if args.prepare_only:
         print("[OK] Nginx configuration and credentials prepared; no containers started")
         return
-    networks = [NETBOX_NETWORK, OXIDIZED_NETWORK]
+    networks = [NETBOX_NETWORK]
+    if "oxidized" in config["services"]:
+        networks.append(OXIDIZED_NETWORK)
     if "zabbix" in config["services"]:
         networks.append(ZABBIX_NETWORK)
     for network in networks:
@@ -86,7 +90,8 @@ def main():
     wait_healthy(file, "atlas-proxy", "proxy", 90)
     for name, service in config["services"].items():
         print(f"[OK] {name}: https://{service['hostname']}:{config['proxy']['https_port']}")
-    print("[OK] Oxidized credentials: OpenBao atlas/oxidized/web (values not printed)")
+    if "oxidized" in config["services"]:
+        print("[OK] Oxidized credentials: OpenBao atlas/oxidized/web (values not printed)")
 
 
 if __name__ == "__main__":
