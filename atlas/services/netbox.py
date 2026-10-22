@@ -1,4 +1,4 @@
-"""Read-only NetBox API client backed by the OpenBao token source."""
+"""NetBox API client backed by the OpenBao token source."""
 
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import urljoin, urlsplit
@@ -92,6 +92,38 @@ class NetBoxService:
             raise DependencyError("invalid_response")
         return data
 
+    def _patch_json(
+        self,
+        url: str,
+        token: str,
+        payload: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        try:
+            response = self.requester.patch(
+                url,
+                headers={
+                    **self.authorization_headers(token),
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException:
+            raise DependencyError("connection_failed") from None
+
+        if response.status_code in {401, 403}:
+            raise DependencyError("authentication_failed")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise DependencyError("unavailable")
+
+        try:
+            data = response.json()
+        except ValueError:
+            raise DependencyError("invalid_response") from None
+        if not isinstance(data, dict):
+            raise DependencyError("invalid_response")
+        return data
+
     @staticmethod
     def _validate_page(data: Dict[str, Any]) -> None:
         if not isinstance(data.get("results"), list):
@@ -151,6 +183,10 @@ class NetBoxService:
     def get(self, endpoint: str, params: Optional[Dict[str, Any]] = None) -> dict:
         token = self.openbao.get_netbox_api_token()
         return self._request_json(self._endpoint_url(endpoint), token, params=params)
+
+    def patch(self, endpoint: str, payload: Dict[str, Any]) -> dict:
+        token = self.openbao.get_netbox_api_token()
+        return self._patch_json(self._endpoint_url(endpoint), token, payload)
 
     def get_all(
         self,

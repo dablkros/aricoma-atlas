@@ -18,6 +18,7 @@ ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
 from atlas import __version__  # noqa: E402
+from atlas.components import load_components  # noqa: E402
 from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
@@ -372,13 +373,14 @@ def sync_backend_operator_token(root=ROOT, client=None):
     return token_file
 
 
-def prepare_runtime(config, root=ROOT, ui_urls=None):
+def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     root = Path(root).resolve()
     backend = config["backend"]
-    required_ui_urls = {"netbox", "oxidized", "zabbix"}
+    selection = selection or load_components(root / ".runtime/components.yaml")
+    required_ui_urls = set(selection.ingress_services)
     if not isinstance(ui_urls, dict) or set(ui_urls) != required_ui_urls:
         raise RuntimeError(
-            "Atlas backend requires NetBox, Oxidized and Zabbix HTTPS UI URLs"
+            "Atlas backend UI URLs do not match the selected components"
         )
     if any(
         not isinstance(value, str) or not value.startswith("https://")
@@ -461,11 +463,12 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
     inventory_directory = Path(
         os.environ.get("ATLAS_OXIDIZED_RUN_DIR", "/run/atlas/oxidized")
     )
-    if not inventory_directory.is_absolute():
-        raise RuntimeError("ATLAS_OXIDIZED_RUN_DIR must be an absolute path")
-    inventory_file = inventory_directory / "router.json"
-    if inventory_directory.is_symlink() or not inventory_file.is_file():
-        raise RuntimeError("Oxidized runtime inventory is not prepared")
+    if selection.enabled("oxidized"):
+        if not inventory_directory.is_absolute():
+            raise RuntimeError("ATLAS_OXIDIZED_RUN_DIR must be an absolute path")
+        inventory_file = inventory_directory / "router.json"
+        if inventory_directory.is_symlink() or not inventory_file.is_file():
+            raise RuntimeError("Oxidized runtime inventory is not prepared")
 
     prophylaxis_directory = root / ".runtime/prophylaxis"
     if prophylaxis_directory.is_symlink():
@@ -496,13 +499,61 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
         f"{monitoring_operator_token}:/run/secrets/atlas-monitoring-operator-token:ro",
         f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
         f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
-        f"{inventory_directory}:/run/atlas/oxidized:rw",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
     ]
+    if selection.enabled("oxidized"):
+        volumes.append(f"{inventory_directory}:/run/atlas/oxidized:rw")
     if backend["ssh_strict_host_keys"]:
         volumes.append(
             f"{known_hosts_file}:/run/atlas/ssh/known_hosts:ro"
         )
+
+    environment = {
+        "ATLAS_APP_VERSION": backend["version"],
+        "ATLAS_ENVIRONMENT": backend["environment"],
+        "ATLAS_LOG_LEVEL": backend["log_level"],
+        "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
+        "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
+        "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
+        "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
+        "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
+        "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",
+        "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
+        "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
+        "ATLAS_OXIDIZED_ENABLED": str(selection.enabled("oxidized")).lower(),
+        "ATLAS_ZABBIX_ENABLED": str(selection.enabled("zabbix")).lower(),
+        "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
+        "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
+        "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(backend["prophylaxis_result_retention"]),
+        "ATLAS_PROPHYLAXIS_CONCURRENCY": str(backend["prophylaxis_concurrency"]),
+        "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
+        "ATLAS_ANSIBLE_JOB_TIMEOUT": str(backend["ansible_job_timeout"]),
+        "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
+        "ATLAS_SSH_STRICT_HOST_KEYS": str(backend["ssh_strict_host_keys"]).lower(),
+        "ATLAS_FORTIOS_VALIDATE_CERTS": str(backend["fortios_validate_certs"]).lower(),
+    }
+    if selection.enabled("oxidized"):
+        environment.update({
+            "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
+            "ATLAS_OXIDIZED_UI_URL": ui_urls["oxidized"],
+            "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
+        })
+    if selection.enabled("zabbix"):
+        environment.update({
+            "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
+            "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
+        })
+    service_networks = {"openbao": {}, "netbox": {}}
+    external_networks = {
+        "openbao": {"external": True, "name": OPENBAO_NETWORK},
+        "netbox": {"external": True, "name": NETBOX_NETWORK},
+    }
+    if selection.enabled("oxidized"):
+        service_networks["oxidized"] = {}
+        external_networks["oxidized"] = {"external": True, "name": OXIDIZED_NETWORK}
+    if selection.enabled("zabbix"):
+        service_networks["zabbix"] = {}
+        external_networks["zabbix"] = {"external": True, "name": ZABBIX_NETWORK}
 
     compose_file = runtime / "docker-compose.yml"
     write_yaml(
@@ -521,51 +572,10 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
                     },
                     "restart": "unless-stopped",
                     "init": True,
-                    "environment": {
-                        "ATLAS_APP_VERSION": backend["version"],
-                        "ATLAS_ENVIRONMENT": backend["environment"],
-                        "ATLAS_LOG_LEVEL": backend["log_level"],
-                        "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
-                        "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
-                        "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
-                        "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
-                        "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
-                        "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",
-                        "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
-                        "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
-                        "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
-                        "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
-                        "ATLAS_OXIDIZED_UI_URL": ui_urls["oxidized"],
-                        "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
-                        "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
-                        "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
-                        "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
-                        "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(
-                            backend["prophylaxis_result_retention"]
-                        ),
-                        "ATLAS_PROPHYLAXIS_CONCURRENCY": str(
-                            backend["prophylaxis_concurrency"]
-                        ),
-                        "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
-                        "ATLAS_ANSIBLE_JOB_TIMEOUT": str(
-                            backend["ansible_job_timeout"]
-                        ),
-                        "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
-                        "ATLAS_SSH_STRICT_HOST_KEYS": str(
-                            backend["ssh_strict_host_keys"]
-                        ).lower(),
-                        "ATLAS_FORTIOS_VALIDATE_CERTS": str(
-                            backend["fortios_validate_certs"]
-                        ).lower(),
-                    },
+                    "environment": environment,
                     "user": f"{runtime_user}:{runtime_group}",
                     "volumes": volumes,
-                    "networks": {
-                        "openbao": {},
-                        "netbox": {},
-                        "oxidized": {},
-                        "zabbix": {},
-                    },
+                    "networks": service_networks,
                     "ports": [
                         f"{network['listen_address']}:{network['host_port']}:{network['container_port']}"
                     ],
@@ -583,12 +593,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None):
                     },
                 }
             },
-            "networks": {
-                "openbao": {"external": True, "name": OPENBAO_NETWORK},
-                "netbox": {"external": True, "name": NETBOX_NETWORK},
-                "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
-                "zabbix": {"external": True, "name": ZABBIX_NETWORK},
-            },
+            "networks": external_networks,
         },
     )
     os.chmod(compose_file, 0o600)
@@ -623,9 +628,11 @@ def main():
     config = load_config()
     proxy_config = load_proxy_config()
     sync_backend_operator_token()
+    selection = load_components()
     compose_file = prepare_runtime(
         config,
         ui_urls=public_service_urls(proxy_config),
+        selection=selection,
     )
 
     if args.prepare_only:

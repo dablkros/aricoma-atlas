@@ -1,0 +1,21 @@
+---
+- name: Collect Cisco IOS interface-health commands
+  cisco.ios.ios_command:
+    commands:
+      - show interfaces
+      - show interfaces status
+      - show interfaces counters errors
+      - show ip interface brief
+      - show interfaces transceiver
+  register: atlas_ios_interfaces
+  changed_when: false
+
+- name: Prepare Cisco IOS interface outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_interfaces: "{{ atlas_ios_interfaces.stdout[0] }}"
+        show_interfaces_status: "{{ atlas_ios_interfaces.stdout[1] }}"
+        show_interfaces_counters_errors: "{{ atlas_ios_interfaces.stdout[2] }}"
+        show_ip_interface_brief: "{{ atlas_ios_interfaces.stdout[3] }}"
+        show_interfaces_transceiver: "{{ atlas_ios_interfaces.stdout[4] }}"

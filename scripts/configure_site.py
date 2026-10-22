@@ -20,6 +20,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from atlas.deployment import write_private  # noqa: E402
+from atlas.components import load_components  # noqa: E402
 from atlas.monitoring.models import load_config as load_monitoring_config  # noqa: E402
 from atlas.proxy import HOSTNAME, load_config as load_proxy_config  # noqa: E402
 from scripts.import_site_config import import_config as import_proxy_config  # noqa: E402
@@ -148,7 +149,7 @@ def _egress_profiles(value, allowed_networks):
     return normalized
 
 
-def normalize_site(raw, base):
+def normalize_site(raw, base, expected_services=SERVICES):
     raw = _mapping(raw, "Site configuration")
     if raw.get("version") != 1:
         raise ValueError("Site configuration version must be 1")
@@ -161,11 +162,15 @@ def normalize_site(raw, base):
     }
 
     services = _mapping(raw.get("services"), "services")
-    if set(services) != set(SERVICES):
-        raise ValueError("services must contain exactly netbox, oxidized and zabbix")
+    expected_services = tuple(expected_services)
+    if set(services) != set(expected_services):
+        raise ValueError(
+            "services must contain exactly the selected ingress services: "
+            + ", ".join(expected_services)
+        )
     normalized_services = {}
     hostnames = []
-    for name in SERVICES:
+    for name in expected_services:
         service = _mapping(services[name], f"services.{name}")
         hostname = service.get("hostname")
         if not isinstance(hostname, str) or not HOSTNAME.fullmatch(hostname):
@@ -184,7 +189,7 @@ def normalize_site(raw, base):
         normalized_tls["ca_certificate"] = _resolve_file(
             tls.get("ca_certificate"), base, "tls.ca_certificate"
         )
-        for name in SERVICES:
+        for name in expected_services:
             service = services[name]
             normalized_services[name].update(
                 {
@@ -303,7 +308,7 @@ def generate_lab_tls(site, directory):
     request = directory / "server.csr"
     extension = directory / "server.ext"
     server_cert = directory / "server.crt"
-    names = [site["services"][name]["hostname"] for name in SERVICES]
+    names = [service["hostname"] for service in site["services"].values()]
     extension.write_text(
         "subjectAltName=" + ",".join(f"DNS:{name}" for name in names) + "\n"
         "extendedKeyUsage=serverAuth\n"
@@ -338,7 +343,7 @@ def generate_lab_tls(site, directory):
         if result.returncode:
             raise RuntimeError(f"{command[0]} failed while generating LAB TLS material")
     site["tls"]["ca_certificate"] = str(ca_cert)
-    for name in SERVICES:
+    for name in site["services"]:
         site["services"][name]["certificate"] = str(server_cert)
         site["services"][name]["private_key"] = str(server_key)
 
@@ -349,8 +354,13 @@ def proxy_document(site):
     )
     template["proxy"].update(site["proxy"])
     template["tls"]["ca_certificate"] = site["tls"]["ca_certificate"]
-    for name in SERVICES:
-        template["services"][name].update(site["services"][name])
+    template["services"] = {
+        name: {
+            **template["services"][name],
+            **service,
+        }
+        for name, service in site["services"].items()
+    }
     return template
 
 
@@ -392,7 +402,7 @@ def _managed_paths(target_root, site):
         runtime / "monitoring/config.yaml",
         runtime / "tls/ca.crt",
     ]
-    for name in SERVICES:
+    for name in site["services"]:
         paths.extend([runtime / f"tls/{name}.crt", runtime / f"tls/{name}.key"])
     if "ca_bundle" in site["fortios"]:
         paths.append(runtime / "monitoring/trust/fortigate-ca.pem")
@@ -467,12 +477,17 @@ def _prompt(label, default=None):
     return value or default
 
 
-def interactive_site():
+def interactive_site(service_names=SERVICES):
     print("Atlas first-boot site configuration")
     print("Values are validated before runtime files are written.\n")
     listen = _prompt("Atlas management/listen IP")
     domain = _prompt("DNS suffix, for example atlas.example.internal")
     tls_mode = _prompt("TLS mode (existing or lab_generated)", "existing")
+    monitoring_source = (
+        _prompt("Zabbix SNMP source IP", listen)
+        if "zabbix" in service_names
+        else listen
+    )
     site = {
         "version": 1,
         "proxy": {
@@ -486,16 +501,16 @@ def interactive_site():
         },
         "tls": {"mode": tls_mode},
         "services": {
-            name: {"hostname": f"{name}.{domain}"} for name in SERVICES
+            name: {"hostname": f"{name}.{domain}"} for name in service_names
         },
         "monitoring": {
-            "source_ip": _prompt("Zabbix SNMP source IP", listen),
+            "source_ip": monitoring_source,
             "allowed_device_networks": PRIVATE_NETWORKS,
         },
     }
     if tls_mode == "existing":
         site["tls"]["ca_certificate"] = _prompt("CA bundle path")
-        for name in SERVICES:
+        for name in service_names:
             site["services"][name]["certificate"] = _prompt(
                 f"{name} certificate/full-chain path"
             )
@@ -523,14 +538,16 @@ def main():
     args = parse_args()
     if os.geteuid() != 0 and not args.check:
         raise RuntimeError("Run configuration writes as root or use --check")
+    selection = load_components(args.target_root / ".runtime/components.yaml")
+    service_names = selection.ingress_services
     if args.site_file:
         path = args.site_file.expanduser().resolve()
         raw = yaml.safe_load(path.read_text(encoding="utf-8"))
         base = path.parent
     else:
-        raw = interactive_site()
+        raw = interactive_site(service_names)
         base = Path.cwd()
-    site = normalize_site(raw, base)
+    site = normalize_site(raw, base, service_names)
     with tempfile.TemporaryDirectory(prefix="atlas-site-check-") as temporary:
         if site["tls"]["mode"] == "lab_generated":
             generate_lab_tls(site, Path(temporary) / "lab-tls")

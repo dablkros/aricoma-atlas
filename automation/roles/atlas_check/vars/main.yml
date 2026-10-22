@@ -1,6 +1,33 @@
 ---
 atlas_transport_files:
   ssh:
+    ios_resources:
+      cisco-ios: resources/cisco_ios.yml
+      cisco-ios-xe: resources/cisco_ios.yml
+    ios_interfaces:
+      cisco-ios: interfaces/cisco_ios.yml
+      cisco-ios-xe: interfaces/cisco_ios.yml
+    ios_compliance:
+      cisco-ios: compliance/cisco_ios.yml
+      cisco-ios-xe: compliance/cisco_ios.yml
+    ios_operations:
+      cisco-ios: operations/cisco_ios.yml
+      cisco-ios-xe: operations/cisco_ios.yml
+    ios_identity:
+      cisco-ios: device_facts/cisco_ios.yml
+      cisco-ios-xe: device_facts/cisco_ios.yml
+    cbs_resources:
+      cisco-cbs: resources/cisco_cbs.yml
+      cisco-cbs250-350: resources/cisco_cbs.yml
+    cbs_interfaces:
+      cisco-cbs: interfaces/cisco_cbs.yml
+      cisco-cbs250-350: interfaces/cisco_cbs.yml
+    cbs_compliance:
+      cisco-cbs: compliance/cisco_cbs.yml
+      cisco-cbs250-350: compliance/cisco_cbs.yml
+    cbs_operations:
+      cisco-cbs: operations/cisco_cbs.yml
+      cisco-cbs250-350: operations/cisco_cbs.yml
     cpu_usage:
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
@@ -12,12 +39,23 @@ atlas_transport_files:
       cisco-cbs: device_facts/cisco_cbs.yml
       cisco-cbs250-350: device_facts/cisco_cbs.yml
       aruba-aos-cx: device_facts/aruba_aoscx.yml
+      checkpoint-gaia: device_facts/checkpoint_gaia.yml
   https:
     cpu_usage:
       fortios: cpu/fortios.yml
     device_facts:
       fortios: device_facts/fortios.yml
   telnet:
+    ios_resources:
+      cisco-ios: telnet/resources/cisco_ios.yml
+    ios_interfaces:
+      cisco-ios: telnet/interfaces/cisco_ios.yml
+    ios_compliance:
+      cisco-ios: telnet/compliance/cisco_ios.yml
+    ios_operations:
+      cisco-ios: telnet/operations/cisco_ios.yml
+    ios_identity:
+      cisco-ios: telnet/device_facts/cisco_ios.yml
     cpu_usage:
       cisco-ios: telnet/cpu/cisco_ios.yml
     device_facts:

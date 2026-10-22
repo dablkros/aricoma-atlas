@@ -5,12 +5,20 @@ from atlas.prophylaxis.errors import ParseFailedError
 from atlas.prophylaxis.models import (
     CheckId,
     CollectorId,
+    EvaluationOutcome,
     RawCheckResult,
     RawCollectorResult,
 )
 from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
+    normalize_environment_health,
+    normalize_interface_errors,
+    normalize_license_state,
+    normalize_memory,
+    normalize_ntp_status,
+    normalize_pki_certificates,
+    normalize_recent_logs,
     normalize_uptime,
 )
 
@@ -23,6 +31,15 @@ def fixture(name):
 
 
 class ProphylaxisParserTests(unittest.TestCase):
+    @staticmethod
+    def command_result(platform, collector, **outputs):
+        return RawCollectorResult(
+            collector=collector,
+            platform=platform,
+            status="ok",
+            data=outputs,
+        )
+
     def test_cisco_ios_and_cbs_parsers_remain_platform_specific(self):
         ios = RawCheckResult(
             check=CheckId.CPU_UTILIZATION,
@@ -201,6 +218,83 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(facts.serial_number, "FGVMEV1234567890")
         self.assertEqual(facts.uptime_seconds, 100_000)
         self.assertEqual(uptime.uptime_seconds, 100_000)
+
+    def test_ios_resource_parsers_keep_thresholds_explicit(self):
+        raw = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_RESOURCES,
+            show_processes_memory_sorted=(
+                "Processor Pool Total: 1000 Used: 250 Free: 750\n"
+            ),
+            show_environment_all="SYSTEM TEMPERATURE STATUS: Normal\nFan 1: OK",
+        )
+
+        memory = normalize_memory(raw)
+        environment = normalize_environment_health(raw)
+
+        self.assertEqual(memory.value, 25.0)
+        self.assertEqual(memory.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertEqual(memory.reason_code, "memory_threshold_unconfigured")
+        self.assertEqual(environment.outcome, EvaluationOutcome.PASS)
+
+    def test_cbs_environment_failure_is_not_reported_as_healthy(self):
+        raw = self.command_result(
+            "cisco-cbs250-350",
+            CollectorId.CBS_RESOURCES,
+            show_environment_all="fans Failure\nTemperature is OK",
+        )
+
+        values = normalize_environment_health(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.FAIL)
+        self.assertEqual(values.reason_code, "environment_fault_detected")
+
+    def test_absolute_interface_errors_require_a_delta(self):
+        raw = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_INTERFACES,
+            show_interfaces=(
+                "GigabitEthernet1 is up, line protocol is up\n"
+                "  12 input errors, 3 CRC, 0 frame, 0 overrun, 0 ignored\n"
+            ),
+        )
+
+        values = normalize_interface_errors(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertEqual(values.reason_code, "counter_delta_unavailable")
+        self.assertEqual(values.metrics["absolute_error_total"], 15)
+
+    def test_license_certificate_ntp_and_logs_have_actionable_outcomes(self):
+        compliance = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_COMPLIANCE,
+            show_license_summary="Authorization Status: OUT OF COMPLIANCE",
+            show_crypto_pki_certificates="end date: Jan 01 00:00:00 2020 UTC",
+        )
+        operations = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_OPERATIONS,
+            show_ntp_status="Clock is unsynchronized, stratum 16",
+            show_logging="%LINK-3-UPDOWN: Interface Gi1 changed state to down",
+        )
+
+        self.assertEqual(
+            normalize_license_state(compliance).outcome,
+            EvaluationOutcome.FAIL,
+        )
+        self.assertEqual(
+            normalize_pki_certificates(compliance).outcome,
+            EvaluationOutcome.FAIL,
+        )
+        self.assertEqual(
+            normalize_ntp_status(operations).outcome,
+            EvaluationOutcome.FAIL,
+        )
+        self.assertEqual(
+            normalize_recent_logs(operations).outcome,
+            EvaluationOutcome.FAIL,
+        )
 
 
 if __name__ == "__main__":

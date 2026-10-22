@@ -22,6 +22,8 @@ usage() {
     cat <<'EOF'
 Usage:
   sudo atlasctl configure [--site-file FILE] [--check] [--force]
+  sudo atlasctl components show
+  sudo atlasctl components add oxidized|zabbix
   sudo atlasctl deploy [deploy_atlas.py options]
   sudo atlasctl status
   sudo atlasctl openbao
@@ -39,6 +41,8 @@ Usage:
 
 Commands:
   configure             Create proxy, TLS and monitoring site configuration.
+  components show       Show the fixed core and installed optional components.
+  components add        Permanently add an optional component.
   deploy                Deploy or reconcile the full Atlas stack.
   status                Show Atlas container and Oxidized inventory state.
   openbao               Open the interactive OpenBao access helper.
@@ -106,6 +110,51 @@ prepare_oxidized_inventory_runtime() {
     chmod 0640 "${OXIDIZED_INVENTORY_DIR}/router.json"
 }
 
+component_enabled() {
+    cd "$ATLAS_ROOT"
+    "$PYTHON" - "$1" <<'PY'
+import sys
+from atlas.components import load_components
+raise SystemExit(0 if load_components().enabled(sys.argv[1]) else 1)
+PY
+}
+
+require_component() {
+    component_enabled "$1" || die "Atlas component '$1' is not installed"
+}
+
+show_components() {
+    cd "$ATLAS_ROOT"
+    "$PYTHON" "${ATLAS_ROOT}/scripts/configure_components.py" \
+        --show --target-root "$ATLAS_ROOT"
+}
+
+add_component() {
+    local name=$1
+    [[ "$name" == "oxidized" || "$name" == "zabbix" ]] || \
+        die "Optional component must be oxidized or zabbix"
+    local selected
+    selected="$(cd "$ATLAS_ROOT" && "$PYTHON" - "$name" <<'PY'
+import sys
+from atlas.components import load_components
+current = set(load_components().optional)
+current.add(sys.argv[1])
+print(",".join(sorted(current)) or "none")
+PY
+)"
+    "$PYTHON" "${ATLAS_ROOT}/scripts/configure_components.py" \
+        --components "$selected" --target-root "$ATLAS_ROOT" \
+        --owner "$ATLAS_USER" --group "$ATLAS_GROUP"
+    if [[ "$name" == "oxidized" ]]; then
+        install -m 0644 -o root -g root \
+            "${ATLAS_ROOT}/deployment/tmpfiles.d/aricoma-atlas.conf" \
+            /etc/tmpfiles.d/aricoma-atlas.conf
+        systemd-tmpfiles --create /etc/tmpfiles.d/aricoma-atlas.conf
+        prepare_oxidized_inventory_runtime
+    fi
+    printf '[INFO] Reconcile site TLS/hostname configuration, then run sudo atlasctl deploy.\n'
+}
+
 run_python_as_atlas() {
     local script=$1
     shift
@@ -163,7 +212,9 @@ show_status() {
     fi
 
     printf '\nZabbix:\n'
-    if [[ ! -f "$ZABBIX_COMPOSE" ]]; then
+    if ! component_enabled zabbix; then
+        printf '  state: NOT_SELECTED\n'
+    elif [[ ! -f "$ZABBIX_COMPOSE" ]]; then
         printf '  state: NOT_PREPARED\n'
     else
         local zabbix_container zabbix_state
@@ -186,6 +237,11 @@ show_status() {
 
     local source="${OXIDIZED_INVENTORY_DIR}/router.json"
     printf '\nOxidized:\n'
+
+    if ! component_enabled oxidized; then
+        printf '  state: NOT_SELECTED\n'
+        return
+    fi
 
     if [[ ! -f "$source" ]] || ! "$PYTHON" -c \
         'import json,sys; data=json.load(open(sys.argv[1])); raise SystemExit(0 if isinstance(data,list) and data else 1)' \
@@ -252,8 +308,30 @@ main() {
             shift
             [[ -f "$PROXY_CONFIG" ]] || \
                 die "Atlas site proxy configuration is missing: ${PROXY_CONFIG}"
-            prepare_oxidized_inventory_runtime
+            if component_enabled oxidized; then
+                prepare_oxidized_inventory_runtime
+            fi
             run_python_as_atlas "${ATLAS_ROOT}/scripts/deploy_atlas.py" "$@"
+            ;;
+        components)
+            shift
+            case "${1:-}" in
+                show)
+                    shift
+                    [[ $# -eq 0 ]] || die "components show accepts no options"
+                    show_components
+                    ;;
+                add)
+                    shift
+                    [[ -n "${1:-}" && $# -eq 1 ]] || \
+                        die "components add requires oxidized or zabbix"
+                    add_component "$1"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
             ;;
         status)
             shift
@@ -264,6 +342,7 @@ main() {
             run_python_as_atlas "${ATLAS_ROOT}/scripts/openbao_access.py" "$@"
             ;;
         oxidized)
+            require_component oxidized
             shift
             case "${1:-}" in
                 reconcile)
@@ -312,6 +391,7 @@ main() {
             esac
             ;;
         zabbix)
+            require_component zabbix
             shift
             case "${1:-}" in
                 status|sync)

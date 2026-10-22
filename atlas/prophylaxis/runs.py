@@ -1,34 +1,47 @@
-"""Asynchronous orchestration for NetBox-selected Profylaxia checks."""
+"""Asynchronous orchestration for NetBox-selected Profylaxia groups."""
 
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 import logging
 import threading
 
 from atlas.device_credentials import DeviceValidationError
-from atlas.prophylaxis.collectors import CollectorRegistry
+from atlas.prophylaxis.collectors import (
+    CollectionPlan,
+    CollectorRegistry,
+    CollectorTask,
+)
 from atlas.prophylaxis.errors import (
     DeviceResolutionError,
     ProphylaxisExecutionError,
     UnsupportedPlatformError,
 )
+from atlas.prophylaxis.evaluation import evaluate_uptime
 from atlas.prophylaxis.models import (
-    CHECK_VALUE_ALIASES,
     CheckId,
+    CollectionStatus,
     CollectorId,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     EvaluationOutcome,
     OSVersionValues,
     SystemMetricValues,
     UptimeValues,
+    expand_check_selection,
 )
+from atlas.prophylaxis.charts import render_metric_svg
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
+    ModelInventoryValues,
+    ProphylaxisChart,
     ProphylaxisCheckResult,
     ProphylaxisRun,
     RunSummary,
+    SerialInventoryValues,
     utc_now,
 )
+from atlas.prophylaxis.run_store import RunStoreError
 from atlas.prophylaxis.service import (
     device_target,
     resolve_service_port,
@@ -39,10 +52,19 @@ from atlas.services.errors import DependencyError
 
 logger = logging.getLogger("atlas.prophylaxis.runs")
 OPERATION = "selected_checks"
+SERIAL_INVENTORY_CHECK = CheckId.SERIAL_INVENTORY.value
+MODEL_INVENTORY_CHECK = CheckId.MODEL_INVENTORY.value
+INVENTORY_CHECKS = (SERIAL_INVENTORY_CHECK, MODEL_INVENTORY_CHECK)
+IDENTITY_COLLECTORS = frozenset({
+    CollectorId.DEVICE_FACTS,
+    CollectorId.IOS_IDENTITY,
+})
+ZABBIX_CHART_METRICS = {CheckId.CPU_UTILIZATION.value: "cpu"}
+ZABBIX_CHART_WINDOW = "1h"
 
 
 class DeviceFactsRunService:
-    """Run only the checks selected for each eligible NetBox device."""
+    """Run selected checks plus inventory identity controls for each device."""
 
     def __init__(
         self,
@@ -54,6 +76,10 @@ class DeviceFactsRunService:
         concurrency: int,
         registry: AnsiblePlatformRegistry | None = None,
         collector_registry: CollectorRegistry | None = None,
+        inventory_reconciliation_enabled: bool = False,
+        zabbix_monitoring=None,
+        oxidized=None,
+        chart_renderer=render_metric_svg,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -62,7 +88,14 @@ class DeviceFactsRunService:
         self.concurrency = concurrency
         self.registry = registry or AnsiblePlatformRegistry()
         self.collector_registry = collector_registry or CollectorRegistry()
+        self.inventory_reconciliation_enabled = inventory_reconciliation_enabled
+        self.zabbix_monitoring = zabbix_monitoring
+        self.oxidized = oxidized
+        self.chart_renderer = chart_renderer
         self._slots = threading.BoundedSemaphore(concurrency)
+        self._run_lock = threading.Lock()
+        self._oxidized_nodes: dict[str, tuple[dict, ...]] = {}
+        self._oxidized_error: str | None = None
 
     def submit(self) -> ProphylaxisRun:
         return self.store.create()
@@ -71,6 +104,13 @@ class DeviceFactsRunService:
         return self.store.get(run_id)
 
     def run(self, run_id) -> None:
+        # The Oxidized snapshot belongs to one run and is shared by that run's
+        # per-device workers. Serializing run coordinators prevents snapshots
+        # from two API requests from overwriting each other.
+        with self._run_lock:
+            self._run_serial(run_id)
+
+    def _run_serial(self, run_id) -> None:
         pending = self.store.get(run_id)
         running = pending.model_copy(
             update={"status": "RUNNING", "started_at": utc_now()}
@@ -78,6 +118,7 @@ class DeviceFactsRunService:
         self.store.save(running)
         try:
             devices = self.netbox.get_prophylaxis_devices()
+            self._prepare_oxidized_backup_state(devices)
             with ThreadPoolExecutor(
                 max_workers=self.concurrency,
                 thread_name_prefix="atlas-prophylaxis",
@@ -87,9 +128,9 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
-            if summary.failure and not summary.success:
+            if summary.failure and not summary.success and not summary.warning:
                 status = "FAILED"
-            elif summary.failure or summary.skipped:
+            elif summary.failure or summary.skipped or summary.warning:
                 status = "PARTIAL"
             else:
                 status = "COMPLETED"
@@ -99,6 +140,7 @@ class DeviceFactsRunService:
                     "finished_at": utc_now(),
                     "summary": summary,
                     "results": results,
+                    "charts": self._generate_charts_guarded(run_id, results),
                 }
             )
             self.store.save(completed)
@@ -126,6 +168,130 @@ class DeviceFactsRunService:
             )
             self._fail_run(running, "execution_failed")
 
+    def _generate_charts_guarded(
+        self,
+        run_id,
+        results: tuple[ProphylaxisCheckResult, ...],
+    ) -> tuple[ProphylaxisChart, ...]:
+        try:
+            return self._generate_charts(run_id, results)
+        except Exception as exc:
+            logger.warning(
+                "prophylaxis_chart_generation_failed",
+                extra={
+                    "event": "prophylaxis_chart_generation_failed",
+                    "run_id": str(run_id),
+                    "reason_code": "chart_generation_failed",
+                    "exception_type": type(exc).__name__,
+                },
+            )
+            return ()
+
+    def _generate_charts(
+        self,
+        run_id,
+        results: tuple[ProphylaxisCheckResult, ...],
+    ) -> tuple[ProphylaxisChart, ...]:
+        if self.zabbix_monitoring is None:
+            return ()
+        candidates = {
+            (result.device_id, result.device_name, result.check)
+            for result in results
+            if result.device_id is not None and result.check in ZABBIX_CHART_METRICS
+        }
+        if not candidates:
+            return ()
+        try:
+            hosts = {
+                self.zabbix_monitoring._tags(host).get("netbox_id"): host
+                for host in self.zabbix_monitoring.hosts()
+            }
+        except DependencyError:
+            return tuple(
+                self._unavailable_chart(
+                    device_id, device_name, check, "zabbix_unavailable"
+                )
+                for device_id, device_name, check in sorted(candidates)
+            )
+
+        charts = []
+        for device_id, device_name, check in sorted(candidates):
+            metric = ZABBIX_CHART_METRICS[check]
+            host = hosts.get(str(device_id))
+            if host is None:
+                charts.append(
+                    self._unavailable_chart(
+                        device_id, device_name, check, "monitoring_host_not_found"
+                    )
+                )
+                continue
+            try:
+                data = self.zabbix_monitoring.metric(
+                    str(host["hostid"]), metric, ZABBIX_CHART_WINDOW
+                )
+                points = list(data["points"])
+                if not points:
+                    charts.append(
+                        self._unavailable_chart(
+                            device_id,
+                            device_name,
+                            check,
+                            "metric_history_unavailable",
+                        )
+                    )
+                    continue
+                artifact = f"device-{device_id}-{metric}-{ZABBIX_CHART_WINDOW}.svg"
+                svg = self.chart_renderer(
+                    device_name=device_name,
+                    metric=metric,
+                    unit=str(data.get("unit") or ""),
+                    window=ZABBIX_CHART_WINDOW,
+                    points=points,
+                )
+                self.store.write_chart(run_id, artifact, svg)
+                charts.append(
+                    ProphylaxisChart(
+                        device_id=device_id,
+                        device_name=device_name,
+                        check=check,
+                        metric=metric,
+                        window=ZABBIX_CHART_WINDOW,
+                        status="generated",
+                        artifact=artifact,
+                        point_count=len(points),
+                    )
+                )
+            except (
+                DependencyError,
+                KeyError,
+                TypeError,
+                ValueError,
+                RunStoreError,
+            ):
+                charts.append(
+                    self._unavailable_chart(
+                        device_id, device_name, check, "chart_generation_failed"
+                    )
+                )
+        return tuple(charts)
+
+    @staticmethod
+    def _unavailable_chart(
+        device_id: int,
+        device_name: str,
+        check: str,
+        error: str,
+    ) -> ProphylaxisChart:
+        return ProphylaxisChart(
+            device_id=device_id,
+            device_name=device_name,
+            check=check,
+            metric=ZABBIX_CHART_METRICS[check],
+            window=ZABBIX_CHART_WINDOW,
+            status="unavailable",
+            error=error,
+        )
+
     def _fail_run(self, running: ProphylaxisRun, code: str) -> None:
         self.store.save(
             running.model_copy(
@@ -144,18 +310,115 @@ class DeviceFactsRunService:
         fields = device.get("custom_fields")
         fields = fields if isinstance(fields, dict) else {}
         raw_values = selected_check_values(fields.get("profylaxia_checks"))
-        known: list[CheckId] = []
-        unknown: list[str] = []
-        for value in sorted(raw_values):
-            normalized = CHECK_VALUE_ALIASES.get(value, value)
+        return expand_check_selection(raw_values)
+
+    def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
+        self._oxidized_nodes = {}
+        self._oxidized_error = None
+        backup_requested = any(
+            CheckId.CONFIGURATION_BACKUP in self._selected_checks(device)[0]
+            for device in devices
+        )
+        if not backup_requested:
+            return
+        if self.oxidized is None:
+            self._oxidized_error = "oxidized_not_configured"
+            return
+        try:
+            nodes = self.oxidized.get_nodes()
+        except DependencyError:
+            self._oxidized_error = "oxidized_unavailable"
+            return
+        grouped: dict[str, list[dict]] = {}
+        for node in nodes:
+            name = node.get("name")
+            if isinstance(name, str) and name.strip():
+                grouped.setdefault(name.strip(), []).append(node)
+        self._oxidized_nodes = {
+            name: tuple(entries) for name, entries in grouped.items()
+        }
+
+    @staticmethod
+    def _oxidized_timestamp(value: object) -> datetime | None:
+        if isinstance(value, bool):
+            return None
+        if isinstance(value, (int, float)):
             try:
-                check_id = CheckId(normalized)
-            except ValueError:
-                unknown.append(value[:128])
-                continue
-            if check_id not in known:
-                known.append(check_id)
-        return tuple(known), tuple(unknown)
+                return datetime.fromtimestamp(float(value), tz=timezone.utc)
+            except (OverflowError, OSError, ValueError):
+                return None
+        if not isinstance(value, str) or not value.strip():
+            return None
+        normalized = value.strip().replace("Z", "+00:00")
+        try:
+            parsed = datetime.fromisoformat(normalized)
+        except ValueError:
+            return None
+        return (
+            parsed.astimezone(timezone.utc)
+            if parsed.tzinfo
+            else parsed.replace(tzinfo=timezone.utc)
+        )
+
+    def _configuration_backup_values(self, device_name: str) -> DiagnosticValues:
+        if self._oxidized_error is not None:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code=self._oxidized_error,
+                summary="Oxidized backup state is unavailable",
+            )
+        nodes = self._oxidized_nodes.get(device_name, ())
+        if not nodes:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.WARNING,
+                reason_code="oxidized_node_or_backup_missing",
+                summary="No completed Oxidized backup was found for the device",
+                metrics={"manual_backup_required": True},
+            )
+        if len(nodes) != 1:
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code="oxidized_node_ambiguous",
+                summary="Multiple Oxidized nodes have the same device name",
+                metrics={"matching_nodes": len(nodes)},
+            )
+        node = nodes[0]
+        last = node.get("last")
+        if not isinstance(last, dict):
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.WARNING,
+                reason_code="oxidized_backup_never_completed",
+                summary="Oxidized has no completed backup result for the device",
+                metrics={"manual_backup_required": True},
+            )
+        status = last.get("status")
+        status_text = status.strip().lower() if isinstance(status, str) else ""
+        completed_at = self._oxidized_timestamp(last.get("end"))
+        metrics: dict[str, str | int | float | bool | None] = {
+            "oxidized_status": status_text or None,
+            "last_completed_at": (
+                completed_at.isoformat() if completed_at is not None else None
+            ),
+        }
+        if completed_at is not None:
+            metrics["age_hours"] = round(
+                (datetime.now(timezone.utc) - completed_at).total_seconds() / 3600,
+                2,
+            )
+        if status_text == "success":
+            metrics["manual_backup_required"] = False
+            return DiagnosticValues(
+                outcome=EvaluationOutcome.PASS,
+                summary="The most recent Oxidized backup completed successfully",
+                metrics=metrics,
+            )
+        metrics["manual_backup_required"] = True
+        return DiagnosticValues(
+            outcome=EvaluationOutcome.FAIL,
+            reason_code="oxidized_backup_failed",
+            summary="The most recent Oxidized backup did not complete successfully",
+            metrics=metrics,
+        )
 
     def _collect_guarded(
         self,
@@ -216,7 +479,13 @@ class DeviceFactsRunService:
 
     def _collect(self, device: dict) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
-        known_checks, unknown_checks = self._selected_checks(device)
+        selected_checks, unknown_checks = self._selected_checks(device)
+        backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks
+        known_checks = tuple(
+            check
+            for check in selected_checks
+            if check != CheckId.CONFIGURATION_BACKUP
+        )
         results = [
             self._check_error(
                 device_id, name, management_ip, platform, check,
@@ -224,9 +493,18 @@ class DeviceFactsRunService:
             )
             for check in unknown_checks
         ]
-        if not known_checks:
-            return tuple(results)
-
+        if backup_selected:
+            backup_values = self._configuration_backup_values(name)
+            results.append(
+                self._success_result(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    CheckId.CONFIGURATION_BACKUP,
+                    backup_values,
+                )
+            )
         try:
             target = device_target(device)
             device_id, name, management_ip, platform = (
@@ -243,7 +521,58 @@ class DeviceFactsRunService:
                 )
                 for check in known_checks
             )
+            if self.inventory_reconciliation_enabled:
+                results.extend(
+                    self._inventory_errors(
+                        device_id, name, management_ip, platform, status, code,
+                    )
+                )
             return tuple(results)
+
+        if (
+            self.inventory_reconciliation_enabled
+            and any(
+                profile.supports_collector(collector_id)
+                for collector_id in IDENTITY_COLLECTORS
+            )
+        ):
+            if not any(
+                task.collector.id in IDENTITY_COLLECTORS
+                for task in plan.tasks
+            ):
+                try:
+                    facts_collector = self.collector_registry.resolve_check(
+                        CheckId.DEVICE_FACTS,
+                        profile,
+                    )
+                except ValueError:
+                    results.extend(
+                        self._inventory_errors(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            "skipped",
+                            "unsupported_check",
+                        )
+                    )
+                else:
+                    plan = CollectionPlan(
+                        tasks=plan.tasks
+                        + (CollectorTask(collector=facts_collector, checks=()),),
+                        unsupported_checks=plan.unsupported_checks,
+                    )
+        elif self.inventory_reconciliation_enabled:
+            results.extend(
+                self._inventory_errors(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    "skipped",
+                    "unsupported_check",
+                )
+            )
 
         results.extend(
             self._check_error(
@@ -255,7 +584,7 @@ class DeviceFactsRunService:
         if not plan.tasks:
             return tuple(results)
 
-        admin_connection = None
+        prophylaxis_connection = None
         snmp_credentials = None
         for task in plan.tasks:
             try:
@@ -286,7 +615,7 @@ class DeviceFactsRunService:
                             )
                     credentials = snmp_credentials
                 else:
-                    if admin_connection is None:
+                    if prophylaxis_connection is None:
                         services = (
                             self.netbox.get_device_services(
                                 target.id,
@@ -316,15 +645,28 @@ class DeviceFactsRunService:
                             target.vendor,
                             target.credential_profile,
                             authentication=profile.authentication,
+                            purpose="prophylaxis",
                         )
-                        admin_connection = (port, telnet_fallback_port, credentials)
-                    port, telnet_fallback_port, credentials = admin_connection
+                        prophylaxis_connection = (
+                            port,
+                            telnet_fallback_port,
+                            credentials,
+                        )
+                    (
+                        port,
+                        telnet_fallback_port,
+                        credentials,
+                    ) = prophylaxis_connection
                 raw = self.backend.execute(
                     host=target.host,
                     port=port,
                     profile=profile,
                     collector_id=task.collector.id,
-                    check_id=task.checks[0],
+                    check_id=(
+                        task.checks[0]
+                        if task.checks
+                        else CheckId.DEVICE_FACTS
+                    ),
                     credentials=credentials,
                     telnet_fallback_port=telnet_fallback_port,
                     device_model=target.model,
@@ -338,6 +680,20 @@ class DeviceFactsRunService:
                     )
                     for check in task.checks
                 )
+                if (
+                    self.inventory_reconciliation_enabled
+                    and task.collector.id in IDENTITY_COLLECTORS
+                ):
+                    results.extend(
+                        self._inventory_errors(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            status,
+                            code,
+                        )
+                    )
                 continue
 
             if raw.status != "ok":
@@ -349,7 +705,51 @@ class DeviceFactsRunService:
                     )
                     for check in task.checks
                 )
+                if (
+                    self.inventory_reconciliation_enabled
+                    and task.collector.id in IDENTITY_COLLECTORS
+                ):
+                    results.extend(
+                        self._inventory_errors(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            status,
+                            raw.error_code or "execution_failed",
+                        )
+                    )
                 continue
+
+            if (
+                self.inventory_reconciliation_enabled
+                and task.collector.id in IDENTITY_COLLECTORS
+            ):
+                try:
+                    facts = task.collector.normalize(CheckId.DEVICE_FACTS, raw)
+                    if not isinstance(facts, DeviceFactsValues):
+                        raise ValueError("collector returned invalid device facts")
+                    results.extend(
+                        self._reconcile_inventory(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            facts,
+                        )
+                    )
+                except Exception as exc:
+                    status, code = self._classify_exception(exc)
+                    results.extend(
+                        self._inventory_errors(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            status,
+                            code,
+                        )
+                    )
 
             for check in task.checks:
                 try:
@@ -367,6 +767,252 @@ class DeviceFactsRunService:
         return tuple(results)
 
     @staticmethod
+    def _normalized_inventory_value(value: object) -> str | None:
+        if not isinstance(value, str):
+            return None
+        normalized = " ".join(value.split())
+        return normalized or None
+
+    def _inventory_errors(
+        self,
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        status: str,
+        code: str,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        return tuple(
+            self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                check,
+                status,
+                code,
+            )
+            for check in INVENTORY_CHECKS
+        )
+
+    def _reconcile_inventory(
+        self,
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        facts: DeviceFactsValues,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        if device_id is None:
+            return self._inventory_errors(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                "failed",
+                "device_not_found",
+            )
+        try:
+            current = self.netbox.get(f"/api/dcim/devices/{device_id}/")
+        except DependencyError:
+            return (
+                self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    SERIAL_INVENTORY_CHECK,
+                    "failed",
+                    "serial_netbox_read_failed",
+                ),
+                self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    MODEL_INVENTORY_CHECK,
+                    "failed",
+                    "model_netbox_read_failed",
+                ),
+            )
+        return (
+            self._reconcile_serial(
+                device_id, name, management_ip, platform, facts, current,
+            ),
+            self._reconcile_model(
+                device_id, name, management_ip, platform, facts, current,
+            ),
+        )
+
+    def _reconcile_serial(
+        self,
+        device_id: int | None,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        facts: DeviceFactsValues,
+        current: dict,
+    ) -> ProphylaxisCheckResult:
+        collected = self._normalized_inventory_value(facts.serial_number)
+        if collected is None:
+            return self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                SERIAL_INVENTORY_CHECK,
+                "incomplete",
+                "serial_not_collected",
+            )
+
+        stored = self._normalized_inventory_value(current.get("serial"))
+        state = "matched"
+
+        if stored is None:
+            try:
+                updated = self.netbox.patch(
+                    f"/api/dcim/devices/{device_id}/",
+                    {"serial": collected},
+                )
+            except DependencyError:
+                return self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    SERIAL_INVENTORY_CHECK,
+                    "failed",
+                    "serial_netbox_update_failed",
+                )
+            stored = self._normalized_inventory_value(updated.get("serial"))
+            if stored is None:
+                return self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    SERIAL_INVENTORY_CHECK,
+                    "failed",
+                    "serial_netbox_update_failed",
+                )
+            state = "populated"
+
+        matches = stored.casefold() == collected.casefold()
+        if not matches:
+            state = "mismatch"
+
+        outcome = (
+            EvaluationOutcome.FAIL
+            if state == "mismatch"
+            else EvaluationOutcome.PASS
+        )
+        status = "failed" if state == "mismatch" else "success"
+        log = logger.warning if state == "mismatch" else logger.info
+        log(
+            "prophylaxis_serial_reconciled",
+            extra={
+                "event": "prophylaxis_serial_reconciled",
+                "device": name,
+                "platform": platform,
+                "operation": OPERATION,
+                "check": SERIAL_INVENTORY_CHECK,
+                "status": status,
+                "state": state,
+            },
+        )
+        return ProphylaxisCheckResult(
+            check=SERIAL_INVENTORY_CHECK,
+            device_id=device_id,
+            device_name=name,
+            management_ip=management_ip,
+            platform=platform,
+            status=status,
+            evaluation=outcome,
+            values=SerialInventoryValues(
+                outcome=outcome,
+                state=state,
+                collected_serial=collected,
+                netbox_serial=stored,
+            ),
+        )
+
+    def _reconcile_model(
+        self,
+        device_id: int,
+        name: str,
+        management_ip: str | None,
+        platform: str | None,
+        facts: DeviceFactsValues,
+        current: dict,
+    ) -> ProphylaxisCheckResult:
+        collected = self._normalized_inventory_value(facts.model)
+        if collected is None:
+            return self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                MODEL_INVENTORY_CHECK,
+                "incomplete",
+                "model_not_collected",
+            )
+
+        device_type = current.get("device_type")
+        stored = self._normalized_inventory_value(
+            device_type.get("model") if isinstance(device_type, dict) else None
+        )
+        if stored is None:
+            return self._check_error(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                MODEL_INVENTORY_CHECK,
+                "incomplete",
+                "model_not_available_in_netbox",
+            )
+
+        state = (
+            "matched"
+            if stored.casefold() == collected.casefold()
+            else "mismatch"
+        )
+        outcome = (
+            EvaluationOutcome.PASS
+            if state == "matched"
+            else EvaluationOutcome.FAIL
+        )
+        status = "success" if state == "matched" else "failed"
+        log = logger.info if state == "matched" else logger.warning
+        log(
+            "prophylaxis_model_reconciled",
+            extra={
+                "event": "prophylaxis_model_reconciled",
+                "device": name,
+                "platform": platform,
+                "operation": OPERATION,
+                "check": MODEL_INVENTORY_CHECK,
+                "status": status,
+                "state": state,
+            },
+        )
+        return ProphylaxisCheckResult(
+            check=MODEL_INVENTORY_CHECK,
+            device_id=device_id,
+            device_name=name,
+            management_ip=management_ip,
+            platform=platform,
+            status=status,
+            evaluation=outcome,
+            values=ModelInventoryValues(
+                outcome=outcome,
+                state=state,
+                collected_model=collected,
+                netbox_model=stored,
+            ),
+        )
+
+    @staticmethod
     def _success_result(
         device_id: int | None,
         name: str,
@@ -379,6 +1025,7 @@ class DeviceFactsRunService:
             | OSVersionValues
             | UptimeValues
             | SystemMetricValues
+            | DiagnosticValues
         ),
     ) -> ProphylaxisCheckResult:
         if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
@@ -389,12 +1036,14 @@ class DeviceFactsRunService:
                 management_ip=management_ip,
                 platform=platform,
                 status="success",
+                collection_status=CollectionStatus.COLLECTED,
                 evaluation=EvaluationOutcome.PASS,
                 facts=values,
             )
-        if isinstance(values, SystemMetricValues):
+        if isinstance(values, (SystemMetricValues, DiagnosticValues)):
             status = {
                 EvaluationOutcome.PASS: "success",
+                EvaluationOutcome.WARNING: "success",
                 EvaluationOutcome.FAIL: "failed",
                 EvaluationOutcome.UNKNOWN: "incomplete",
                 EvaluationOutcome.NOT_APPLICABLE: "skipped",
@@ -407,16 +1056,30 @@ class DeviceFactsRunService:
                 management_ip=management_ip,
                 platform=platform,
                 status=status,
+                collection_status=CollectionStatus.COLLECTED,
                 evaluation=values.outcome,
                 values=values,
+            )
+        if check == CheckId.UPTIME and isinstance(values, UptimeValues):
+            outcome, reason_code = evaluate_uptime(values)
+            return ProphylaxisCheckResult(
+                check=check.value,
+                device_id=device_id,
+                device_name=name,
+                management_ip=management_ip,
+                platform=platform,
+                status="success",
+                collection_status=CollectionStatus.COLLECTED,
+                evaluation=outcome,
+                values=values.model_copy(
+                    update={"reason_code": reason_code}
+                ),
             )
         valid_values = (
             check == CheckId.CPU_UTILIZATION
             and isinstance(values, CPUUtilizationValues)
         ) or (
             check == CheckId.OS_VERSION and isinstance(values, OSVersionValues)
-        ) or (
-            check == CheckId.UPTIME and isinstance(values, UptimeValues)
         )
         if not valid_values:
             raise ValueError("collector returned an invalid normalized value")
@@ -427,6 +1090,7 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status="success",
+            collection_status=CollectionStatus.COLLECTED,
             evaluation=EvaluationOutcome.PASS,
             values=values,
         )
@@ -485,6 +1149,13 @@ class DeviceFactsRunService:
             management_ip=management_ip,
             platform=platform,
             status=status,
+            collection_status=(
+                CollectionStatus.UNSUPPORTED
+                if status == "skipped"
+                else CollectionStatus.COLLECTED
+                if status == "incomplete"
+                else CollectionStatus.FAILED
+            ),
             evaluation=(
                 EvaluationOutcome.UNSUPPORTED
                 if status == "skipped"
@@ -497,7 +1168,14 @@ class DeviceFactsRunService:
 
     @staticmethod
     def _summary(results: tuple[ProphylaxisCheckResult, ...]) -> RunSummary:
-        success = sum(result.status == "success" for result in results)
+        success = sum(
+            result.status == "success"
+            and result.evaluation != EvaluationOutcome.WARNING
+            for result in results
+        )
+        warning = sum(
+            result.evaluation == EvaluationOutcome.WARNING for result in results
+        )
         skipped = sum(result.status == "skipped" for result in results)
         failure = sum(
             result.status in {"failed", "incomplete"} for result in results
@@ -505,6 +1183,7 @@ class DeviceFactsRunService:
         return RunSummary(
             total=len(results),
             success=success,
+            warning=warning,
             failure=failure,
             skipped=skipped,
         )

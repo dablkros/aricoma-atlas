@@ -218,6 +218,28 @@ class OpenBaoServiceTests(unittest.TestCase):
             mount="atlas",
         )
 
+    def test_oxidized_purpose_uses_dedicated_credential_namespace(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "username": "backup-user",
+            "password": "backup-password",
+        }
+        service = self.service(client)
+
+        credentials = service.get_device_credentials(
+            "check-point",
+            "GW-CP-01",
+            purpose="oxidized",
+        )
+
+        self.assertEqual(credentials["username"], "backup-user")
+        client.kv_read.assert_called_once_with(
+            "runtime-token",
+            "devices/credentials/check-point/GW-CP-01/oxidized",
+            mount="atlas",
+        )
+
     def test_fortios_missing_api_token_has_actionable_error(self):
         client = Mock()
         client.login_from_identity.return_value = "runtime-token"

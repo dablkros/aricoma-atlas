@@ -1,0 +1,13 @@
+---
+- name: Collect Cisco CBS local certificate command
+  community.ciscosmb.command:
+    commands:
+      - show crypto certificate
+  register: atlas_cbs_compliance
+  changed_when: false
+
+- name: Prepare Cisco CBS compliance output for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_crypto_certificate: "{{ atlas_cbs_compliance.stdout[0] }}"

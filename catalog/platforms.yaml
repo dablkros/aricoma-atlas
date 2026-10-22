@@ -16,6 +16,8 @@ platforms:
   sophos-red: {name: Sophos SD-RED, manufacturer: Sophos}
   aruba-aos-cx: {name: Aruba AOS-CX, manufacturer: HPE}
   aruba-aos-switch: {name: Aruba AOS-Switch, manufacturer: HPE}
+  checkpoint-gaia: {name: Check Point Gaia, manufacturer: Check Point}
+  checkpoint-gaia-embedded: {name: Check Point Gaia Embedded, manufacturer: Check Point}
 
 # Explicit fields avoid confusing filenames, display models and slugs.
 # Multiple matches to different platforms are an error, not first-match-wins.
@@ -124,6 +126,54 @@ platform_mappings:
       platform: aruba-aos-switch
     # Instant On, AP/IAP, mobility controllers, EdgeConnect and Comware are
     # deliberately excluded until each OS family has its own reviewed contract.
+  Check Point:
+    - slugs:
+        - 'check-point-mho-140'
+        - 'check-point-mho-175'
+        - 'check-point-quantum-lightspeed-qls250'
+        - 'check-point-sg3600'
+        - 'check-point-sg3920'
+        - 'check-point-sg3950'
+        - 'check-point-sg3970'
+        - 'check-point-sg3980'
+        - 'check-point-sg6200'
+        - 'check-point-sg6400'
+        - 'check-point-sg6600'
+        - 'check-point-sg7000'
+        - 'check-point-sg9100'
+        - 'check-point-sg9200'
+        - 'check-point-sg9300'
+        - 'check-point-sg9400'
+        - 'check-point-sg9700'
+        - 'check-point-sg9800'
+        - 'check-point-sg16000'
+        - 'check-point-sg16200'
+        - 'check-point-sg19100'
+        - 'check-point-sg19200'
+        - 'check-point-sg29100'
+        - 'check-point-sg29200'
+        - 'check-point-smart-1-6000-xl'
+      platform: checkpoint-gaia
+    - slugs:
+        - 'check-point-sg1530'
+        - 'check-point-sg1535'
+        - 'check-point-sg1555'
+        - 'check-point-sg1570'
+        - 'check-point-sg1575'
+        - 'check-point-sg1590'
+        - 'check-point-sg1595'
+        - 'check-point-sg1595r'
+        - 'check-point-sg1600'
+        - 'check-point-sg1800'
+        - 'check-point-sg2000'
+        - 'check-point-sg2530'
+        - 'check-point-sg2550'
+        - 'check-point-sg2560'
+        - 'check-point-sg2570'
+        - 'check-point-sg2580'
+      platform: checkpoint-gaia-embedded
+    # Rack shelves, SandBlast appliances and older gateway families are not
+    # imported until their OS family is verified against a current source.
 
 oxidized:
   image: docker.io/oxidized/oxidized:0.37.0
@@ -138,8 +188,12 @@ oxidized_platform_mapping:
   junos: {model: junos}
   aruba-aos-cx: {model: aoscx}
   aruba-aos-switch: {model: procurve}
+  checkpoint-gaia: {model: gaiaos}
 # CBS uses the pinned ciscosmb model, but remains experimental until each target
 # family is validated against physical hardware. FortiAP and hardware
 # FortiAnalyzer remain unmapped pending driver/hardware validation.
 # Sophos platforms are inventory/monitoring identities only; no unverified
 # Oxidized model is assigned.
+# Check Point Gaia uses the pinned gaiaos model and a read-only Gaia Clish
+# prophylaxis collector. Gaia Embedded remains unmapped until its command set
+# is verified on physical Spark hardware.

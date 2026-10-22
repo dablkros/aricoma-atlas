@@ -23,10 +23,10 @@ from atlas.prophylaxis.errors import (
     ProphylaxisExecutionError,
 )
 from atlas.prophylaxis.models import (
-    CPU_NETBOX_VALUES,
     CheckId,
     CheckResult,
     StoredCheckResult,
+    expand_check_selection,
 )
 from atlas.prophylaxis.platforms import (
     AnsiblePlatformProfile,
@@ -86,9 +86,10 @@ def validate_check_selection(device: dict, check_id: CheckId) -> None:
     fields = fields if isinstance(fields, dict) else {}
     if fields.get("profylaxia_enabled") is not True:
         raise ProphylaxisDisabledError()
-    checks = selected_check_values(fields.get("profylaxia_checks"))
-    accepted = CPU_NETBOX_VALUES if check_id == CheckId.CPU_UTILIZATION else {check_id.value}
-    if checks.isdisjoint(accepted):
+    checks, _unknown = expand_check_selection(
+        selected_check_values(fields.get("profylaxia_checks"))
+    )
+    if check_id not in checks:
         raise CheckNotSelectedError()
 
 
@@ -247,7 +248,10 @@ class ProphylaxisService:
             platform = target.platform
             profile = self.registry.resolve(target.platform)
             try:
-                collector = self.collector_registry.resolve_check(check_id)
+                collector = self.collector_registry.resolve_check(
+                    check_id,
+                    profile,
+                )
             except ValueError:
                 return self._error(
                     target.name,
@@ -272,6 +276,7 @@ class ProphylaxisService:
                 target.vendor,
                 target.credential_profile,
                 authentication=profile.authentication,
+                purpose="prophylaxis",
             )
             raw_result = self.backend.execute(
                 host=target.host,
@@ -338,7 +343,8 @@ class ProphylaxisService:
                 target = device_target(device)
                 profile = self.registry.resolve(target.platform)
                 collector = self.collector_registry.resolve_check(
-                    CheckId.CPU_UTILIZATION
+                    CheckId.CPU_UTILIZATION,
+                    profile,
                 )
                 if not profile.supports_collector(collector.id):
                     continue

@@ -3,6 +3,7 @@
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Query, Request, status
+from fastapi.responses import FileResponse
 
 from atlas.api.errors import AtlasError
 from atlas.api.operator_auth import require_operator
@@ -135,6 +136,45 @@ def device_facts_run(run_id: UUID, request: Request) -> ProphylaxisRun:
             "prophylaxis_run_store_unavailable",
             "The Profylaxia run status is unavailable",
         ) from None
+
+
+@router.get(
+    "/runs/{run_id}/charts/{artifact}",
+    response_class=FileResponse,
+    dependencies=[Depends(run_authorized)],
+    summary="Read one generated Profylaxia chart",
+)
+def prophylaxis_chart(
+    run_id: UUID,
+    artifact: str,
+    request: Request,
+) -> FileResponse:
+    try:
+        path = request.app.state.dependencies.prophylaxis_runs.store.chart_path(
+            run_id, artifact
+        )
+    except RunNotFoundError:
+        raise AtlasError(
+            404,
+            "prophylaxis_chart_not_found",
+            "The Profylaxia chart does not exist",
+        ) from None
+    except RunStoreError:
+        raise AtlasError(
+            500,
+            "prophylaxis_run_store_unavailable",
+            "The Profylaxia chart is unavailable",
+        ) from None
+    return FileResponse(
+        path,
+        media_type="image/svg+xml",
+        filename=artifact,
+        headers={
+            "Cache-Control": "no-store",
+            "Content-Security-Policy": "default-src 'none'; sandbox",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
 
 
 __all__ = ["router"]

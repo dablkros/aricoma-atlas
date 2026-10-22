@@ -1,5 +1,6 @@
 """Secret-free execution and normalized Profylaxia result contracts."""
 
+from collections.abc import Iterable
 from datetime import datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
@@ -8,11 +9,15 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 SCHEMA_VERSION = 1
-CPU_NETBOX_VALUES = frozenset({"cpu_utilization", "CPU utilization"})
 CHECK_VALUE_ALIASES = {
     "CPU utilization": "cpu_utilization",
     "Memory utilization": "memory_utilization",
     "Temperature": "cpu_temperature",
+    "Interface utilization": "interface_utilization",
+    "interface errors": "interface_error_counters",
+    "Routing table": "routing_table",
+    "Routing protocol neighbors": "routing_protocol_neighbors",
+    "HA status": "ha_status",
 }
 
 
@@ -24,16 +29,121 @@ class CheckId(StrEnum):
     MEMORY_UTILIZATION = "memory_utilization"
     FAN_HEALTH = "fan_health"
     UPTIME = "uptime"
+    INTERFACE_UTILIZATION = "interface_utilization"
+    INTERFACE_STATE = "interface_state"
+    INTERFACE_ERROR_COUNTERS = "interface_error_counters"
+    ENVIRONMENT_HEALTH = "environment_health"
+    LICENSE_STATE = "license_state"
+    PKI_CERTIFICATES = "pki_certificates"
+    FIRMWARE_RECOMMENDATION = "firmware_recommendation"
+    EOL_STATUS = "eol_status"
+    NTP_SYNC = "ntp_sync"
+    RECENT_LOG_EVENTS = "recent_log_events"
+    ROUTING_TABLE = "routing_table"
+    ROUTING_PROTOCOL_NEIGHBORS = "routing_protocol_neighbors"
+    HA_STATUS = "ha_status"
+    CONFIGURATION_BACKUP = "configuration_backup"
+    SERIAL_INVENTORY = "serial_inventory"
+    MODEL_INVENTORY = "model_inventory"
+
+
+class CheckGroupId(StrEnum):
+    IDENTITY = "identity"
+    RESOURCES = "resources"
+    INTERFACES = "interfaces"
+    COMPLIANCE = "compliance"
+    OPERATIONS = "operations"
+
+
+CHECK_GROUP_CHECKS = {
+    CheckGroupId.IDENTITY: (
+        CheckId.DEVICE_FACTS,
+        CheckId.OS_VERSION,
+        CheckId.UPTIME,
+    ),
+    CheckGroupId.RESOURCES: (
+        CheckId.CPU_UTILIZATION,
+        CheckId.MEMORY_UTILIZATION,
+        CheckId.ENVIRONMENT_HEALTH,
+        CheckId.CPU_TEMPERATURE,
+        CheckId.FAN_HEALTH,
+    ),
+    CheckGroupId.INTERFACES: (
+        CheckId.INTERFACE_STATE,
+        CheckId.INTERFACE_UTILIZATION,
+        CheckId.INTERFACE_ERROR_COUNTERS,
+    ),
+    CheckGroupId.COMPLIANCE: (
+        CheckId.LICENSE_STATE,
+        CheckId.PKI_CERTIFICATES,
+        CheckId.FIRMWARE_RECOMMENDATION,
+        CheckId.EOL_STATUS,
+    ),
+    CheckGroupId.OPERATIONS: (
+        CheckId.NTP_SYNC,
+        CheckId.RECENT_LOG_EVENTS,
+        CheckId.ROUTING_TABLE,
+        CheckId.ROUTING_PROTOCOL_NEIGHBORS,
+        CheckId.HA_STATUS,
+        CheckId.CONFIGURATION_BACKUP,
+    ),
+}
+
+
+def expand_check_selection(
+    raw_values: Iterable[str],
+) -> tuple[tuple[CheckId, ...], tuple[str, ...]]:
+    """Expand NetBox groups and compatible legacy check values."""
+    values = set(raw_values)
+    checks: list[CheckId] = []
+    unknown: list[str] = []
+
+    for group_id in CheckGroupId:
+        if group_id.value not in values:
+            continue
+        for check_id in CHECK_GROUP_CHECKS[group_id]:
+            if check_id not in checks:
+                checks.append(check_id)
+
+    group_values = {group_id.value for group_id in CheckGroupId}
+    for value in sorted(values - group_values):
+        normalized = CHECK_VALUE_ALIASES.get(value, value)
+        try:
+            check_id = CheckId(normalized)
+        except ValueError:
+            unknown.append(value[:128])
+            continue
+        if check_id not in checks:
+            checks.append(check_id)
+    return tuple(checks), tuple(unknown)
 
 
 class CollectorId(StrEnum):
+    IOS_IDENTITY = "ios_identity"
+    IOS_RESOURCES = "ios_resources"
+    IOS_INTERFACES = "ios_interfaces"
+    IOS_COMPLIANCE = "ios_compliance"
+    IOS_OPERATIONS = "ios_operations"
+    CBS_RESOURCES = "cbs_resources"
+    CBS_INTERFACES = "cbs_interfaces"
+    CBS_COMPLIANCE = "cbs_compliance"
+    CBS_OPERATIONS = "cbs_operations"
+    # Compatibility collector IDs used by other platform profiles and the
+    # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
     CPU_USAGE = "cpu_usage"
     SNMP_SYSTEM = "snmp_system"
 
 
+class CollectionStatus(StrEnum):
+    COLLECTED = "COLLECTED"
+    FAILED = "FAILED"
+    UNSUPPORTED = "UNSUPPORTED"
+
+
 class EvaluationOutcome(StrEnum):
     PASS = "PASS"
+    WARNING = "WARNING"
     FAIL = "FAIL"
     NOT_APPLICABLE = "NOT_APPLICABLE"
     UNKNOWN = "UNKNOWN"
@@ -60,6 +170,7 @@ class UptimeValues(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
     uptime_seconds: int = Field(ge=0)
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
 
 
 class CPUUtilizationValues(BaseModel):
@@ -99,6 +210,29 @@ class SystemMetricValues(BaseModel):
             raise ValueError("passing metric must not contain a reason code")
         if self.outcome != EvaluationOutcome.PASS and self.reason_code is None:
             raise ValueError("non-passing metric requires a reason code")
+        return self
+
+
+class DiagnosticValues(BaseModel):
+    """Normalized, secret-free result for non-scalar diagnostic checks."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    reason_code: str | None = Field(default=None, min_length=1, max_length=128)
+    summary: str = Field(min_length=1, max_length=512)
+    metrics: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict
+    )
+    affected_items: tuple[str, ...] = ()
+    source_commands: tuple[str, ...] = ()
+
+    @model_validator(mode="after")
+    def validate_evaluation(self):
+        if self.outcome == EvaluationOutcome.PASS and self.reason_code is not None:
+            raise ValueError("passing diagnostic must not contain a reason code")
+        if self.outcome != EvaluationOutcome.PASS and self.reason_code is None:
+            raise ValueError("non-passing diagnostic requires a reason code")
         return self
 
 
@@ -191,16 +325,19 @@ StoredCPUCheckResult = StoredCheckResult
 
 __all__ = [
     "CPU_CHECK_NAME",
-    "CPU_NETBOX_VALUES",
+    "CHECK_GROUP_CHECKS",
     "CHECK_VALUE_ALIASES",
     "CPUCheckResult",
     "CPUUtilizationValues",
+    "CheckGroupId",
     "CheckId",
     "CheckResult",
+    "CollectionStatus",
     "CollectorId",
     "EvaluationOutcome",
     "HardwareSensorValue",
     "DeviceFactsValues",
+    "DiagnosticValues",
     "OSVersionValues",
     "RawCheckResult",
     "RawCollectorResult",
@@ -209,4 +346,5 @@ __all__ = [
     "StoredCheckResult",
     "SystemMetricValues",
     "UptimeValues",
+    "expand_check_selection",
 ]

@@ -10,6 +10,7 @@ ATLAS_HOME="/home/atlas"
 ATLAS_ROOT="/opt/aricoma-atlas"
 RUNTIME_DIR="${ATLAS_ROOT}/.runtime"
 VENV_DIR="${ATLAS_ROOT}/.venv"
+REQUESTED_COMPONENTS=""
 
 log()  { printf '[INFO] %s\n' "$*"; }
 ok()   { printf '[OK] %s\n' "$*"; }
@@ -31,6 +32,80 @@ trap on_error ERR
 
 require_root() {
     [[ ${EUID} -eq 0 ]] || die "Run this script with sudo: sudo ./install.sh"
+}
+
+usage() {
+    cat <<'EOF'
+Usage: sudo ./install.sh [--components oxidized,zabbix|oxidized|zabbix|none]
+
+On a new interactive installation, omitted --components opens a short chooser.
+Existing installations preserve their selection; the option may only add components.
+EOF
+}
+
+parse_args() {
+    while (($#)); do
+        case "$1" in
+            --components)
+                [[ $# -ge 2 ]] || die "--components requires a value"
+                REQUESTED_COMPONENTS=$2
+                shift 2
+                ;;
+            -h|--help)
+                usage
+                exit 0
+                ;;
+            *)
+                die "Unknown install option: $1"
+                ;;
+        esac
+    done
+}
+
+choose_initial_components() {
+    [[ -n "$REQUESTED_COMPONENTS" ]] && return
+    [[ -f "${RUNTIME_DIR}/components.yaml" ]] && return
+
+    if [[ -d "${ATLAS_ROOT}/.git" ]]; then
+        REQUESTED_COMPONENTS="oxidized,zabbix"
+        warn "Existing installation has no component manifest; preserving the legacy full stack."
+        return
+    fi
+
+    if [[ -t 0 && -r /dev/tty ]]; then
+        local selected=() answer
+        printf '\nAtlas core is always installed: NetBox, OpenBao, Ansible, Profylaxia.\n'
+        read -r -p 'Install Oxidized configuration backups? [Y/n] ' answer </dev/tty
+        [[ ! "$answer" =~ ^[Nn]([Oo])?$ ]] && selected+=(oxidized)
+        read -r -p 'Install Zabbix monitoring? [Y/n] ' answer </dev/tty
+        [[ ! "$answer" =~ ^[Nn]([Oo])?$ ]] && selected+=(zabbix)
+        if ((${#selected[@]})); then
+            local IFS=,
+            REQUESTED_COMPONENTS="${selected[*]}"
+        else
+            REQUESTED_COMPONENTS="none"
+        fi
+    else
+        REQUESTED_COMPONENTS="oxidized,zabbix"
+        warn "Non-interactive fresh install: preserving the legacy full-stack default. Use --components to select explicitly."
+    fi
+}
+
+configure_components() {
+    [[ -n "$REQUESTED_COMPONENTS" ]] || return
+    "${VENV_DIR}/bin/python3" "${ATLAS_ROOT}/scripts/configure_components.py" \
+        --components "$REQUESTED_COMPONENTS" \
+        --target-root "$ATLAS_ROOT" \
+        --owner "$ATLAS_USER" \
+        --group "$ATLAS_GROUP"
+}
+
+component_enabled() {
+    (cd "$ATLAS_ROOT" && "${VENV_DIR}/bin/python3" - "$1") <<'PY'
+import sys
+from atlas.components import load_components
+raise SystemExit(0 if load_components().enabled(sys.argv[1]) else 1)
+PY
 }
 
 source_root() {
@@ -72,6 +147,8 @@ validate_source_repo() {
         die "Missing scripts/import_site_config.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/configure_site.py" ]] || \
         die "Missing scripts/configure_site.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/configure_components.py" ]] || \
+        die "Missing scripts/configure_components.py in ${source_dir}"
     [[ -f "${source_dir}/deployment/site.example.yaml" ]] || \
         die "Missing deployment/site.example.yaml in ${source_dir}"
     [[ -f "${source_dir}/deployment/tmpfiles.d/aricoma-atlas.conf" ]] || \
@@ -363,6 +440,10 @@ install_admin_cli() {
 }
 
 install_runtime_tmpfiles() {
+    if ! component_enabled oxidized; then
+        ok "Oxidized not selected; ephemeral inventory runtime is not required"
+        return
+    fi
     header "ATLAS EPHEMERAL RUNTIME"
 
     install -m 0644 -o root -g root \
@@ -383,21 +464,23 @@ verify_installation() {
     [[ -f "${ATLAS_ROOT}/deployment/backend.yaml" ]] || die "Atlas backend deployment configuration is missing"
     [[ -f "${ATLAS_ROOT}/deployment/backend/Dockerfile" ]] || die "Atlas backend Dockerfile is missing"
     [[ -x /usr/local/sbin/atlasctl ]] || die "atlasctl is not installed"
-    [[ -f /etc/tmpfiles.d/aricoma-atlas.conf ]] || die "Atlas tmpfiles configuration is missing"
     [[ "$(stat -c '%a' "$ATLAS_ROOT")" == "750" ]] || die "${ATLAS_ROOT} must have mode 0750"
     [[ "$(stat -c '%G' "$ATLAS_ROOT")" == "$ATLAS_ADMIN_GROUP" ]] || die "${ATLAS_ROOT} must be grouped to ${ATLAS_ADMIN_GROUP}"
     [[ "$(stat -c '%a' "$RUNTIME_DIR")" == "700" ]] || die "${RUNTIME_DIR} must have mode 0700"
     [[ "$(stat -c '%U:%G' "$RUNTIME_DIR")" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "${RUNTIME_DIR} must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
-    [[ "$(stat -c '%a' /run/atlas)" == "710" ]] || die "/run/atlas must have mode 0710"
-    [[ "$(stat -c '%U:%G' /run/atlas)" == "root:${ATLAS_GROUP}" ]] || die "/run/atlas must be owned by root:${ATLAS_GROUP}"
-    [[ "$(stat -c '%a' /run/atlas/oxidized)" == "750" ]] || die "/run/atlas/oxidized must have mode 0750"
-    [[ "$(stat -c '%U:%G' /run/atlas/oxidized)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
-    [[ "$(stat -c '%a' /run/atlas/oxidized/router.json)" == "640" ]] || die "/run/atlas/oxidized/router.json must have mode 0640"
-    [[ "$(stat -c '%U:%G' /run/atlas/oxidized/router.json)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized/router.json must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
-    "${VENV_DIR}/bin/python3" -c \
+    if component_enabled oxidized; then
+        [[ -f /etc/tmpfiles.d/aricoma-atlas.conf ]] || die "Atlas tmpfiles configuration is missing"
+        [[ "$(stat -c '%a' /run/atlas)" == "710" ]] || die "/run/atlas must have mode 0710"
+        [[ "$(stat -c '%U:%G' /run/atlas)" == "root:${ATLAS_GROUP}" ]] || die "/run/atlas must be owned by root:${ATLAS_GROUP}"
+        [[ "$(stat -c '%a' /run/atlas/oxidized)" == "750" ]] || die "/run/atlas/oxidized must have mode 0750"
+        [[ "$(stat -c '%U:%G' /run/atlas/oxidized)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
+        [[ "$(stat -c '%a' /run/atlas/oxidized/router.json)" == "640" ]] || die "/run/atlas/oxidized/router.json must have mode 0640"
+        [[ "$(stat -c '%U:%G' /run/atlas/oxidized/router.json)" == "${ATLAS_USER}:${ATLAS_GROUP}" ]] || die "/run/atlas/oxidized/router.json must be owned by ${ATLAS_USER}:${ATLAS_GROUP}"
+        "${VENV_DIR}/bin/python3" -c \
         'import json,sys; data=json.load(open(sys.argv[1], encoding="utf-8")); assert isinstance(data, list)' \
         /run/atlas/oxidized/router.json || \
         die "Ephemeral router.json must contain a JSON array"
+    fi
 
     runuser -u "$ATLAS_USER" -- docker info >/dev/null
     runuser -u "$ATLAS_USER" -- docker compose version >/dev/null
@@ -411,10 +494,12 @@ verify_installation() {
 }
 
 main() {
+    parse_args "$@"
     require_root
 
     local source_dir
     source_dir="$(source_root)"
+    choose_initial_components
     validate_source_repo "$source_dir"
     validate_os
     install_host_packages
@@ -422,6 +507,7 @@ main() {
     ensure_atlas_user
     install_repository "$source_dir"
     install_python_environment
+    configure_components
     install_site_configuration "$source_dir"
     install_admin_cli
     install_runtime_tmpfiles

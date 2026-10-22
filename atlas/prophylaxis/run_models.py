@@ -7,8 +7,10 @@ from uuid import UUID
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from atlas.prophylaxis.models import (
+    CollectionStatus,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     OSVersionValues,
     UptimeValues,
     EvaluationOutcome,
@@ -20,6 +22,50 @@ def utc_now() -> datetime:
     return datetime.now(timezone.utc)
 
 
+class SerialInventoryValues(BaseModel):
+    """Result of comparing the collected chassis serial with NetBox."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    state: Literal["populated", "matched", "mismatch"]
+    collected_serial: str = Field(min_length=1, max_length=255)
+    netbox_serial: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        expected = (
+            EvaluationOutcome.FAIL
+            if self.state == "mismatch"
+            else EvaluationOutcome.PASS
+        )
+        if self.outcome != expected:
+            raise ValueError("serial inventory state does not match outcome")
+        return self
+
+
+class ModelInventoryValues(BaseModel):
+    """Result of comparing the collected hardware model with NetBox."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    state: Literal["matched", "mismatch"]
+    collected_model: str = Field(min_length=1, max_length=255)
+    netbox_model: str = Field(min_length=1, max_length=255)
+
+    @model_validator(mode="after")
+    def validate_outcome(self):
+        expected = (
+            EvaluationOutcome.FAIL
+            if self.state == "mismatch"
+            else EvaluationOutcome.PASS
+        )
+        if self.outcome != expected:
+            raise ValueError("model inventory state does not match outcome")
+        return self
+
+
 class ProphylaxisCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -29,15 +75,27 @@ class ProphylaxisCheckResult(BaseModel):
     management_ip: str | None = None
     platform: str | None = None
     status: Literal["success", "failed", "incomplete", "skipped"]
+    collection_status: CollectionStatus
     evaluation: EvaluationOutcome
     facts: DeviceFactsValues | None = None
-    values: CPUUtilizationValues | OSVersionValues | UptimeValues | SystemMetricValues | None = None
+    values: (
+        CPUUtilizationValues
+        | OSVersionValues
+        | UptimeValues
+        | SystemMetricValues
+        | DiagnosticValues
+        | SerialInventoryValues
+        | ModelInventoryValues
+        | None
+    ) = None
     error: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="before")
     @classmethod
     def infer_legacy_evaluation(cls, value):
-        if isinstance(value, dict) and "evaluation" not in value:
+        if not isinstance(value, dict):
+            return value
+        if "evaluation" not in value:
             status = value.get("status")
             inferred = {
                 "success": EvaluationOutcome.PASS,
@@ -47,12 +105,21 @@ class ProphylaxisCheckResult(BaseModel):
             }.get(status)
             if inferred is not None:
                 value = {**value, "evaluation": inferred}
+        if "collection_status" not in value:
+            if value.get("facts") is not None or value.get("values") is not None:
+                collection_status = CollectionStatus.COLLECTED
+            elif value.get("status") == "skipped":
+                collection_status = CollectionStatus.UNSUPPORTED
+            else:
+                collection_status = CollectionStatus.FAILED
+            value = {**value, "collection_status": collection_status}
         return value
 
     @model_validator(mode="after")
     def validate_payload(self):
         expected_status = {
             EvaluationOutcome.PASS: "success",
+            EvaluationOutcome.WARNING: "success",
             EvaluationOutcome.FAIL: "failed",
             EvaluationOutcome.UNKNOWN: "incomplete",
             EvaluationOutcome.NOT_APPLICABLE: "skipped",
@@ -82,8 +149,38 @@ class RunSummary(BaseModel):
 
     total: int = Field(default=0, ge=0)
     success: int = Field(default=0, ge=0)
+    warning: int = Field(default=0, ge=0)
     failure: int = Field(default=0, ge=0)
     skipped: int = Field(default=0, ge=0)
+
+
+class ProphylaxisChart(BaseModel):
+    """Best-effort Zabbix chart attached without changing run evaluation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    device_id: int = Field(gt=0)
+    device_name: str = Field(min_length=1, max_length=255)
+    check: str = Field(min_length=1, max_length=128)
+    metric: str = Field(min_length=1, max_length=64)
+    window: Literal["1h", "24h", "7d", "30d"]
+    status: Literal["generated", "unavailable"]
+    artifact: str | None = Field(default=None, max_length=128)
+    point_count: int = Field(default=0, ge=0)
+    error: str | None = Field(default=None, max_length=128)
+
+    @model_validator(mode="after")
+    def validate_artifact(self):
+        if self.status == "generated":
+            if (
+                not self.artifact
+                or self.point_count < 1
+                or self.error is not None
+            ):
+                raise ValueError("generated chart requires an artifact and points")
+        elif self.artifact is not None or self.point_count != 0 or not self.error:
+            raise ValueError("unavailable chart requires only a safe error code")
+        return self
 
 
 class ProphylaxisRun(BaseModel):
@@ -98,14 +195,18 @@ class ProphylaxisRun(BaseModel):
     finished_at: datetime | None = None
     summary: RunSummary = Field(default_factory=RunSummary)
     results: tuple[ProphylaxisCheckResult, ...] = ()
+    charts: tuple[ProphylaxisChart, ...] = ()
     report_path: str
     error: str | None = Field(default=None, max_length=128)
 
 
 __all__ = [
     "DeviceFactsResult",
+    "ModelInventoryValues",
+    "ProphylaxisChart",
     "ProphylaxisCheckResult",
     "ProphylaxisRun",
     "RunSummary",
+    "SerialInventoryValues",
     "utc_now",
 ]

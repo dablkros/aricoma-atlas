@@ -41,12 +41,12 @@ def load_config(path=None, validate_tls=True):
     if not isinstance(image, str) or not re.fullmatch(r"[a-zA-Z0-9./_-]+:[0-9][a-zA-Z0-9._-]*", image):
         raise ValueError("Proxy docker_image must use an explicit version tag")
     service_names = set(config["services"])
-    required_services = {"netbox", "oxidized", "zabbix"}
-    if service_names != required_services:
-        missing = ", ".join(sorted(required_services - service_names)) or "none"
-        unexpected = ", ".join(sorted(service_names - required_services)) or "none"
+    supported_services = {"netbox", "oxidized", "zabbix"}
+    if "netbox" not in service_names or not service_names <= supported_services:
+        missing = "netbox" if "netbox" not in service_names else "none"
+        unexpected = ", ".join(sorted(service_names - supported_services)) or "none"
         raise ValueError(
-            "Configure exactly netbox, oxidized and zabbix ingress services "
+            "Configure netbox and only supported optional ingress services "
             f"(missing: {missing}; unexpected: {unexpected})"
         )
     hostnames = []
@@ -176,7 +176,7 @@ http {
 """ + "".join(servers) + "}\n"
 
 
-def prepare_runtime(config, secret):
+def prepare_runtime(config, secret=None):
     runtime = ROOT / ".runtime/proxy"
     runtime.mkdir(parents=True, exist_ok=True)
     # Workers must be able to read the hash file inside the mounted directory.
@@ -184,8 +184,11 @@ def prepare_runtime(config, secret):
     os.chmod(ROOT / ".runtime", 0o700)
     os.chmod(runtime, 0o755)
     write_private(runtime / "nginx.conf", render_nginx(config), 0o644)
-    digest = password_hash(secret["password"])
-    write_private(runtime / "oxidized.htpasswd", f"{secret['username']}:{digest}\n", 0o644)
+    if "oxidized" in config["services"]:
+        if secret is None:
+            raise RuntimeError("Oxidized ingress requires its web credential")
+        digest = password_hash(secret["password"])
+        write_private(runtime / "oxidized.htpasswd", f"{secret['username']}:{digest}\n", 0o644)
     for name, service in config["services"].items():
         write_private(runtime / f"{name}.crt", Path(service["certificate"]).read_text(), 0o644)
         write_private(runtime / f"{name}.key", Path(service["private_key"]).read_text())
@@ -193,13 +196,14 @@ def prepare_runtime(config, secret):
     if ":" in address:
         address = f"[{address}]"
     file = runtime / "docker-compose.yml"
-    service_networks = ["netbox", "oxidized"]
+    service_networks = ["netbox"]
+    if "oxidized" in config["services"]:
+        service_networks.append("oxidized")
     if "zabbix" in config["services"]:
         service_networks.append("zabbix")
-    networks = {
-        "netbox": {"external": True, "name": NETBOX_NETWORK},
-        "oxidized": {"external": True, "name": OXIDIZED_NETWORK},
-    }
+    networks = {"netbox": {"external": True, "name": NETBOX_NETWORK}}
+    if "oxidized" in config["services"]:
+        networks["oxidized"] = {"external": True, "name": OXIDIZED_NETWORK}
     if "zabbix" in config["services"]:
         networks["zabbix"] = {"external": True, "name": ZABBIX_NETWORK}
     write_yaml(file, {

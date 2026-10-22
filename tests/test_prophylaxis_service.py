@@ -2,7 +2,12 @@ import unittest
 
 from atlas.device_credentials import DeviceValidationError, credential_path
 from atlas.prophylaxis.errors import AuthenticationFailedError
-from atlas.prophylaxis.models import CheckId, RawCheckResult
+from atlas.prophylaxis.models import (
+    CheckId,
+    CollectorId,
+    RawCollectorResult,
+    expand_check_selection,
+)
 from atlas.prophylaxis.service import (
     ProphylaxisService,
     device_target,
@@ -57,8 +62,15 @@ class FakeOpenBao:
         self.error = error
         self.calls = []
 
-    def get_device_credentials(self, vendor, profile, *, authentication="ssh"):
-        self.calls.append((vendor, profile, authentication))
+    def get_device_credentials(
+        self,
+        vendor,
+        profile,
+        *,
+        authentication="ssh",
+        purpose="admin",
+    ):
+        self.calls.append((vendor, profile, authentication, purpose))
         if self.error:
             raise self.error
         if authentication == "api_token":
@@ -76,15 +88,28 @@ class FakeBackend:
         if self.error:
             raise self.error
         profile = kwargs["profile"]
+        collector_id = kwargs["collector_id"]
         if profile.slug == "fortios":
-            return RawCheckResult(
-                check=CheckId.CPU_UTILIZATION,
+            return RawCollectorResult(
+                collector=collector_id,
                 platform="fortios",
                 status="ok",
                 data={"cpu": [{"current": 12}]},
             )
-        return RawCheckResult(
-            check=CheckId.CPU_UTILIZATION,
+        if collector_id == CollectorId.IOS_RESOURCES:
+            return RawCollectorResult(
+                collector=collector_id,
+                platform=profile.slug,
+                status="ok",
+                data={
+                    "show_processes_cpu": (
+                        "CPU utilization for five seconds: 12%/1%; "
+                        "one minute: 8%; five minutes: 5%"
+                    )
+                },
+            )
+        return RawCollectorResult(
+            collector=collector_id,
             platform=profile.slug,
             status="ok",
             raw_output=(
@@ -113,6 +138,24 @@ class ProphylaxisServiceTests(unittest.TestCase):
             {"cpu_utilization", "uptime"},
         )
 
+    def test_group_selection_expands_to_stable_checks(self):
+        checks, unknown = expand_check_selection({"identity", "resources"})
+
+        self.assertEqual(
+            checks,
+            (
+                CheckId.DEVICE_FACTS,
+                CheckId.OS_VERSION,
+                CheckId.UPTIME,
+                CheckId.CPU_UTILIZATION,
+                CheckId.MEMORY_UTILIZATION,
+                CheckId.ENVIRONMENT_HEALTH,
+                CheckId.CPU_TEMPERATURE,
+                CheckId.FAN_HEALTH,
+            ),
+        )
+        self.assertEqual(unknown, ())
+
     def test_device_becomes_vendor_neutral_target(self):
         target = device_target(netbox_device())
         self.assertEqual(target.id, 10)
@@ -130,7 +173,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         self.assertEqual(result.status, "ok")
         self.assertEqual(result.check, CheckId.CPU_UTILIZATION)
         self.assertEqual(result.values.current_percent, 12.0)
-        self.assertEqual(openbao.calls, [("cisco", "default", "ssh")])
+        self.assertEqual(
+            openbao.calls,
+            [("cisco", "default", "ssh", "prophylaxis")],
+        )
         self.assertEqual(backend.calls[0]["host"], "10.10.10.1")
         self.assertEqual(backend.calls[0]["port"], 22)
         self.assertNotIn("password", result.model_dump_json())
@@ -148,7 +194,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         result = service.collect_cpu(10)
 
         self.assertEqual(result.values.current_percent, 12.0)
-        self.assertEqual(openbao.calls, [("fortinet", "default", "api_token")])
+        self.assertEqual(
+            openbao.calls,
+            [("fortinet", "default", "api_token", "prophylaxis")],
+        )
         self.assertEqual(backend.calls[0]["port"], 444)
         self.assertIn(
             (
@@ -203,6 +252,13 @@ class ProphylaxisServiceTests(unittest.TestCase):
         )
         self.assertEqual(self.service([device]).collect_cpu(10).status, "ok")
 
+    def test_resources_group_authorizes_cpu_collection(self):
+        device = netbox_device(
+            checks=[{"value": "resources", "label": "Resources & environment"}]
+        )
+
+        self.assertEqual(self.service([device]).collect_cpu(10).status, "ok")
+
     def test_platform_is_rejected_before_secret_lookup(self):
         openbao = FakeOpenBao()
         result = self.service(
@@ -236,6 +292,10 @@ class ProphylaxisServiceTests(unittest.TestCase):
         self.assertEqual(
             credential_path("cisco", "default"),
             "devices/credentials/cisco/default/admin",
+        )
+        self.assertEqual(
+            credential_path("check-point", "default", purpose="prophylaxis"),
+            "devices/credentials/check-point/default/prophylaxis",
         )
 
 

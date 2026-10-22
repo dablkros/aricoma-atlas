@@ -11,6 +11,7 @@ The command writes only these managed runtime targets:
 
 ```text
 /opt/aricoma-atlas/.runtime/
+├── components.yaml          # written by install/components add; not replaced here
 ├── proxy.yaml
 ├── tls/
 │   ├── ca.crt
@@ -41,12 +42,22 @@ sudo atlasctl configure
 sudo atlasctl deploy
 ```
 
+Prvá interaktívna inštalácia ponúkne Oxidized a Zabbix ako voliteľné
+komponenty. Pevné jadro tvorí NetBox, OpenBao, Ansible a profylaxia. Pre
+automatizovaný first boot použite napríklad
+`sudo ./install.sh --components zabbix`; povolené hodnoty sú `oxidized`,
+`zabbix`, ich čiarkou oddelená kombinácia alebo `none`.
+
+Výber je monotónny: aktualizácia ho nemení a komponent sa dá neskôr iba pridať
+cez `sudo atlasctl components add NAME`. Po pridaní treba cez `atlasctl
+configure --force` doplniť hostname a TLS materiál a následne spustiť deploy.
+
 The wizard asks for:
 
 1. the specific Atlas management/listen IP;
 2. HTTPS port and administrator CIDR networks;
-3. a DNS suffix used to construct unique NetBox, Oxidized and Zabbix names;
-4. the exact Zabbix SNMP source IPv4 address;
+3. a DNS suffix used to construct unique names for NetBox and selected optional services;
+4. the exact Zabbix SNMP source IPv4 address when Zabbix is selected;
 5. production TLS paths or an explicit LAB-only certificate mode.
 
 All values and TLS material are validated before a runtime configuration is
@@ -87,8 +98,9 @@ material according to the customer PKI process.
 
 ### `services`
 
-Exactly `netbox`, `oxidized` and `zabbix` are required. Each service needs a
-unique valid DNS hostname. In production TLS mode each service also declares
+`netbox` is always required. `oxidized` and `zabbix` are required only when
+selected in `.runtime/components.yaml`; an unselected optional service must be
+omitted. Each configured service needs a unique valid DNS hostname. In production TLS mode each service also declares
 its certificate/full-chain and private-key path. One SAN certificate may be
 referenced by all three services when it covers all names.
 
@@ -185,7 +197,8 @@ the temporary staging directory. Consequently this mode cannot renew the same
 certificate and must not be used as a production PKI.
 
 LAB clients must explicitly trust the installed
-`/opt/aricoma-atlas/.runtime/tls/ca.crt`. The command does not modify client
+`/opt/aricoma-atlas/.runtime/tls/ca.crt`. The generated SAN certificate covers
+NetBox and the selected optional services. The command does not modify client
 trust stores and does not bypass browser certificate warnings.
 
 ## Replacement and upgrade behavior

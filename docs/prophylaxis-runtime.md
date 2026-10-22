@@ -1,6 +1,9 @@
 # Profylaxia runtime: Atlas orchestration and Ansible execution
 
-Stav dokumentácie: 2026-10-16. Implementácia zachováva Atlas ako orchestrátor;
+Cisco IOS tematický collector plán, výsledkové stavy a report kontrakt sú
+zdokumentované v [prophylaxis-cisco-ios.md](prophylaxis-cisco-ios.md).
+
+Stav dokumentácie: 2026-10-20. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
@@ -12,7 +15,7 @@ Atlas UI/API
   -> active + profylaxia_enabled + profylaxia_checks
   -> device/IP/platform/vendor/credential_profile
   -> NetBox Application Service -> connection port
-  -> existujúci OpenBaoService a admin credential namespace
+  -> existujúci OpenBaoService a prophylaxis credential namespace
   -> AnsiblePlatformRegistry
   -> AnsibleBackend / ansible-runner
   -> read-only Ansible collection module
@@ -26,18 +29,24 @@ Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH poli
 `username`, `password` a voliteľné `enable_password` z:
 
 ```text
-devices/credentials/<manufacturer>/<credential_profile>/admin
+devices/credentials/<manufacturer>/<credential_profile>/oxidized
 ```
 
-FortiGate profylaxia používa z toho istého secretu pole `api_token`. Kombinovaný
-Fortinet secret preto môže obsahovať SSH údaje pre Oxidized aj API token pre
-Ansible. Resolver vráti iba polia požadované konkrétnym consumerom.
+Profylaxia používa samostatný účelový secret:
 
-Pri upgrade existujúceho Fortinet profilu pridaj `api_token` do rovnakého
-`admin` secretu cez autentifikované OpenBao UI. Zachovaj existujúce
-`username`/`password`, ak profil používa aj Oxidized. Chýbajúci alebo neplatný
-token sa vracia ako `api_token_missing_or_invalid`; nejde o Ansible connection
-failure.
+```text
+devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
+```
+
+SSH platformy z neho načítajú
+`username`, `password` a voliteľný `enable_password`; FortiGate z neho načíta
+iba `api_token`. Resolver vráti iba polia požadované konkrétnym transportom.
+
+Pri upgrade skopíruj iba potrebné hodnoty z existujúceho `admin` secretu do
+nového `prophylaxis` secretu cez autentifikované OpenBao UI. Atlas nemá fallback
+na `admin`, aby profylaxia nemohla omylom použiť širšie administrátorské
+oprávnenia. Chýbajúci alebo neplatný FortiGate token sa vracia ako
+`api_token_missing_or_invalid`; nejde o Ansible connection failure.
 
 ## Port služby z NetBoxu
 
@@ -62,9 +71,20 @@ Kontrakt zodpovedá NetBox 4.7.1, ktorý reprezentuje mapovania ako zoznam
 - [NetBox 4.7.1 Service model](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/models/ipam/service.md)
 - [NetBox 4.7.1 ServiceFilterSet](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/ipam/filtersets.py#L1292-L1368)
 
-## Stabilné check ID
+## Skupiny a stabilné check ID
 
-Interný kontrakt používa:
+NetBox používateľ vyberá skupiny:
+
+```text
+identity
+resources
+interfaces
+compliance
+operations
+```
+
+Atlas ich rozbalí na interné výsledky. Implementované alebo explicitne
+plánované výsledky zahŕňajú:
 
 ```text
 cpu_utilization
@@ -72,17 +92,109 @@ device_facts
 os_version
 cpu_temperature
 uptime
+memory_utilization
+environment_health
+fan_health
+interface_state
+interface_utilization
+interface_error_counters
+license_state
+pki_certificates
+ntp_sync
+recent_log_events
+routing_table
+routing_protocol_neighbors
+ha_status
+configuration_backup
 ```
 
-V tejto iterácii sú implementované `cpu_utilization`, `device_facts`,
-`os_version` a `uptime`. `device_facts` normalizuje hostname, model, OS verziu,
+`device_facts` normalizuje hostname, model, nainštalovaný OS identifikátor,
 sériové číslo a uptime v sekundách; samostatné kontroly `os_version` a `uptime`
-používajú ten istý facts collector, takže pri spoločnom výbere nevznikne druhý
-collector job. Hromadný beh zostaví plán z
+používajú ten istý identity/facts collector, takže výber skupiny `identity`
+nevytvorí tri collector joby. Hromadný beh zostaví plán zo skupín v
 `profylaxia_checks` každého zariadenia. Registry vráti pre známu platformu a
-neimplementovaný check stav `unsupported`; beh ho uloží ako `skipped` s kódom
-`unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
-hodnotu.
+neimplementovaný výsledok stav `unsupported`; beh ho uloží ako `skipped` s
+kódom `unsupported_check`, nevydáva ho za connection error a nevytvára nulovú
+hodnotu. Počas migrácie resolver akceptuje aj rozpoznané staré individuálne
+hodnoty. Historické hodnoty `Routing table`, `Routing protocol neighbors` a
+`HA status` sa pri migrácii zachovajú prostredníctvom skupiny `operations`.
+Cisco IOS, IOS-XE a CBS majú pre tematické skupiny read-only collectory;
+neznámy formát ostáva `UNKNOWN`/`UNSUPPORTED`. `firmware_recommendation` a
+`eol_status` sa zámerne nevyhodnocujú z CLI a čakajú na samostatný externý
+zdroj. Nové NetBox UI individuálne voľby neponúka.
+
+`configuration_backup` je vyhodnotenie existujúceho Oxidized flow. Atlas načíta
+`nodes.json`, vyžaduje presnú zhodu názvu zariadenia a kontroluje `last.status`.
+Úspešný posledný job je `PASS`; chýbajúci uzol alebo ešte neukončený backup je
+`WARNING` s požiadavkou na manuálnu kontrolu; neúspešný posledný job je `FAIL`.
+Čas posledného dokončenia a vek v hodinách sú iba informačné metriky, pretože
+prahová hodnota čerstvosti ešte nie je nakonfigurovaná. Profylaxia nespúšťa
+backup ani nečíta jeho obsah.
+
+Oxidized 0.37.0 serializuje pre uzol `name`, `mtime` a voliteľný posledný job s
+poľami `start`, `end`, `status` a `time`:
+[Oxidized 0.37.0 `Node#serialize`](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/node.rb#L86-L105).
+
+PKI parser používa v tomto reze konzervatívne hranice: expirovaný alebo najviac
+30 dní zostávajúci certifikát je `FAIL`, 31 až 60 dní je `WARNING` a viac než
+60 dní je `PASS`. Stav automatickej obnovy zostáva `unverified`; samotná dlhá
+platnosť ho nedokazuje. Prahy sú zatiaľ explicitné konštanty parsera, nie
+zákaznícka konfigurácia.
+
+Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
+`model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
+ešte neobsahuje identity/facts collector, pridá jeden collector job bez pridania
+používateľského checku. Jeden čerstvý detail zariadenia z NetBoxu poskytne
+uložené hodnoty pre obe porovnania.
+
+## Všeobecná uptime politika
+
+Uptime sa vyhodnocuje až nad normalizovanou hodnotou `uptime_seconds`, preto je
+politika spoločná pre všetky platformy a transporty:
+
+| Hodnota | Evaluation | Reason code |
+| --- | --- | --- |
+| menej než 3 dni | `WARNING` | `uptime_too_short` |
+| 3 až 365 dní vrátane | `PASS` | bez reason kódu |
+| viac než 365 dní | `WARNING` | `uptime_too_long` |
+
+Krátky uptime upozorňuje na nedávny reload alebo výpadok. Uptime dlhší než rok
+upozorňuje na zariadenie bez reštartu a potrebu preveriť patch/reboot okno.
+Oba stavy patria v reporte do časti `Naplánovať`; samotný zber pritom zostáva
+`COLLECTED` a nestratí pôvodnú hodnotu v sekundách. Operations UI a textový
+report zobrazia uptime v ľudskom formáte, napríklad
+`1 rok 2 dni 3 hodiny 4 minúty`; JSON/API naďalej uchováva presné
+`uptime_seconds` pre strojové spracovanie.
+
+Sériové číslo sa porovná s natívnym poľom NetBox Device `serial`:
+
+| Stav | Správanie |
+| --- | --- |
+| `populated` | NetBox pole bolo prázdne; Atlas ho doplnil z collectora. |
+| `matched` | NetBox a zariadenie majú rovnaké sériové číslo. |
+| `mismatch` | Hodnoty sú rozdielne; Atlas NetBox neprepíše a vráti `FAIL`. |
+| `serial_not_collected` | Collector neposkytol použiteľné sériové číslo. |
+| `serial_netbox_read_failed` | Pred porovnaním nebolo možné načítať čerstvý detail zariadenia. |
+| `serial_netbox_update_failed` | Prázdne pole nebolo možné zapísať alebo NetBox nevrátil uloženú hodnotu. |
+
+Porovnanie ignoruje rozdiel vo veľkosti písmen a okrajové/nadbytočné medzery.
+Zápis sa vykonáva iba pri prázdnom poli. Existujúca rozdielna hodnota zostáva
+zachovaná, aby profylaxia nemohla zakryť fyzickú výmenu zariadenia. Ručne
+dodaný NetBox API token preto potrebuje oprávnenie na zmenu `dcim.device`;
+štandardný deployment používa token automaticky vytvoreného superusera.
+
+Model z collectora sa porovná s `device_type.model` v NetBoxe. `matched` je
+`PASS`; `mismatch` je `FAIL` a spôsobí najmenej stav behu `PARTIAL`. Atlas
+Device Type automaticky neprepisuje, pretože zmena typu môže ovplyvniť model
+komponentov a interpretáciu inventára. Chýbajúce údaje majú explicitné kódy
+`model_not_collected`, `model_netbox_read_failed` a
+`model_not_available_in_netbox`. Aj tu porovnanie ignoruje iba veľkosť písmen
+a nadbytočné medzery; produktové aliasy ani podobné názvy sa neodhadujú.
+
+Použité NetBox kontrakty:
+
+- [NetBox 4.7.1 Device model — Serial Number](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/models/dcim/device.md#serial-number)
+- [NetBox 4.7.1 REST API — detail endpoint pre update objektu](https://github.com/netbox-community/netbox/blob/v4.7.1/docs/integrations/rest-api.md#endpoints)
 
 NetBox choice set používa stabilné ID ako value a ľudský text ako label.
 Resolver počas migrácie akceptuje aj pôvodnú hodnotu `CPU utilization`, aby
@@ -90,7 +202,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 
 ## Platform registry
 
-| NetBox platform | Connection | Network OS | `device_facts` modul |
+| NetBox platform | Connection | Network OS | identity/facts collector |
 | --- | --- | --- | --- |
 | `cisco-ios` | SSH `network_cli`; explicit Telnet fallback | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
@@ -98,9 +210,19 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
 | `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
+| `checkpoint-gaia` | lokálny Ansible modul cez SSH/Paramiko | Gaia Clish | allow-list `show hostname`, `show asset all`, `show version all`, `show uptime` |
 
-Cisco IOS/IOS XE používa `show processes cpu`; Cisco CBS samostatne používa
-`show cpu utilization`. FortiOS používa monitor selector
+`checkpoint-gaia` podporuje v tejto iterácii `device_facts`, `os_version`,
+`uptime`, `serial_inventory` a `model_inventory`. Modul vyžaduje, aby SSH účet
+otváral Gaia Clish, a odmietne Expert prompt. CPU collector nie je zapnutý,
+pretože zdokumentovaný `cpstat -f cpu os` používa Expert mode; jeho povolenie
+vyžaduje samostatne overený read-only zdroj (napríklad konkrétny SNMP OID alebo
+API kontrakt). `checkpoint-gaia-embedded` zostáva mimo tohto profilu.
+
+Cisco IOS aj IOS-XE plánujú tematické collectory `ios_identity`,
+`ios_resources`, `ios_interfaces`, `ios_compliance` a `ios_operations`. Obe
+platformy používajú `show processes cpu`. Cisco CBS
+samostatne používa `show cpu utilization`. FortiOS používa monitor selector
 `system_resource_usage` s `resource: cpu` a API tokenom.
 
 Cisco CBS facts collector zachováva výstupy `show system`, `show version` a
@@ -121,13 +243,21 @@ Primárne zdroje:
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)
 - [fortios_monitor_fact](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html)
 - [Aruba AOS-CX collection](https://github.com/aruba/aoscx-ansible-collection)
-- [Paramiko 5.0.0](https://pypi.org/project/paramiko/5.0.0/)
+- [Paramiko 4.0.0](https://pypi.org/project/paramiko/4.0.0/)
 - [NTC Templates 9.3.0](https://github.com/networktocode/ntc-templates/tree/v9.3.0/ntc_templates/templates)
 
 Aruba `aoscx_command` používaný cez `network_cli` vyžaduje na Ansible control
 node knižnicu Paramiko. Backend image ju preto inštaluje ako explicitne
 pripnutú Python runtime závislosť; samotné `ansible-galaxy collection install`
 Python requirements kolekcie neinštaluje.
+
+Pozorovaný Check Point Gaia R80.10 endpoint skončil proti Paramiko 5.0.0
+chybou `IncompatiblePeer`. Paramiko 5.0.0 už neobsahuje SHA-1 KEX ani
+`ssh-rsa`, preto je runtime pripnutý na 4.0.0. Vlastný Gaia Clish modul pridáva
+`diffie-hellman-group14-sha1`, následne `diffie-hellman-group1-sha1`, a
+`ssh-rsa` až za modernejšie algoritmy. Legacy algoritmus sa preto použije iba
+vtedy, keď Gaia neponúkne spoločný modernejší algoritmus; ostatné platformové
+profily tento Gaia transport nepoužívajú.
 
 Profil `cisco-ios` pridáva do predvoleného libssh zoznamu legacy KEX
 `diffie-hellman-group1-sha1` a povoľuje server host key `ssh-rsa` až za
@@ -145,7 +275,8 @@ ho povolí iba vtedy, keď má konkrétne zariadenie v NetBoxe práve jednu TCP
 službu s presným názvom `telnet`; použije port tejto služby, štandardne 23.
 Fallback sa vykoná iba po `ssh_negotiation_failed`. Neaktivuje sa pri zlom
 hesle, neznámom alebo zmenenom SSH host key ani pri inom zlyhaní. Telnet úlohy
-sú read-only a zbierajú iba CPU alebo `show version` + `show inventory`.
+sú read-only a zrkadlia tematické IOS sady pre identity, resources, interfaces,
+compliance a operations.
 Výstupy device facts parsujú pripnuté NTC Templates `cisco_ios`; prihlasovacie
 údaje ostávajú v procesnom environment a Telnet task používa `no_log`.
 Telnet neprenáša prihlásenie ani dáta šifrovane, preto služba v NetBoxe slúži
@@ -155,6 +286,14 @@ Dokončený `report.txt` obsahuje pri úspešných checkoch aj normalizované
 hodnoty: CPU percentá, hostname, model, OS verziu, sériové číslo a uptime v
 sekundách. Report neobsahuje raw CLI výstup ani credentials. Rovnaké typované
 hodnoty sú uložené v `result.json` a vrátené cez API behu.
+
+Pre check `cpu_utilization` sa Atlas po dokončení behu pokúsi načítať jednu
+hodinu histórie z Atlas-managed Zabbix hosta označeného rovnakým `netbox_id`.
+Ak existuje numerický CPU item a história, uloží lokálny SVG graf do
+`runs/<run_id>/charts/` a zobrazí ho v Operations UI. Graf je voliteľný
+artefakt: chýbajúci Zabbix host, item, história alebo chyba Zabbixu nemení
+výsledok checku ani súhrnný stav behu. Stav je uvedený v poli `charts` a v
+`report.txt`; credentials ani raw SNMP dáta sa do grafu neukladajú.
 
 ## Runtime a secrets
 

@@ -35,6 +35,8 @@ class Settings(BaseSettings):
     netbox_ui_url: Optional[AnyHttpUrl] = None
     oxidized_ui_url: Optional[AnyHttpUrl] = None
     zabbix_ui_url: Optional[AnyHttpUrl] = None
+    oxidized_enabled: bool = True
+    zabbix_enabled: bool = True
     oxidized_inventory_file: Path = Path("/run/atlas/oxidized/router.json")
     prophylaxis_results_file: Path = Path(
         "/run/atlas/prophylaxis/results.sqlite3"

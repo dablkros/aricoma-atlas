@@ -21,16 +21,31 @@ class PlatformStatus:
 class PlatformStatusService:
     """Check application dependencies without host or Docker privileges."""
 
-    def __init__(self, openbao, netbox, oxidized, zabbix) -> None:
+    def __init__(
+        self, openbao, netbox, oxidized, zabbix, *,
+        oxidized_enabled: bool = True, zabbix_enabled: bool = True,
+    ) -> None:
         self.dependencies = {
             "openbao": openbao,
             "netbox": netbox,
-            "oxidized": oxidized,
-            "zabbix": zabbix,
         }
+        self.optional = {
+            "oxidized": (oxidized_enabled, oxidized),
+            "zabbix": (zabbix_enabled, zabbix),
+        }
+        self.dependencies.update(
+            {name: service for name, (enabled, service) in self.optional.items() if enabled}
+        )
 
     def check(self) -> PlatformStatus:
         components = {"atlas": ComponentStatus("healthy")}
+        components.update(
+            {
+                name: ComponentStatus("disabled")
+                for name, (enabled, _service) in self.optional.items()
+                if not enabled
+            }
+        )
         for name, service in self.dependencies.items():
             try:
                 service.check_ready()

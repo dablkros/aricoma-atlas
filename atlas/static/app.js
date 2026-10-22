@@ -48,6 +48,7 @@ const elements = {
   prophylaxisSkipped: document.querySelector("#prophylaxis-skipped"),
   prophylaxisReport: document.querySelector("#prophylaxis-report"),
   prophylaxisResults: document.querySelector("#prophylaxis-results"),
+  prophylaxisCharts: document.querySelector("#prophylaxis-charts"),
   monitoringToken: document.querySelector("#monitoring-token"),
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
@@ -594,6 +595,12 @@ function setPill(element, status, text = titleCase(status)) {
 function renderPlatformStatus(payload) {
   for (const name of ["atlas", "openbao", "netbox", "oxidized", "zabbix"]) {
     const card = document.querySelector(`[data-component="${name}"]`);
+    const disabled = payload.components?.[name]?.status === "disabled";
+    card.hidden = disabled;
+    document.querySelectorAll(`[data-requires-component="${name}"]`).forEach(
+      (section) => { section.hidden = disabled; },
+    );
+    if (disabled) continue;
     const target = card.querySelector(".component-status");
     const componentStatus = payload.components?.[name]?.status || "unknown";
     const componentUrl = payload.components?.[name]?.url;
@@ -724,6 +731,35 @@ function renderDevicesUnavailable() {
   tableMessage("The runtime device list is unavailable.");
 }
 
+function formatSlovakUnit(value, one, few, many) {
+  const label = value === 1 ? one : value >= 2 && value <= 4 ? few : many;
+  return `${value} ${label}`;
+}
+
+function formatUptimeSeconds(totalSeconds) {
+  if (!Number.isInteger(totalSeconds) || totalSeconds < 0) {
+    return String(totalSeconds);
+  }
+  let remaining = totalSeconds;
+  const years = Math.floor(remaining / 31536000);
+  remaining %= 31536000;
+  const days = Math.floor(remaining / 86400);
+  remaining %= 86400;
+  const hours = Math.floor(remaining / 3600);
+  remaining %= 3600;
+  const minutes = Math.floor(remaining / 60);
+  const seconds = remaining % 60;
+  const parts = [
+    [years, "rok", "roky", "rokov"],
+    [days, "deň", "dni", "dní"],
+    [hours, "hodina", "hodiny", "hodín"],
+    [minutes, "minúta", "minúty", "minút"],
+    [seconds, "sekunda", "sekundy", "sekúnd"],
+  ].filter(([value]) => value > 0)
+    .map(([value, one, few, many]) => formatSlovakUnit(value, one, few, many));
+  return parts.join(" ") || "0 sekúnd";
+}
+
 function renderProphylaxisRun(run = state.prophylaxisRun) {
   const status = run?.status || "IDLE";
   const visualStatus = status === "COMPLETED"
@@ -741,6 +777,7 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     ? `Run ${run.run_id} · Report: ${run.report_path}`
     : "No run has been launched.";
   elements.prophylaxisRun.disabled = ["PENDING", "RUNNING"].includes(status);
+  renderProphylaxisCharts(run);
   const results = run?.results || [];
   if (!results.length) {
     const row = document.createElement("tr");
@@ -760,6 +797,21 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     const details = [];
     for (const [key, value] of Object.entries(payload)) {
       if (value === null || value === undefined || key === "outcome" || key === "sensors") continue;
+      if (key === "uptime_seconds") {
+        details.push(`Uptime: ${formatUptimeSeconds(value)}`);
+        continue;
+      }
+      if (Array.isArray(value)) {
+        if (value.length) details.push(`${titleCase(key)}: ${value.join(", ")}`);
+        continue;
+      }
+      if (typeof value === "object") {
+        const fields = Object.entries(value)
+          .filter(([, item]) => item !== null && item !== undefined)
+          .map(([field, item]) => `${titleCase(field)}=${item}`);
+        if (fields.length) details.push(`${titleCase(key)}: ${fields.join(", ")}`);
+        continue;
+      }
       details.push(`${titleCase(key)}: ${value}`);
     }
     if (Array.isArray(payload.sensors)) {
@@ -779,6 +831,42 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
     return row;
   });
   elements.prophylaxisResults.replaceChildren(...rows);
+}
+
+async function renderProphylaxisCharts(run) {
+  elements.prophylaxisCharts.replaceChildren();
+  const charts = (run?.charts || []).filter((chart) =>
+    chart.status === "generated" && chart.artifact);
+  for (const chart of charts) {
+    const figure = document.createElement("figure");
+    figure.className = "prophylaxis-chart";
+    const caption = document.createElement("figcaption");
+    caption.textContent = [
+      chart.device_name,
+      titleCase(chart.check),
+      chart.window,
+    ].join(" · ");
+    try {
+      const response = await fetch(
+        `/api/prophylaxis/runs/${run.run_id}/charts/${encodeURIComponent(chart.artifact)}`,
+        { headers: prophylaxisHeaders() },
+      );
+      if (!response.ok) throw new Error("chart_unavailable");
+      const image = document.createElement("img");
+      image.alt = caption.textContent;
+      image.src = URL.createObjectURL(await response.blob());
+      image.addEventListener(
+        "load",
+        () => URL.revokeObjectURL(image.src),
+        { once: true },
+      );
+      figure.append(image, caption);
+    } catch (_) {
+      caption.textContent += " · unavailable";
+      figure.append(caption);
+    }
+    elements.prophylaxisCharts.append(figure);
+  }
 }
 
 function addResultEvent(symbol, kind, device, detail = "") {
@@ -847,11 +935,9 @@ function setSyncBusy(busy) {
 async function loadDashboard() {
   elements.refreshButton.disabled = true;
   setPageMessage();
-  const [platform, overview, devices] = await Promise.allSettled([
-    apiRequest("/api/status"),
-    apiRequest("/api/oxidized/status"),
-    apiRequest("/api/oxidized/devices"),
-  ]);
+  const platform = await Promise.resolve(apiRequest("/api/status"))
+    .then((value) => ({ status: "fulfilled", value }))
+    .catch((reason) => ({ status: "rejected", reason }));
 
   if (platform.status === "fulfilled") {
     renderPlatformStatus(platform.value);
@@ -859,20 +945,25 @@ async function loadDashboard() {
     renderPlatformUnavailable();
   }
 
-  if (overview.status === "fulfilled") {
-    renderOxidizedStatus(overview.value);
-  } else {
-    renderOxidizedStatusUnavailable();
+  const oxidizedEnabled = platform.status === "fulfilled"
+    && platform.value.components?.oxidized?.status !== "disabled";
+  const oxidizedResults = oxidizedEnabled
+    ? await Promise.allSettled([
+        apiRequest("/api/oxidized/status"),
+        apiRequest("/api/oxidized/devices"),
+      ])
+    : [];
+  const [overview, devices] = oxidizedResults;
+  if (oxidizedEnabled) {
+    if (overview.status === "fulfilled") renderOxidizedStatus(overview.value);
+    else renderOxidizedStatusUnavailable();
+    if (devices.status === "fulfilled") {
+      state.devices = devices.value;
+      renderDevices();
+    } else renderDevicesUnavailable();
   }
 
-  if (devices.status === "fulfilled") {
-    state.devices = devices.value;
-    renderDevices();
-  } else {
-    renderDevicesUnavailable();
-  }
-
-  if ([platform, overview, devices].some(
+  if ([platform, ...oxidizedResults].some(
     (result) => result.status === "rejected",
   )) {
     setPageMessage("Some operational data is currently unavailable. Refresh after the dependency recovers.");

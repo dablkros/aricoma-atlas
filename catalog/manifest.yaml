@@ -1,6 +1,6 @@
 catalog:
   name: "Atlas Device Catalog"
-  version: "0.1.0-beta"
+  version: "0.1.1-beta"
   stage: "beta"
 
 netbox:
@@ -19,8 +19,10 @@ vendors:
       mode: patterns
       include:
         - "CBS*.yaml"
+        - "CBS*.yml"
         - "SF*.yaml"
         - "SG*.yaml"
+        - "SG*.yml"
         - "SX*.yaml"
         - "RV*.yaml"
 
@@ -99,3 +101,54 @@ vendors:
         - "Aruba-3810M-*.yaml"
         - "Aruba-5406R-*.yaml"
         - "Aruba-5412R-*.yaml"
+
+  Check Point:
+
+    gaia:
+      mode: patterns
+      include:
+        - "MHO-140.yaml"
+        - "MHO-175.yaml"
+        - "Quantum-LightSpeed-QLS250.yaml"
+        - "SG3600.yaml"
+        - "SG3920.yaml"
+        - "SG3950.yaml"
+        - "SG3970.yaml"
+        - "SG3980.yaml"
+        - "SG6200.yaml"
+        - "SG6400.yaml"
+        - "SG6600.yaml"
+        - "SG7000.yaml"
+        - "SG9100.yaml"
+        - "SG9200.yaml"
+        - "SG9300.yaml"
+        - "SG9400.yaml"
+        - "SG9700.yaml"
+        - "SG9800.yaml"
+        - "SG16000.yaml"
+        - "SG16200.yaml"
+        - "SG19100.yaml"
+        - "SG19200.yaml"
+        - "SG29100.yaml"
+        - "SG29200.yaml"
+        - "Smart-1-6000-XL.yaml"
+
+    gaia_embedded:
+      mode: patterns
+      include:
+        - "SG1530.yaml"
+        - "SG1535.yaml"
+        - "SG1555.yaml"
+        - "SG1570.yaml"
+        - "SG1575.yaml"
+        - "SG1590.yaml"
+        - "SG1595.yaml"
+        - "SG1595R.yaml"
+        - "SG1600.yaml"
+        - "SG1800.yaml"
+        - "SG2000.yaml"
+        - "SG2530.yaml"
+        - "SG2550.yaml"
+        - "SG2560.yaml"
+        - "SG2570.yaml"
+        - "SG2580.yaml"

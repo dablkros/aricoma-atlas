@@ -1,0 +1,39 @@
+---
+- name: Collect Cisco IOS operational-health commands
+  cisco.ios.ios_command:
+    commands:
+      - show clock
+      - show ntp status
+      - show ntp associations
+      - show logging
+      - show ip route
+      - show ip ospf neighbor
+      - show ip bgp summary
+      - show ip eigrp neighbors
+      - show standby brief
+      - show redundancy
+      - show switch
+      - show switch stack-ports summary
+      - dir
+      - "show flash: | include crash"
+  register: atlas_ios_operations
+  changed_when: false
+
+- name: Prepare Cisco IOS operational outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_clock: "{{ atlas_ios_operations.stdout[0] }}"
+        show_ntp_status: "{{ atlas_ios_operations.stdout[1] }}"
+        show_ntp_associations: "{{ atlas_ios_operations.stdout[2] }}"
+        show_logging: "{{ atlas_ios_operations.stdout[3] }}"
+        show_ip_route: "{{ atlas_ios_operations.stdout[4] }}"
+        show_ip_ospf_neighbor: "{{ atlas_ios_operations.stdout[5] }}"
+        show_ip_bgp_summary: "{{ atlas_ios_operations.stdout[6] }}"
+        show_ip_eigrp_neighbors: "{{ atlas_ios_operations.stdout[7] }}"
+        show_standby_brief: "{{ atlas_ios_operations.stdout[8] }}"
+        show_redundancy: "{{ atlas_ios_operations.stdout[9] }}"
+        show_switch: "{{ atlas_ios_operations.stdout[10] }}"
+        show_switch_stack_ports_summary: "{{ atlas_ios_operations.stdout[11] }}"
+        dir: "{{ atlas_ios_operations.stdout[12] }}"
+        show_flash_crash: "{{ atlas_ios_operations.stdout[13] }}"

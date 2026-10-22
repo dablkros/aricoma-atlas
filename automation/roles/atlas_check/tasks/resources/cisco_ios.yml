@@ -1,0 +1,21 @@
+---
+- name: Collect Cisco IOS resource and environment commands
+  cisco.ios.ios_command:
+    commands:
+      - show processes cpu
+      - show processes memory sorted
+      - show environment all
+      - show power inline
+      - show post
+  register: atlas_ios_resources
+  changed_when: false
+
+- name: Prepare Cisco IOS resource outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_processes_cpu: "{{ atlas_ios_resources.stdout[0] }}"
+        show_processes_memory_sorted: "{{ atlas_ios_resources.stdout[1] }}"
+        show_environment_all: "{{ atlas_ios_resources.stdout[2] }}"
+        show_power_inline: "{{ atlas_ios_resources.stdout[3] }}"
+        show_post: "{{ atlas_ios_resources.stdout[4] }}"

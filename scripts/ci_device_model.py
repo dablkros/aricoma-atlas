@@ -82,7 +82,7 @@ def main():
         state["devices"] = {str(d["id"]): related_id(d["platform"]) for d in (inherited, override)}
         SNAPSHOT.write_text(json.dumps(state), encoding="utf-8")
         # Ephemeral fixture values only. Never print secret-bearing objects.
-        bao.kv_write(token, "devices/credentials/cisco/ci-device-model/admin", {"username": "ci-fixture", "password": "ci-only-ephemeral"})
+        bao.kv_write(token, "devices/credentials/cisco/ci-device-model/oxidized", {"username": "ci-fixture", "password": "ci-only-ephemeral"})
         bao.kv_write(token, "devices/credentials/cisco/ci-device-model/snmp", {"version": "2c", "community": "ci-only-ephemeral"})
     else:
         before = json.loads(SNAPSHOT.read_text(encoding="utf-8"))

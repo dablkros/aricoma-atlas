@@ -37,7 +37,13 @@ def credential_path(vendor, profile, purpose="admin"):
             "Invalid credential_profile",
             code="missing_credential_profile",
         )
-    if purpose not in {"admin", "snmp", "automation"}:
+    if purpose not in {
+        "admin",
+        "snmp",
+        "automation",
+        "oxidized",
+        "prophylaxis",
+    }:
         raise DeviceValidationError("Invalid credential purpose")
     return f"devices/credentials/{vendor}/{profile}/{purpose}"
 
@@ -147,7 +153,7 @@ def oxidized_reference(device, config=None):
             "Missing manufacturer",
             code="missing_manufacturer",
         )
-    path = credential_path(vendor, profile)
+    path = credential_path(vendor, profile, purpose="oxidized")
     name = device.get("name")
     if not isinstance(name, str) or not name.strip():
         raise DeviceValidationError("Missing device name", code="missing_name")
@@ -176,6 +182,7 @@ def resolve_oxidized_device(device, credential_source, token=None, config=None):
         credentials = credential_source.get_device_credentials(
             reference.vendor,
             reference.profile,
+            purpose="oxidized",
         )
         return ResolvedDevice(reference, credentials)
 

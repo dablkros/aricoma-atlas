@@ -7,6 +7,7 @@ from atlas.prophylaxis.models import (
     CollectorId,
     EvaluationOutcome,
     RawCollectorResult,
+    expand_check_selection,
 )
 from atlas.prophylaxis.parsers import (
     normalize_snmp_cpu,
@@ -42,6 +43,32 @@ def cbs_raw(model="CBS350-16T-2G", fan_status=5):
 
 
 class SystemMetricTests(unittest.TestCase):
+    def test_oxidized_backup_status_is_reused_without_starting_a_backup(self):
+        service = DeviceFactsRunService(
+            netbox=None,
+            openbao=None,
+            backend=None,
+            store=None,
+            concurrency=1,
+        )
+        service._oxidized_nodes = {
+            "SWtento": ({
+                "name": "SWtento",
+                "last": {
+                    "status": "success",
+                    "end": "2026-10-20T08:30:00Z",
+                },
+            },),
+        }
+
+        values = service._configuration_backup_values("SWtento")
+        missing = service._configuration_backup_values("missing")
+
+        self.assertEqual(values.outcome, EvaluationOutcome.PASS)
+        self.assertFalse(values.metrics["manual_backup_required"])
+        self.assertEqual(missing.outcome, EvaluationOutcome.WARNING)
+        self.assertTrue(missing.metrics["manual_backup_required"])
+
     def test_cbs_cpu_matches_verified_three_oid_contract(self):
         values = normalize_snmp_cpu(cbs_raw())
         self.assertEqual(values.current_percent, 30)
@@ -68,6 +95,28 @@ class SystemMetricTests(unittest.TestCase):
         values = normalize_snmp_fans(cbs_raw(model="UNKNOWN-CBS"))
         self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
         self.assertIsNone(values.expected_components)
+
+    def test_cbs350_12xt_requires_two_healthy_fans(self):
+        raw = cbs_raw(model="CBS350-12XT", fan_status=1)
+        raw.data["metrics"]["fan_3"]["value"] = 5
+
+        values = normalize_snmp_fans(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.PASS)
+        self.assertEqual(values.expected_components, 2)
+        self.assertEqual(
+            [sensor.outcome for sensor in values.sensors],
+            [
+                EvaluationOutcome.PASS,
+                EvaluationOutcome.PASS,
+                EvaluationOutcome.NOT_APPLICABLE,
+            ],
+        )
+
+        raw.data["metrics"]["fan_2"]["value"] = 5
+        failed = normalize_snmp_fans(raw)
+        self.assertEqual(failed.outcome, EvaluationOutcome.FAIL)
+        self.assertEqual(failed.reason_code, "fan_failure_detected")
 
     def test_memory_is_explicitly_unsupported_until_oid_is_verified(self):
         values = normalize_snmp_memory(cbs_raw())
@@ -97,19 +146,88 @@ class SystemMetricTests(unittest.TestCase):
             EvaluationOutcome.UNSUPPORTED,
         )
 
-    def test_cbs_selected_system_checks_share_one_snmp_collector(self):
-        profile = AnsiblePlatformRegistry().resolve("cisco-cbs")
-        plan = CollectorRegistry().plan(
-            (
-                CheckId.CPU_UTILIZATION,
-                CheckId.MEMORY_UTILIZATION,
-                CheckId.CPU_TEMPERATURE,
-                CheckId.FAN_HEALTH,
-            ),
-            profile,
+    def test_cbs_groups_share_identity_and_resource_collectors(self):
+        for platform in ("cisco-cbs", "cisco-cbs250-350"):
+            with self.subTest(platform=platform):
+                profile = AnsiblePlatformRegistry().resolve(platform)
+                checks, unknown = expand_check_selection(
+                    {"identity", "resources"}
+                )
+                plan = CollectorRegistry().plan(checks, profile)
+
+                self.assertEqual(unknown, ())
+                self.assertEqual(
+                    [task.collector.id for task in plan.tasks],
+                    [
+                        CollectorId.DEVICE_FACTS,
+                        CollectorId.SNMP_SYSTEM,
+                        CollectorId.CBS_RESOURCES,
+                    ],
+                )
+                self.assertEqual(
+                    plan.tasks[0].checks,
+                    (
+                        CheckId.DEVICE_FACTS,
+                        CheckId.OS_VERSION,
+                        CheckId.UPTIME,
+                    ),
+                )
+                self.assertEqual(
+                    plan.tasks[1].checks,
+                    (
+                        CheckId.CPU_UTILIZATION,
+                        CheckId.CPU_TEMPERATURE,
+                        CheckId.FAN_HEALTH,
+                    ),
+                )
+                self.assertEqual(
+                    plan.tasks[2].checks,
+                    (
+                        CheckId.MEMORY_UTILIZATION,
+                        CheckId.ENVIRONMENT_HEALTH,
+                    ),
+                )
+                self.assertEqual(
+                    plan.unsupported_checks,
+                    (),
+                )
+
+    def test_cisco_ios_plan_groups_only_verified_thematic_collectors(self):
+        profile = AnsiblePlatformRegistry().resolve("cisco-ios")
+        checks, unknown = expand_check_selection(
+            {
+                "identity",
+                "resources",
+                "interfaces",
+                "compliance",
+                "operations",
+            }
         )
-        self.assertEqual(len(plan.tasks), 1)
-        self.assertEqual(plan.tasks[0].collector.id, CollectorId.SNMP_SYSTEM)
+        plan = CollectorRegistry().plan(checks, profile)
+
+        self.assertEqual(unknown, ())
+        self.assertEqual(
+            [task.collector.id for task in plan.tasks],
+            [
+                CollectorId.IOS_IDENTITY,
+                CollectorId.IOS_RESOURCES,
+                CollectorId.IOS_INTERFACES,
+                CollectorId.IOS_COMPLIANCE,
+                CollectorId.IOS_OPERATIONS,
+            ],
+        )
+        self.assertEqual(
+            plan.tasks[0].checks,
+            (CheckId.DEVICE_FACTS, CheckId.OS_VERSION, CheckId.UPTIME),
+        )
+        self.assertEqual(
+            plan.unsupported_checks,
+            (
+                CheckId.FIRMWARE_RECOMMENDATION,
+                CheckId.EOL_STATUS,
+                CheckId.CONFIGURATION_BACKUP,
+            ),
+        )
 
     def test_evaluation_controls_run_status_without_losing_values(self):
         result = DeviceFactsRunService._success_result(
@@ -170,7 +288,6 @@ class SystemMetricTests(unittest.TestCase):
                 "credential_profile": "default",
                 "profylaxia_checks": [
                     "cpu_utilization",
-                    "memory_utilization",
                     "cpu_temperature",
                     "fan_health",
                 ],
@@ -191,7 +308,6 @@ class SystemMetricTests(unittest.TestCase):
                 EvaluationOutcome.PASS,
                 EvaluationOutcome.UNKNOWN,
                 EvaluationOutcome.NOT_APPLICABLE,
-                EvaluationOutcome.UNSUPPORTED,
             },
         )
 

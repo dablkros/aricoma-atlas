@@ -1,4 +1,4 @@
-# Profylaxia system metrics: Cisco CBS350 and Aruba AOS-CX
+# Profylaxia system metrics: Cisco CBS250/350 and Aruba AOS-CX
 
 Status: implementation contract and evidence register, reviewed against the
 repository on 2026-10-18.
@@ -7,13 +7,14 @@ repository on 2026-10-18.
 
 Atlas keeps the existing ownership boundaries:
 
-1. NetBox selects checks through `profylaxia_checks` and supplies device identity,
-   platform, model and management IP.
+1. NetBox selects Profylaxia groups through `profylaxia_checks` and supplies
+   device identity, platform, model and management IP. Atlas expands a group to
+   its stable internal check IDs before platform planning.
 2. OpenBao supplies the device-specific SNMP credential from
    `devices/credentials/<vendor>/<device-name>/snmp`. If that Atlas-managed leaf
    does not exist, the explicitly referenced credential profile is used. No
    credential is written to a result file or the browser.
-3. The existing Profylaxia run service groups selected system checks into one
+3. The existing Profylaxia run service groups expanded system checks into one
    `snmp_system` collector call per device.
 4. The existing Ansible Runner boundary invokes a local, read-only SNMPv2c GET
    module. Only OIDs declared in the platform task are queried; there is no
@@ -27,7 +28,28 @@ Zabbix is not called by this collector. Zabbix remains responsible for periodic
 sampling, trends and alert history; Profylaxia executes only checks selected in
 NetBox.
 
-## Stable check IDs and outcomes
+## Cisco CBS group capability map
+
+The same NetBox groups are accepted for platform slugs `cisco-cbs` and
+`cisco-cbs250-350`. The platform registry currently plans them as follows:
+
+| Group | CBS execution | Current result coverage |
+| --- | --- | --- |
+| `identity` | one SSH `device_facts` collector | hostname, model/PID, installed-image identifier, serial and uptime; version recommendation remains external |
+| `resources` | SNMP system batch plus read-only CBS CLI batch | CPU, temperature and fan prefer SNMP; environment CLI is parsed; memory stays unknown/unsupported until evidence exists |
+| `interfaces` | one read-only CBS CLI batch | state, rate and counters are collected; policy-dependent results remain `UNKNOWN` |
+| `compliance` | one read-only CBS CLI batch | local certificate dates parsed; CBS license CLI remains `UNSUPPORTED` until a documented source exists; firmware/EOL use a future external source |
+| `operations` | one read-only CBS CLI batch plus Oxidized status | SNTP, logs, routes/neighbors, stack/HA and last configuration-backup outcome |
+
+Unsupported or unrecognized group members remain present in the run report.
+They are not silently dropped and do not trigger an SNMP walk. The CLI
+normalizers are conservative: an unknown format stays `UNKNOWN` or
+`UNSUPPORTED` until a fixture proves its meaning.
+
+## Resources group, stable check IDs and outcomes
+
+The NetBox value `resources` expands to the system checks below. Legacy stored
+individual values remain accepted during migration.
 
 | NetBox value | Meaning | CBS350 | Aruba CX |
 | --- | --- | --- | --- |
@@ -37,8 +59,8 @@ NetBox.
 | `fan_health` | Model-aware fan state | Three tested status OIDs | `UNSUPPORTED` |
 
 Legacy stored values `CPU utilization`, `Memory utilization` and `Temperature`
-remain accepted during migration. Fresh NetBox installs use stable machine IDs and
-do not contain the duplicate `Temperature` choice.
+remain accepted during migration. Fresh NetBox installs offer the `resources`
+group instead of individual metric choices.
 
 - `PASS`: a validated healthy result.
 - `FAIL`: a confirmed fault under the documented state model and explicit
@@ -63,15 +85,19 @@ counted as skipped, while their structured values and reason remain in JSON and 
 | Fan 1..3 | suffixes `.4.1`, `.5.1`, `.6.1` under `1.3.6.1.4.1.9.6.1.101.53.15.1` | Real device GET + Cisco enumeration | 1 normal; 2 warning; 3 critical; 4 shutdown; 5 notPresent; 6 notFunctioning |
 | RAM | none | Community templates expose IOS `CISCO-MEMORY-POOL-MIB`, not a verified CBS350 object | `UNSUPPORTED` |
 
-The Cisco Business 350 data sheet identifies `CBS350-16T-2G` as fanless. For that
-exact model, status `5/notPresent` is `NOT_APPLICABLE`. Atlas does not extend this
-assumption to unknown models: there it remains `UNKNOWN`. A future explicitly
-declared fan-equipped model must treat a missing expected fan as `FAIL`.
+The Cisco Business 350 data sheet identifies `CBS350-16T-2G` as fanless and
+`CBS350-12XT` as having two fans. For the fanless model, status `5/notPresent`
+is `NOT_APPLICABLE`. For `CBS350-12XT`, either of the first two fans being
+absent is `FAIL`, while the unused third probe is `NOT_APPLICABLE`. Atlas does
+not extend either assumption to unknown models: there `notPresent` remains
+`UNKNOWN`.
 
 Primary sources:
 
 - [Cisco, Common SNMP OIDs for CBS250/CBS350](https://www.cisco.com/c/en/us/support/docs/smb/switches/Cisco-Business-Switching/kmgmt3636-snmpv3-common-oids-cbs350.pdf), reviewed 2026-10-18.
 - [Cisco Business 350 Series Managed Switches Data Sheet](https://www.cisco.com/c/en/us/products/collateral/switches/business-350-series-managed-switches/datasheet-c78-744156.html), 2024 edition, reviewed 2026-10-18.
+- [Cisco Business Switches 350 Series CLI Guide](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-350-cli-/cbs-350-cli-_CLT_chapter.html), updated index reviewed 2026-10-20.
+- [Cisco Business Switches 350 Series CLI Guide, System Management Commands](https://www.cisco.com/c/en/us/td/docs/switches/lan/csbms/CBS_250_350/CLI/cbs-350-cli-/system-management-commands.html), reviewed 2026-10-20.
 
 ### Aruba AOS-CX OVA
 
@@ -108,7 +134,7 @@ References:
 
 ## Operations
 
-1. Enable Profylaxia on the NetBox device and select the stable check IDs.
+1. Enable Profylaxia on the NetBox device and select the `resources` group.
 2. Ensure the Atlas-managed per-device SNMP secret exists (normally created by
    `Provision & monitor`) or configure the explicit SNMP credential profile.
 3. In Operations UI, enter the operator token and select **Run Profylaxia**.
@@ -118,4 +144,6 @@ References:
 Current limitation: this collector supports SNMPv2c. An SNMPv3 credential is not
 silently downgraded. Live validation against the named CBS350 and Aruba OVA remains
 required after deployment; repository tests validate normalization and planning,
-not device reachability.
+not device reachability. The shared CBS250/350 OID document covers both product
+families, but the current stored real-device fixture is from CBS350; CBS250 runtime
+behavior therefore remains unverified until a live CBS250 sample is supplied.

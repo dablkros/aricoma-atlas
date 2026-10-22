@@ -78,9 +78,9 @@ class MemoryNetBox:
         self.writes.append(("DELETE", endpoint, None))
 
 
-def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C"):
-    return {"file": Path("fixture.yaml"), "manufacturer": "Cisco", "model": model, "data": {
-        "manufacturer": "Cisco", "slug": slug, "model": model}}
+def item(slug="cisco-c9500-48y4c", model="Catalyst 9500-48Y4C", manufacturer="Cisco"):
+    return {"file": Path("fixture.yaml"), "manufacturer": manufacturer, "model": model, "data": {
+        "manufacturer": manufacturer, "slug": slug, "model": model}}
 
 
 class PlatformTests(unittest.TestCase):
@@ -95,6 +95,7 @@ class PlatformTests(unittest.TestCase):
             ("Cisco", "cisco-ws-c2960x-24ts-ll", "WS-C2960X-24TS-LL", "cisco-ios"),
             ("Cisco", "cisco-cbs220-24t-4g", "CBS220-24T-4G", "cisco-cbs"),
             ("Cisco", "cisco-cbs250-24t-4g", "CBS250-24T-4G", "cisco-cbs250-350"),
+            ("Cisco", "cisco-cbs350-12xt", "CBS350-12XT", "cisco-cbs250-350"),
             ("Cisco", "cisco-cbs350-48t-4g", "CBS350-48T-4G", "cisco-cbs250-350"),
             ("Fortinet", "fortinet-fg-60f", "FortiGate 60F", "fortios"),
             ("Fortinet", "fortinet-fap-231f", "FortiAP 231F", "fortiap"),
@@ -115,6 +116,13 @@ class PlatformTests(unittest.TestCase):
             ("HPE", "hpe-aruba-1930-48g", "Aruba 1930 48G", None),
             ("HPE", "hpe-aruba-ap-635", "Aruba AP-635", None),
             ("HPE", "hpe-a5500-48g-4sfp-hi", "A5500-48G-4SFP HI", None),
+            ("Check Point", "check-point-sg9200", "SG9200", "checkpoint-gaia"),
+            ("Check Point", "check-point-mho-175", "MHO-175", "checkpoint-gaia"),
+            ("Check Point", "check-point-smart-1-6000-xl", "Smart-1 6000-XL", "checkpoint-gaia"),
+            ("Check Point", "check-point-sg1595r", "SG1595R", "checkpoint-gaia-embedded"),
+            ("Check Point", "check-point-sg2580", "SG2580", "checkpoint-gaia-embedded"),
+            ("Check Point", "check-point-sg1430", "SG1430", None),
+            ("Check Point", "check-point-cpap-sbte2000x", "SandBlast TE2000X", None),
             ("Fortinet", "fortinet-fpm-7620f", "FortiGate Module 7620F", None),
             ("Cisco", "cisco-n9k-unknown", "N9K-unknown", None),
             ("Cisco", "unknown", "unknown", None),
@@ -151,6 +159,42 @@ class PlatformTests(unittest.TestCase):
         types = client.tables["/api/dcim/device-types/"]
         xe = next(p for p in client.tables["/api/dcim/platforms/"] if p["slug"] == "cisco-ios-xe")
         self.assertEqual(types[0]["default_platform"], xe["id"])
+        self.assertFalse(any("/devices/" in entry[1] for entry in client.writes))
+
+    def test_check_point_platforms_provision_idempotently(self):
+        client = MemoryNetBox()
+        items = [
+            item("check-point-sg9200", "SG9200", "Check Point"),
+            item("check-point-sg2580", "SG2580", "Check Point"),
+        ]
+        with redirect_stdout(io.StringIO()):
+            provision_netbox.provision(client, items, True, 200, False)
+            writes = copy.deepcopy(client.writes)
+            provision_netbox.provision(client, items, True, 200, False)
+        self.assertEqual(client.writes, writes)
+        manufacturer = next(
+            obj for obj in client.tables["/api/dcim/manufacturers/"]
+            if obj["name"] == "Check Point"
+        )
+        platforms = {
+            obj["slug"]: obj for obj in client.tables["/api/dcim/platforms/"]
+        }
+        self.assertEqual(
+            platforms["checkpoint-gaia"]["manufacturer"], manufacturer["id"]
+        )
+        self.assertEqual(
+            platforms["checkpoint-gaia-embedded"]["manufacturer"],
+            manufacturer["id"],
+        )
+        defaults = {
+            obj["model"]: obj["default_platform"]
+            for obj in client.tables["/api/dcim/device-types/"]
+        }
+        self.assertEqual(defaults["SG9200"], platforms["checkpoint-gaia"]["id"])
+        self.assertEqual(
+            defaults["SG2580"],
+            platforms["checkpoint-gaia-embedded"]["id"],
+        )
         self.assertFalse(any("/devices/" in entry[1] for entry in client.writes))
 
     def test_existing_type_enriched_then_unmapped_cleared_without_other_edits(self):
@@ -393,6 +437,218 @@ class PlatformTests(unittest.TestCase):
             desired["extra_choices"],
         )
 
+    def test_individual_check_choice_set_migrates_to_groups(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["description"] = "options for profylaxia"
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        client.post("/api/extras/custom-field-choice-sets/", previous)
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated"], 1)
+        self.assertEqual(summary["drift"], 0)
+        self.assertEqual(
+            client.tables["/api/extras/custom-field-choice-sets/"][0][
+                "extra_choices"
+            ],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
+    def test_referenced_choices_are_remapped_before_removal(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["description"] = "options for profylaxia"
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        choice_set = client.post(
+            "/api/extras/custom-field-choice-sets/", previous
+        )
+        device = client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": [
+                        {"value": "uptime", "label": "Uptime"},
+                        {
+                            "value": "cpu_utilization",
+                            "label": "CPU utilization",
+                        },
+                        {
+                            "value": "interface errors",
+                            "label": "interface errors",
+                        },
+                        {"value": "Routing table", "label": "Routing table"},
+                    ],
+                },
+            },
+        )
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+            writes = copy.deepcopy(client.writes)
+            second = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(first["migrated"], 1)
+        self.assertEqual(first["migrated_device_values"], 1)
+        self.assertEqual(second["migrated_device_values"], 0)
+        self.assertEqual(client.writes, writes)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["identity", "resources", "interfaces", "operations"],
+        )
+        self.assertEqual(
+            writes[0],
+            (
+                "PATCH",
+                f"/api/extras/custom-field-choice-sets/{choice_set['id']}/",
+                {
+                    "description": desired["description"],
+                    "extra_choices": (
+                        provision_baseline.transitional_prophylaxis_choices(
+                            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+                        )
+                    ),
+                },
+            ),
+        )
+        self.assertEqual(
+            writes[1],
+            (
+                "PATCH",
+                f"/api/dcim/devices/{device['id']}/",
+                {
+                    "custom_fields": {
+                        "profylaxia_checks": [
+                            "identity",
+                            "resources",
+                            "interfaces",
+                            "operations",
+                        ],
+                    },
+                },
+            ),
+        )
+        self.assertEqual(
+            writes[2][2]["extra_choices"],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
+    def test_interrupted_group_migration_resumes_from_transitional_choices(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        transitional = copy.deepcopy(desired)
+        transitional["extra_choices"] = (
+            provision_baseline.transitional_prophylaxis_choices(
+                provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+            )
+        )
+        client.post("/api/extras/custom-field-choice-sets/", transitional)
+        device = client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": ["cpu_utilization"],
+                },
+            },
+        )
+        client.writes.clear()
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated"], 1)
+        self.assertEqual(summary["migrated_device_values"], 1)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["resources"],
+        )
+        self.assertEqual(
+            client.writes[0],
+            (
+                "PATCH",
+                f"/api/dcim/devices/{device['id']}/",
+                {"custom_fields": {"profylaxia_checks": ["resources"]}},
+            ),
+        )
+        self.assertEqual(
+            client.writes[1][2]["extra_choices"],
+            provision_baseline.GROUPED_PROPHYLAXIS_CHOICES,
+        )
+
+    def test_upgrade_fixture_selections_migrate_to_expected_groups(self):
+        client = MemoryNetBox()
+        desired_choice_sets, _ = provision_baseline.load_baseline()
+        desired = next(
+            choice_set
+            for choice_set in desired_choice_sets
+            if choice_set["name"] == "Profylaxia checks"
+        )
+        previous = copy.deepcopy(desired)
+        previous["extra_choices"] = copy.deepcopy(
+            provision_baseline.STABLE_ID_PROPHYLAXIS_CHOICES
+        )
+        client.post("/api/extras/custom-field-choice-sets/", previous)
+        client.post(
+            "/api/dcim/devices/",
+            {
+                "custom_fields": {
+                    "profylaxia_checks": [
+                        "cpu_utilization",
+                        "os_version",
+                    ],
+                },
+            },
+        )
+
+        with redirect_stdout(io.StringIO()):
+            summary = provision_baseline.provision_choice_sets(
+                client, [desired], True
+            )
+
+        self.assertEqual(summary["migrated_device_values"], 1)
+        self.assertEqual(
+            client.tables["/api/dcim/devices/"][0]["custom_fields"][
+                "profylaxia_checks"
+            ],
+            ["identity", "resources"],
+        )
+
     def test_stale_mapping_invalidates_cached_build(self):
         manifest = bootstrap_netbox.load_manifest()
         with tempfile.TemporaryDirectory() as directory:
@@ -401,7 +657,8 @@ class PlatformTests(unittest.TestCase):
             (build / "Cisco/a.yaml").write_text("{}")
             report = {"total": 1, "catalog": manifest["catalog"], "upstream_commit": manifest["upstream"]["commit"],
                       "vendors": {v: {"patterns": p} for v, p in bootstrap_netbox.expected_vendor_patterns(manifest).items()},
-                      "platform_mapping_sha256": "outdated"}
+                      "platform_mapping_sha256": "outdated",
+                      "local_device_types_sha256": bootstrap_netbox.local_device_types_digest()}
             with patch.object(bootstrap_netbox, "DEVICE_TYPE_BUILD", build), \
                  patch.object(bootstrap_netbox, "load_catalog_report", return_value=report), \
                  patch.object(bootstrap_netbox, "get_upstream_origin", return_value=manifest["upstream"]["repository"]):
@@ -409,12 +666,76 @@ class PlatformTests(unittest.TestCase):
             self.assertFalse(current)
             self.assertIn("platform mapping changed or enrichment is missing", reasons)
 
+    def test_local_cbs350_12xt_definition_is_conservative(self):
+        path = ROOT / "catalog/device-types/Cisco/CBS350-12XT.yaml"
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+        self.assertEqual(data["model"], "CBS350-12XT")
+        self.assertEqual(data["slug"], "cisco-cbs350-12xt")
+        self.assertEqual(
+            default_platform(data, self.config),
+            "cisco-cbs250-350",
+        )
+        physical = [
+            interface
+            for interface in data["interfaces"]
+            if interface["type"] == "10gbase-t"
+        ]
+        self.assertEqual(len(physical), 12)
+        self.assertEqual(
+            [
+                interface["name"]
+                for interface in data["interfaces"]
+                if interface.get("mgmt_only")
+            ],
+            ["OOB"],
+        )
+
+    def test_local_device_type_change_invalidates_cached_build(self):
+        manifest = bootstrap_netbox.load_manifest()
+        with tempfile.TemporaryDirectory() as directory:
+            build = Path(directory)
+            (build / "Cisco").mkdir()
+            (build / "Cisco/a.yaml").write_text("{}")
+            report = {
+                "total": 1,
+                "catalog": manifest["catalog"],
+                "upstream_commit": manifest["upstream"]["commit"],
+                "vendors": {
+                    vendor: {"patterns": patterns}
+                    for vendor, patterns in (
+                        bootstrap_netbox.expected_vendor_patterns(
+                            manifest
+                        ).items()
+                    )
+                },
+                "platform_mapping_sha256": bootstrap_netbox.mapping_digest(),
+                "local_device_types_sha256": "outdated",
+            }
+            with patch.object(
+                bootstrap_netbox,
+                "DEVICE_TYPE_BUILD",
+                build,
+            ), patch.object(
+                bootstrap_netbox,
+                "load_catalog_report",
+                return_value=report,
+            ), patch.object(
+                bootstrap_netbox,
+                "get_upstream_origin",
+                return_value=manifest["upstream"]["repository"],
+            ):
+                current, reasons = bootstrap_netbox.catalog_status(manifest)
+
+            self.assertFalse(current)
+            self.assertIn("local Device Type definitions changed", reasons)
+
 
 class CredentialTests(unittest.TestCase):
     def test_reference_and_hostname_rename(self):
         d = device()
         ref = oxidized_reference(d)
-        self.assertEqual(ref.path, "devices/credentials/cisco/cisco-default/admin")
+        self.assertEqual(ref.path, "devices/credentials/cisco/cisco-default/oxidized")
         self.assertEqual(ref.model, "ios")
         self.assertEqual(ref.address, "10.10.10.1")
         d["name"] = "renamed"
@@ -459,6 +780,7 @@ class CredentialTests(unittest.TestCase):
             ("junos", "juniper", "junos"),
             ("aruba-aos-cx", "hpe", "aoscx"),
             ("aruba-aos-switch", "hpe", "procurve"),
+            ("checkpoint-gaia", "check-point", "gaiaos"),
         )
         for platform, vendor, model in cases:
             with self.subTest(platform=platform):
@@ -478,6 +800,18 @@ class CredentialTests(unittest.TestCase):
                 self.assertEqual(resolved.reference.model, model)
                 self.assertEqual(resolved.reference.address, "2001:db8::10")
 
+    def test_checkpoint_gaia_embedded_remains_unmapped(self):
+        d = device()
+        d["platform"] = {"slug": "checkpoint-gaia-embedded"}
+        d["device_type"]["manufacturer"]["slug"] = "check-point"
+        client = Mock()
+
+        with self.assertRaises(DeviceValidationError) as raised:
+            resolve_oxidized_device(d, client, "fixture-token")
+
+        self.assertEqual(raised.exception.code, "unsupported_platform")
+        client.kv_read.assert_not_called()
+
     def test_disabled_devices_do_not_read_secrets(self):
         for enabled in (False, None, "true", 1):
             d = device(); d["custom_fields"]["oxidized_enabled"] = enabled
@@ -492,8 +826,12 @@ class CredentialTests(unittest.TestCase):
                 credential_path("cisco", bad)
         with self.assertRaises(DeviceValidationError):
             credential_path("Cisco Systems, Inc.", "profile")
+        self.assertEqual(
+            credential_path("cisco", "profile", "oxidized"),
+            "devices/credentials/cisco/profile/oxidized",
+        )
         with self.assertRaises(DeviceValidationError):
-            credential_path("cisco", "profile", "oxidized")
+            credential_path("cisco", "profile", "unknown")
 
     def test_secret_resolution_no_secret_repr_and_optional_enable(self):
         client = Mock()
@@ -502,7 +840,7 @@ class CredentialTests(unittest.TestCase):
         self.assertNotIn("fixture-secret", repr(resolved))
         self.assertNotIn("fixture-user", repr(resolved))
         self.assertNotIn("enable_password", resolved.credentials)
-        client.kv_read.assert_called_once_with("fixture-token", "devices/credentials/cisco/cisco-default/admin", mount="atlas")
+        client.kv_read.assert_called_once_with("fixture-token", "devices/credentials/cisco/cisco-default/oxidized", mount="atlas")
         client.kv_read.return_value["enable_password"] = "fixture-enable"
         self.assertEqual(resolve_oxidized_device(device(), client, "fixture-token").credentials["enable_password"], "fixture-enable")
 

@@ -80,8 +80,8 @@ class FakeOpenBao:
         self.errors = errors or {}
         self.calls = []
 
-    def get_device_credentials(self, vendor, profile):
-        self.calls.append((vendor, profile))
+    def get_device_credentials(self, vendor, profile, *, purpose="admin"):
+        self.calls.append((vendor, profile, purpose))
         if profile in self.errors:
             raise self.errors[profile]
         return dict(
@@ -261,7 +261,7 @@ class OxidizedSyncTests(unittest.TestCase):
 
                 self.assertEqual(result.status, "success")
                 self.assertEqual(store.current[0]["model"], model)
-                self.assertEqual(bao.calls, [("hpe", "default")])
+                self.assertEqual(bao.calls, [("hpe", "default", "oxidized")])
 
     def test_cisco_smb_platforms_use_ciscosmb_and_cisco_credentials(self):
         for platform in ("cisco-cbs", "cisco-cbs250-350"):
@@ -276,7 +276,23 @@ class OxidizedSyncTests(unittest.TestCase):
 
                 self.assertEqual(result.status, "success")
                 self.assertEqual(store.current[0]["model"], "ciscosmb")
-                self.assertEqual(bao.calls, [("cisco", "default")])
+                self.assertEqual(bao.calls, [("cisco", "default", "oxidized")])
+
+    def test_checkpoint_gaia_uses_gaiaos_and_dedicated_credentials(self):
+        bao = FakeOpenBao()
+        service, store, _oxidized = self.service(
+            [device(platform="checkpoint-gaia", vendor="check-point")],
+            bao=bao,
+        )
+
+        result = service.sync()
+
+        self.assertEqual(result.status, "success")
+        self.assertEqual(store.current[0]["model"], "gaiaos")
+        self.assertEqual(
+            bao.calls,
+            [("check-point", "default", "oxidized")],
+        )
 
     def test_explicit_disable_and_deleted_device_are_removed(self):
         for scenario in ("disabled", "deleted"):

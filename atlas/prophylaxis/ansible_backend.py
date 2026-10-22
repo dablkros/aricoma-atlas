@@ -88,6 +88,7 @@ def _failure_from_event(event: dict | None):
     if any(
         phrase in message
         for phrase in (
+            "ssh negotiation failed",
             "kex error",
             "key exchange failed",
             "no match for method",
@@ -156,6 +157,9 @@ def _failure_context(
         "ansible_task": str(event_data.get("task") or "unknown")[:160],
         "ansible_message": _redacted_message(result.get("msg"), secrets),
     }
+    error_type = result.get("error_type")
+    if isinstance(error_type, str) and error_type:
+        context["ansible_error_type"] = error_type[:128]
     meta = result.get("meta", {})
     if isinstance(meta, dict):
         http_status = meta.get("http_status")
@@ -210,14 +214,23 @@ class AnsibleBackend:
         profile: AnsiblePlatformProfile,
         *,
         transport: str | None = None,
+        remote_tmp: str | None = None,
     ) -> dict:
         transport = transport or profile.transport
+        local_connection = (
+            transport in {"telnet", "snmp"}
+            or profile.ansible_connection == "local"
+        )
         variables = {
             "ansible_host": host,
             "ansible_connect_timeout": self.connect_timeout,
             "ansible_command_timeout": self.command_timeout,
             "ansible_host_key_checking": self.strict_host_keys,
         }
+        if local_connection and remote_tmp is not None:
+            # Local custom modules still use Ansible's remote temporary path.
+            # The runtime UID cannot write to the image user's default home.
+            variables["ansible_remote_tmp"] = remote_tmp
         if transport == "telnet":
             variables.update(
                 {
@@ -233,12 +246,9 @@ class AnsibleBackend:
                 }
             )
         else:
-            variables.update(
-                {
-                    "ansible_connection": profile.ansible_connection,
-                    "ansible_network_os": profile.ansible_network_os,
-                }
-            )
+            variables["ansible_connection"] = profile.ansible_connection
+            if profile.ansible_network_os is not None:
+                variables["ansible_network_os"] = profile.ansible_network_os
         if transport == "ssh":
             variables.update(
                 {
@@ -395,6 +405,7 @@ class AnsibleBackend:
                             attempt_port,
                             profile,
                             transport=transport,
+                            remote_tmp=str(local_tmp),
                         ),
                         extravars={
                             "atlas_collector": collector_id.value,
