@@ -58,11 +58,19 @@ class IngressTests(unittest.TestCase):
                 with self.assertRaises(ValueError):
                     self.load(config)
 
-    def test_all_three_ui_services_are_required(self):
+    def test_netbox_is_required_and_optional_services_may_be_omitted(self):
         config = customer_config()
         del config["services"]["zabbix"]
+        loaded = self.load(config)
+        self.assertEqual(set(loaded["services"]), {"netbox", "oxidized"})
 
-        with self.assertRaisesRegex(ValueError, "missing: zabbix"):
+        del config["services"]["netbox"]
+        with self.assertRaisesRegex(ValueError, "missing: netbox"):
+            self.load(config)
+
+        config = customer_config()
+        config["services"]["unknown"] = config["services"].pop("zabbix")
+        with self.assertRaisesRegex(ValueError, "unexpected: unknown"):
             self.load(config)
 
     def test_public_service_urls_include_nonstandard_https_port(self):
