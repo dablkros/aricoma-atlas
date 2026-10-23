@@ -123,6 +123,8 @@ class FileRunStore:
                 if path.is_symlink() or not path.is_file():
                     raise RunNotFoundError()
                 payload = json.loads(path.read_text(encoding="utf-8"))
+                # ``devices`` is derived from canonical flat results.
+                payload.pop("devices", None)
                 return ProphylaxisRun.model_validate(payload)
             except RunNotFoundError:
                 raise

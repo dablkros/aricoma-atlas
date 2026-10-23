@@ -128,6 +128,10 @@ class CollectorId(StrEnum):
     CBS_INTERFACES = "cbs_interfaces"
     CBS_COMPLIANCE = "cbs_compliance"
     CBS_OPERATIONS = "cbs_operations"
+    FORTIOS_RESOURCES = "fortios_resources"
+    FORTIOS_INTERFACES = "fortios_interfaces"
+    FORTIOS_COMPLIANCE = "fortios_compliance"
+    FORTIOS_OPERATIONS = "fortios_operations"
     # Compatibility collector IDs used by other platform profiles and the
     # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"

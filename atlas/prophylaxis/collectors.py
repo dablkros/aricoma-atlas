@@ -19,7 +19,9 @@ from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_environment_health,
+    normalize_eol_status,
     normalize_fan_health,
+    normalize_firmware_recommendation,
     normalize_ha_status,
     normalize_interface_errors,
     normalize_interface_state,
@@ -183,6 +185,46 @@ CBS_OPERATIONS_COLLECTOR = CollectorSpec(
     },
 )
 
+FORTIOS_RESOURCES_COLLECTOR = CollectorSpec(
+    id=CollectorId.FORTIOS_RESOURCES,
+    normalizers={
+        CheckId.MEMORY_UTILIZATION: normalize_memory,
+        CheckId.ENVIRONMENT_HEALTH: normalize_environment_health,
+        CheckId.CPU_TEMPERATURE: normalize_temperature,
+        CheckId.FAN_HEALTH: normalize_fan_health,
+    },
+)
+
+FORTIOS_INTERFACES_COLLECTOR = CollectorSpec(
+    id=CollectorId.FORTIOS_INTERFACES,
+    normalizers={
+        CheckId.INTERFACE_STATE: normalize_interface_state,
+        CheckId.INTERFACE_UTILIZATION: normalize_interface_utilization,
+        CheckId.INTERFACE_ERROR_COUNTERS: normalize_interface_errors,
+    },
+)
+
+FORTIOS_COMPLIANCE_COLLECTOR = CollectorSpec(
+    id=CollectorId.FORTIOS_COMPLIANCE,
+    normalizers={
+        CheckId.LICENSE_STATE: normalize_license_state,
+        CheckId.PKI_CERTIFICATES: normalize_pki_certificates,
+        CheckId.FIRMWARE_RECOMMENDATION: normalize_firmware_recommendation,
+        CheckId.EOL_STATUS: normalize_eol_status,
+    },
+)
+
+FORTIOS_OPERATIONS_COLLECTOR = CollectorSpec(
+    id=CollectorId.FORTIOS_OPERATIONS,
+    normalizers={
+        CheckId.NTP_SYNC: normalize_ntp_status,
+        CheckId.RECENT_LOG_EVENTS: normalize_recent_logs,
+        CheckId.ROUTING_TABLE: normalize_routing_table,
+        CheckId.ROUTING_PROTOCOL_NEIGHBORS: normalize_routing_neighbors,
+        CheckId.HA_STATUS: normalize_ha_status,
+    },
+)
+
 SNMP_SYSTEM_COLLECTOR = CollectorSpec(
     id=CollectorId.SNMP_SYSTEM,
     normalizers={
@@ -209,6 +251,10 @@ class CollectorRegistry:
             CBS_INTERFACES_COLLECTOR,
             CBS_COMPLIANCE_COLLECTOR,
             CBS_OPERATIONS_COLLECTOR,
+            FORTIOS_RESOURCES_COLLECTOR,
+            FORTIOS_INTERFACES_COLLECTOR,
+            FORTIOS_COMPLIANCE_COLLECTOR,
+            FORTIOS_OPERATIONS_COLLECTOR,
         ))
         self._by_id: dict[CollectorId, CollectorSpec] = {}
         self._by_check: dict[CheckId, list[CollectorSpec]] = {}
@@ -276,6 +322,10 @@ __all__ = [
     "CBS_OPERATIONS_COLLECTOR",
     "CBS_RESOURCES_COLLECTOR",
     "DEVICE_FACTS_COLLECTOR",
+    "FORTIOS_COMPLIANCE_COLLECTOR",
+    "FORTIOS_INTERFACES_COLLECTOR",
+    "FORTIOS_OPERATIONS_COLLECTOR",
+    "FORTIOS_RESOURCES_COLLECTOR",
     "IOS_IDENTITY_COLLECTOR",
     "IOS_COMPLIANCE_COLLECTOR",
     "IOS_INTERFACES_COLLECTOR",

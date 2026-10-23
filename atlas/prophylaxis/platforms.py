@@ -37,6 +37,47 @@ class AnsiblePlatformProfile:
 
 
 CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
+FORTIOS_SSH_COLLECTORS = frozenset({
+    CollectorId.CPU_USAGE,
+    CollectorId.DEVICE_FACTS,
+    CollectorId.FORTIOS_RESOURCES,
+    CollectorId.FORTIOS_INTERFACES,
+    CollectorId.FORTIOS_COMPLIANCE,
+    CollectorId.FORTIOS_OPERATIONS,
+})
+FORTIOS_SSH_COLLECTOR_PREFERENCES = (
+    (CheckId.MEMORY_UTILIZATION, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.ENVIRONMENT_HEALTH, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.CPU_TEMPERATURE, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.FAN_HEALTH, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.INTERFACE_STATE, CollectorId.FORTIOS_INTERFACES),
+    (CheckId.INTERFACE_UTILIZATION, CollectorId.FORTIOS_INTERFACES),
+    (CheckId.INTERFACE_ERROR_COUNTERS, CollectorId.FORTIOS_INTERFACES),
+    (CheckId.LICENSE_STATE, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.PKI_CERTIFICATES, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.FIRMWARE_RECOMMENDATION, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.EOL_STATUS, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.NTP_SYNC, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.RECENT_LOG_EVENTS, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.ROUTING_TABLE, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.ROUTING_PROTOCOL_NEIGHBORS, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.HA_STATUS, CollectorId.FORTIOS_OPERATIONS),
+)
+FORTIOS_SSH_PROFILE = AnsiblePlatformProfile(
+    slug="fortios",
+    transport="ssh",
+    default_port=22,
+    netbox_service_name=None,
+    # FortiOS CLI is an interactive appliance shell. Atlas executes the fixed
+    # read-only command allow-list through its local Paramiko module.
+    ansible_connection="local",
+    ansible_network_os=None,
+    authentication="ssh",
+    collection="atlas.builtin",
+    module_family="atlas_fortios_cli",
+    supported_collectors=FORTIOS_SSH_COLLECTORS,
+    preferred_collectors=FORTIOS_SSH_COLLECTOR_PREFERENCES,
+)
 IOS_IMPLEMENTED_COLLECTORS = frozenset({
     CollectorId.IOS_IDENTITY,
     CollectorId.IOS_RESOURCES,
@@ -256,6 +297,7 @@ class AnsiblePlatformRegistry:
 
 __all__ = [
     "ANSIBLE_PLATFORMS",
+    "FORTIOS_SSH_PROFILE",
     "AnsiblePlatformProfile",
     "AnsiblePlatformRegistry",
     "AuthenticationType",
