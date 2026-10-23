@@ -849,47 +849,6 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
     )
 
 
-def _installed_version(outputs: dict[str, str]) -> str | None:
-    text = outputs.get("show_version", "")
-    for pattern in (
-        r"(?i)\bVersion\s*:\s*(\S+)",
-        r"(?i)\bVersion\s+([^,\s]+)",
-        r"(?i)\bActive-image\b.*?\bVersion\s*:\s*(\S+)",
-    ):
-        match = re.search(pattern, text, re.DOTALL)
-        if match:
-            return match.group(1)
-    return None
-
-
-def normalize_firmware_recommendation(raw: RawCollectorResult) -> DiagnosticValues:
-    outputs = _usable_outputs(raw)
-    version = _installed_version(outputs)
-    return _diagnostic(
-        EvaluationOutcome.UNKNOWN,
-        "Installed firmware collected; no reviewed recommendation catalog is configured",
-        reason_code="firmware_catalog_unavailable",
-        metrics={"installed_version": version},
-        outputs={key: value for key, value in outputs.items() if key == "show_version"},
-    )
-
-
-def normalize_eol_status(raw: RawCollectorResult) -> DiagnosticValues:
-    outputs = _usable_outputs(raw)
-    inventory = outputs.get("show_inventory", "")
-    product_ids = tuple(dict.fromkeys(re.findall(r"(?im)\bPID:\s*(\S+)", inventory)))
-    return _diagnostic(
-        EvaluationOutcome.UNKNOWN,
-        "Product identifiers collected; no reviewed lifecycle record is configured",
-        reason_code="lifecycle_catalog_unavailable",
-        metrics={
-            "product_id_count": len(product_ids),
-            "primary_product_id": product_ids[0] if product_ids else None,
-        },
-        outputs={key: value for key, value in outputs.items() if key == "show_inventory"},
-    )
-
-
 def normalize_ntp_status(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = {
         key: value
@@ -1318,6 +1277,90 @@ def parse_cisco_cbs_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     )
 
 
+def _first_mapping_text(mapping: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list):
+            first = next(
+                (
+                    item.strip()
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                ),
+                None,
+            )
+            if first is not None:
+                return first
+    return None
+
+
+def _parse_cisco_ntc_device_facts(
+    raw: RawCollectorResult,
+    *,
+    ntc_platform: str,
+) -> DeviceFactsValues:
+    data = raw.data
+    if not isinstance(data, dict):
+        raise ParseFailedError()
+    version_output = data.get("show_version")
+    inventory_output = data.get("show_inventory")
+    if (
+        not isinstance(version_output, str)
+        or not version_output.strip()
+        or not isinstance(inventory_output, str)
+        or not inventory_output.strip()
+    ):
+        raise ParseFailedError()
+    try:
+        from ntc_templates.parse import parse_output
+
+        version_rows = parse_output(
+            platform=ntc_platform,
+            command="show version",
+            data=version_output,
+        )
+        inventory_rows = parse_output(
+            platform=ntc_platform,
+            command="show inventory",
+            data=inventory_output,
+        )
+    except Exception:
+        raise ParseFailedError() from None
+    if not version_rows or not isinstance(version_rows[0], dict):
+        raise ParseFailedError()
+    version = version_rows[0]
+    model = _first_text(inventory_rows, "pid") or _first_mapping_text(
+        version,
+        "model",
+        "platform",
+        "hardware",
+    )
+    serial_number = _first_text(inventory_rows, "sn") or _first_mapping_text(
+        version,
+        "serial",
+    )
+    uptime = _first_mapping_text(version, "uptime")
+    if uptime is None:
+        raise ParseFailedError()
+    return _device_facts({
+        "hostname": _first_mapping_text(version, "hostname"),
+        "model": model,
+        "os_version": _first_mapping_text(version, "os", "version"),
+        "serial_number": serial_number,
+        "uptime_seconds": _text_uptime_seconds(uptime),
+    })
+
+
+def parse_cisco_nxos_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    return _parse_cisco_ntc_device_facts(raw, ntc_platform="cisco_nxos")
+
+
+def parse_cisco_asa_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    return _parse_cisco_ntc_device_facts(raw, ntc_platform="cisco_asa")
+
+
 def parse_aruba_aoscx_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     data = raw.data
     if not isinstance(data, dict):
@@ -1433,21 +1476,8 @@ def _gaia_model(text: str) -> str | None:
     return model
 
 
-def _gaia_uptime_seconds(text: str) -> int:
-    normalized = " ".join(text.split())
-    labelled = re.search(r"(?i)\buptime\s*:\s*(?P<value>.+)$", normalized)
-    linux_uptime = re.search(
-        r"(?i)\bup\s+(?P<value>.+?)"
-        r"(?:,\s*\d+\s+users?\b|,\s*load\s+average\b|$)",
-        normalized,
-    )
-    value = (
-        labelled.group("value")
-        if labelled
-        else linux_uptime.group("value")
-        if linux_uptime
-        else normalized
-    )
+def _text_uptime_seconds(text: str) -> int:
+    value = " ".join(text.split()).replace("(s)", "s")
     total = 0
     found = False
     for amount, unit in re.findall(
@@ -1469,6 +1499,24 @@ def _gaia_uptime_seconds(text: str) -> int:
     if not found:
         raise ParseFailedError()
     return total
+
+
+def _gaia_uptime_seconds(text: str) -> int:
+    normalized = " ".join(text.split())
+    labelled = re.search(r"(?i)\buptime\s*:\s*(?P<value>.+)$", normalized)
+    linux_uptime = re.search(
+        r"(?i)\bup\s+(?P<value>.+?)"
+        r"(?:,\s*\d+\s+users?\b|,\s*load\s+average\b|$)",
+        normalized,
+    )
+    value = (
+        labelled.group("value")
+        if labelled
+        else linux_uptime.group("value")
+        if linux_uptime
+        else normalized
+    )
+    return _text_uptime_seconds(value)
 
 
 def parse_checkpoint_gaia_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
@@ -1517,6 +1565,8 @@ DEVICE_FACTS_PARSERS = {
     "cisco-ios-xe": parse_cisco_ios_device_facts,
     "cisco-cbs": parse_cisco_cbs_device_facts,
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
+    "cisco-nxos": parse_cisco_nxos_device_facts,
+    "cisco-asa": parse_cisco_asa_device_facts,
     "fortios": parse_fortios_device_facts,
     "aruba-aos-cx": parse_aruba_aoscx_device_facts,
     "checkpoint-gaia": parse_checkpoint_gaia_device_facts,
@@ -1550,9 +1600,7 @@ __all__ = [
     "normalize_cpu",
     "normalize_device_facts",
     "normalize_environment_health",
-    "normalize_eol_status",
     "normalize_fan_health",
-    "normalize_firmware_recommendation",
     "normalize_ha_status",
     "normalize_interface_errors",
     "normalize_interface_state",

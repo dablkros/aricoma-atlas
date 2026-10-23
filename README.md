@@ -41,6 +41,7 @@ sudo atlasctl zabbix status
 sudo atlasctl zabbix sync
 sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
+sudo atlasctl integrations cisco test
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
@@ -761,6 +762,7 @@ zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
 | `atlasctl oxidized reconcile` | `POST /api/oxidized/sync` | Obe cesty používajú shared reconciliation service. |
 | `atlasctl zabbix sync` | `POST /api/zabbix/sync` | CLI, API aj potvrdený Monitoring Provisioning používajú spoločný `ZabbixSyncService`. |
 | `atlasctl zabbix status` | `GET /api/zabbix/status` | Overí Zabbix verziu, autentifikáciu a prístup k hostom. |
+| `atlasctl integrations cisco test` | `POST /api/integrations/cisco/test` | Chránená diagnostika beží v backend kontajneri a nevypisuje secret ani access token. |
 | prioritný Oxidized node | `POST /api/oxidized/devices/{name}/backup` | Požiadavka node iba zaradí; výsledok backupu spravuje Oxidized. |
 
 `atlasctl deploy` a `atlasctl openbao` nemajú UI ani API ekvivalent.
@@ -1104,6 +1106,7 @@ sudo atlasctl zabbix status
 sudo atlasctl zabbix sync
 sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs [docker compose logs options]
+sudo atlasctl integrations cisco test
 sudo atlasctl prophylaxis logs [docker compose logs options]
 sudo atlasctl backend logs [docker compose logs options]
 sudo atlasctl proxy logs [docker compose logs options]
@@ -1125,6 +1128,7 @@ Význam:
 | `sudo atlasctl zabbix sync` | Zosúladí `monitoring_enabled=true` zariadenia z NetBoxu do Zabbixu. |
 | `sudo atlasctl zabbix credentials` | Zobrazí HTTPS URL a administrátorské prihlasovacie údaje z OpenBao iba v lokálnej sudo session. |
 | `sudo atlasctl zabbix logs -f` | Sleduje Zabbix server, web a databázové logy. |
+| `sudo atlasctl integrations cisco test` | Overí Cisco OAuth, Software Suggestion a EoX entitlement cez Atlas backend. |
 | `sudo atlasctl prophylaxis logs -f` | Sleduje iba bezpečné profylaxia/Ansible diagnostické eventy z backendu. |
 | `sudo atlasctl backend logs -f` | Sleduje live logy Atlas FastAPI backendu. |
 | `sudo atlasctl proxy logs -f` | Sleduje live logy Nginx HTTPS ingressu. |
@@ -1405,6 +1409,10 @@ atlas/
 │               ├── oxidized
 │               └── snmp
 │
+├── integrations/
+│   └── cisco/
+│       └── support-api
+│
 ├── netbox/
 │   └── ...
 ├── zabbix/
@@ -1418,6 +1426,7 @@ atlas/
 Význam:
 
 - `atlas/devices/credentials/*` – spoločná hierarchia účelovo oddelených credentials pre spravované zariadenia,
+- `atlas/integrations/cisco/support-api` – globálny Cisco Support API Client ID a Client Secret,
 - `atlas/netbox/*` – interné NetBox secrets,
 - `atlas/zabbix/api` – token obmedzeného Atlas API používateľa,
 - `atlas/zabbix/admin` a `atlas/zabbix/database` – iba deployment/bootstrap secrets,
@@ -1449,7 +1458,37 @@ Oddelená operator identita pre autentifikovaný `generate-root` workflow. Nepou
 
 ## `atlas-backend`
 
-Runtime machine identita Atlas aplikácie. Samostatná policy `atlas-backend` povoľuje iba `read` pre presné token paths `atlas/data/netbox/api`, `atlas/data/zabbix/api` a device credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis, mazanie, root operácie ani prístup k admin, PostgreSQL, Redis alebo deployer secretom.
+Runtime machine identita Atlas aplikácie. Samostatná policy `atlas-backend`
+povoľuje iba `read` pre presné token paths `atlas/data/netbox/api`,
+`atlas/data/zabbix/api`, `atlas/data/integrations/cisco/support-api` a device
+credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis,
+mazanie, root operácie ani prístup k admin, PostgreSQL, Redis alebo deployer
+secretom.
+
+Cisco Support API credentials sa vkladajú manuálne do KV v2 mountu `atlas` na
+relatívnu cestu `integrations/cisco/support-api`:
+
+```json
+{
+  "client_id": "...",
+  "client_secret": "..."
+}
+```
+
+Atlas neposkytuje CLI na ich zápis. Po vytvorení alebo rotácii secretu možno
+bezpečne overiť OAuth a oba API entitlementy cez
+`sudo atlasctl integrations cisco test`. Výstup obsahuje iba stavové kódy.
+Podrobný kontrakt a plán zapojenia do profylaxie je v
+[Cisco Support API integration](docs/cisco-support-api.md).
+
+Pre NetBox platformy `cisco-ios`, `cisco-ios-xe`, `cisco-cbs`,
+`cisco-cbs250-350`, `cisco-nxos` a `cisco-asa` používa compliance skupina
+overený `device.serial` pre hardvérový EoX, presný `device_type.model` ako
+Cisco base PID pre Software Suggestion a zozbieranú verziu pre softvérový EoX.
+Lookup sa vykoná iba po zhode serialu a modelu so zariadením. Chýbajúce
+entitlementy, nepokrytý PID alebo nedostupné Cisco API vracajú `UNKNOWN` a
+nemenia úspešný zber zariadenia na connection failure. CBS softvérový EoX
+posiela release bez OS typu, pretože Cisco EoX samostatný CBS typ neuvádza.
 
 Fresh OpenBao bootstrap túto policy, AppRole a machine identity vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile atlas-backend policy`. Operácia vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
 
@@ -1885,6 +1924,8 @@ manuálna CPU kontrola zostáva dostupná cez API.
 | `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | NTC `show version` + `show inventory` |
 | `cisco-ios-xe` | `network_cli` | NTC `show version` + `show inventory` |
 | `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
+| `cisco-nxos` | `network_cli` | `show version` + `show inventory`, NTC Templates `cisco_nxos` |
+| `cisco-asa` | `network_cli` | `show version` + `show inventory`, NTC Templates `cisco_asa` |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
 | `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
 | `checkpoint-gaia` | SSH do Gaia Clish | `show hostname`, `show asset all`, `show version all`, `show uptime` |

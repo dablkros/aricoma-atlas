@@ -6,6 +6,10 @@ collections:
     version: 6.1.0
   - name: cisco.ios
     version: 11.5.1
+  - name: cisco.nxos
+    version: 11.2.0
+  - name: cisco.asa
+    version: 6.1.0
   - name: community.ciscosmb
     version: 1.0.12
   - name: fortinet.fortios

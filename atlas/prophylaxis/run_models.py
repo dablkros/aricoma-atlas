@@ -11,6 +11,8 @@ from atlas.prophylaxis.models import (
     CPUUtilizationValues,
     DeviceFactsValues,
     DiagnosticValues,
+    EolStatusValues,
+    FirmwareRecommendationValues,
     OSVersionValues,
     UptimeValues,
     EvaluationOutcome,
@@ -84,6 +86,8 @@ class ProphylaxisCheckResult(BaseModel):
         | UptimeValues
         | SystemMetricValues
         | DiagnosticValues
+        | FirmwareRecommendationValues
+        | EolStatusValues
         | SerialInventoryValues
         | ModelInventoryValues
         | None

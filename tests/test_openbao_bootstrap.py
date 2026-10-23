@@ -38,6 +38,9 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 '}\n\n'
                 'path "atlas/data/zabbix/api" {\n'
                 '  capabilities = ["read"]\n'
+                '}\n\n'
+                'path "atlas/data/integrations/cisco/support-api" {\n'
+                '  capabilities = ["read"]\n'
                 '}'
             ),
         )
@@ -52,6 +55,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             "postgres",
             "redis",
             "atlas-deployer",
+            'atlas/data/integrations/*',
         ):
             self.assertNotIn(forbidden, policy.lower())
 
