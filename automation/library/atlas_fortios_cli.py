@@ -47,8 +47,21 @@ options:
 
 
 ALLOWED_COMMANDS = {
+    "diagnose hardware sysinfo sensor-status",
+    "diagnose netlink interface list",
+    "diagnose netlink interface packet-rate",
+    "diagnose sys ntp status",
+    "execute log display",
+    "execute log filter category event",
+    "execute log filter view-lines 50",
+    "get router info bgp summary",
+    "get router info ospf neighbor",
+    "get router info routing-table all",
+    "get system ha status",
+    "get system interface physical",
     "get system status",
     "get system performance status",
+    "get vpn certificate local details",
 }
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[#$>]\s*$")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
@@ -161,7 +174,7 @@ def main():
     try:
         client = _connect(params)
         channel = client.invoke_shell(width=200, height=1000)
-        _banner, prompt = _receive_until_prompt(
+        banner, prompt = _receive_until_prompt(
             channel,
             params["command_timeout"],
         )
@@ -174,7 +187,11 @@ def main():
                 expected_prompt=prompt,
             )
             outputs[command] = _clean_output(output, command, returned_prompt)
-        module.exit_json(changed=False, outputs=outputs)
+        module.exit_json(
+            changed=False,
+            outputs=outputs,
+            banner=_clean_output(banner, "", prompt),
+        )
     except ModuleNotFoundError:
         module.fail_json(msg="Failed to import the required Python library (paramiko)")
     except Exception as exc:

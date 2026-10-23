@@ -251,7 +251,12 @@ class ProphylaxisService:
             device_id = target.id
             device_name = target.name
             platform = target.platform
-            profile = self.registry.resolve(target.platform)
+            base_profile = self.registry.resolve(target.platform)
+            profile, connection_port = resolve_execution_profile(
+                self.netbox,
+                target,
+                base_profile,
+            )
             try:
                 collector = self.collector_registry.resolve_check(
                     check_id,
@@ -275,11 +280,7 @@ class ProphylaxisService:
                     check_id=check_id,
                     status="unsupported",
                 )
-            execution_profile, connection_port = resolve_execution_profile(
-                self.netbox,
-                target,
-                profile,
-            )
+            execution_profile = profile
             telnet_fallback_port = self._telnet_fallback_port(
                 target,
                 execution_profile,

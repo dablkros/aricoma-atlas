@@ -511,7 +511,12 @@ class DeviceFactsRunService:
             device_id, name, management_ip, platform = (
                 target.id, target.name, target.host, target.platform,
             )
-            profile = self.registry.resolve(target.platform)
+            base_profile = self.registry.resolve(target.platform)
+            profile, resolved_port = resolve_execution_profile(
+                self.netbox,
+                target,
+                base_profile,
+            )
             plan = self.collector_registry.plan(known_checks, profile)
         except Exception as exc:
             status, code = self._classify_exception(exc)
@@ -618,11 +623,7 @@ class DeviceFactsRunService:
                     credentials = snmp_credentials
                 else:
                     if prophylaxis_connection is None:
-                        execution_profile, port = resolve_execution_profile(
-                            self.netbox,
-                            target,
-                            profile,
-                        )
+                        execution_profile, port = profile, resolved_port
                         telnet_services = (
                             self.netbox.get_device_services(
                                 target.id,

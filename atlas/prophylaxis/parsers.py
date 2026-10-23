@@ -322,6 +322,8 @@ INVALID_COMMAND_PATTERNS = (
         r"ambiguous command",
         r"bad command",
         r"command not found",
+        r"(?m)^\s*Unknown action\s+\d+\s*$",
+        r"(?m)^\s*Command fail\.\s+Return code\s+-?\d+\s*$",
         r"(?m)^\s*%.*not supported\s*$",
     )
 )
@@ -404,6 +406,11 @@ def normalize_memory(raw: RawCollectorResult) -> SystemMetricValues:
             r"\s*[:=]\s*(?P<used>\d+)",
             re.IGNORECASE | re.DOTALL,
         ),
+        re.compile(
+            r"Memory:\s*(?P<total>\d+)k\s+total,\s*"
+            r"(?P<used>\d+)k\s+used\s*\(\d+(?:\.\d+)?%\)",
+            re.IGNORECASE,
+        ),
     )
     match = None
     for pattern in patterns:
@@ -441,14 +448,30 @@ def _environment_outputs(raw: RawCollectorResult) -> dict[str, str]:
         for key, value in _usable_outputs(raw).items()
         if any(
             token in key
-            for token in ("environment", "power_inline", "post", "system_resources")
+            for token in (
+                "environment", "power_inline", "post", "system_resources",
+                "sensor_status", "session_banner",
+            )
         )
     }
+
+
+def _fortios_is_vm(raw: RawCollectorResult) -> bool:
+    if raw.platform != "fortios":
+        return False
+    status = _usable_outputs(raw).get("get_system_status", "")
+    return bool(re.search(r"(?im)^\s*Version:\s*FortiGate-VM", status))
 
 
 def normalize_environment_health(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = _environment_outputs(raw)
     if not outputs:
+        if _fortios_is_vm(raw):
+            return _diagnostic(
+                EvaluationOutcome.NOT_APPLICABLE,
+                "Hardware environment sensors do not apply to this FortiGate VM",
+                reason_code="virtual_appliance_has_no_hardware_sensors",
+            )
         return _diagnostic(
             EvaluationOutcome.UNSUPPORTED,
             "No supported environment command returned data",
@@ -523,12 +546,29 @@ def normalize_temperature(raw: RawCollectorResult) -> SystemMetricValues:
             text,
         )
     ]
+    if raw.platform == "fortios":
+        for output in outputs.values():
+            blocks = re.split(r"(?m)(?=^\S[^:\n]*:\s*[^\n]*$)", output)
+            for block in blocks:
+                if not re.search(r"(?i)\b(?:temp|temperature|thermal)\b", block):
+                    continue
+                match = re.search(
+                    r"(?im)^\s*Value:\s*(-?\d+(?:\.\d+)?)\s*°?C\b",
+                    block,
+                )
+                if match:
+                    values.append(float(match.group(1)))
     if values:
         return SystemMetricValues(
             outcome=EvaluationOutcome.UNKNOWN,
             value=max(values),
             unit="celsius",
             reason_code="temperature_threshold_unconfigured",
+        )
+    if _fortios_is_vm(raw):
+        return SystemMetricValues(
+            outcome=EvaluationOutcome.NOT_APPLICABLE,
+            reason_code="virtual_appliance_has_no_cpu_temperature_sensor",
         )
     return SystemMetricValues(
         outcome=(EvaluationOutcome.UNKNOWN if outputs else EvaluationOutcome.UNSUPPORTED),
@@ -549,6 +589,12 @@ def normalize_fan_health(raw: RawCollectorResult) -> DiagnosticValues:
         if re.search(r"\bfan\b", line, re.IGNORECASE)
     ]
     if not fan_lines:
+        if _fortios_is_vm(raw):
+            return _diagnostic(
+                EvaluationOutcome.NOT_APPLICABLE,
+                "Fan sensors do not apply to this FortiGate VM",
+                reason_code="virtual_appliance_has_no_fans",
+            )
         return _diagnostic(
             EvaluationOutcome.UNSUPPORTED,
             "No fan status was exposed by supported commands",
@@ -613,11 +659,34 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
         )
     bad = []
     down = []
+    up = []
     for value in outputs.values():
+        current_interface = None
         for line in value.splitlines():
             normalized = " ".join(line.split())
+            if raw.platform == "fortios":
+                interface_match = re.match(r"^==\[([^]]+)]$", normalized)
+                if interface_match:
+                    current_interface = interface_match.group(1)
+                    continue
             if re.search(r"\berr-disabled\b", normalized, re.I):
                 bad.append(normalized[:160])
+            elif raw.platform == "fortios" and re.search(
+                r"\b(?:status|link)\s*[:=]\s*down\b", normalized, re.I
+            ):
+                down.append(
+                    f"{current_interface}: down"[:160]
+                    if current_interface
+                    else normalized[:160]
+                )
+            elif raw.platform == "fortios" and re.search(
+                r"\b(?:status|link)\s*[:=]\s*up\b", normalized, re.I
+            ):
+                up.append(
+                    f"{current_interface}: up"[:160]
+                    if current_interface
+                    else normalized[:160]
+                )
             elif re.search(
                 r"\b(?:administratively down|notconnect|down/down)\b",
                 normalized,
@@ -637,7 +706,11 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
         EvaluationOutcome.UNKNOWN,
         "Interface state collected; expected administrative state is not configured",
         reason_code="interface_expectation_unconfigured",
-        metrics={"err_disabled": 0, "down_or_unused": len(down)},
+        metrics={
+            "err_disabled": 0,
+            "up": len(up),
+            "down_or_unused": len(down),
+        },
         affected_items=down[:20],
         outputs=outputs,
     )
@@ -696,6 +769,14 @@ def normalize_interface_errors(raw: RawCollectorResult) -> DiagnosticValues:
             text,
         )
     ]
+    if raw.platform == "fortios":
+        counters.extend(
+            int(value)
+            for value in re.findall(
+                r"(?im)\b(?:rx|tx)[_-]?(?:errors?|crc|drops?)\s*[:=]\s*(\d+)",
+                text,
+            )
+        )
     if not counters:
         return _diagnostic(
             EvaluationOutcome.UNKNOWN if outputs else EvaluationOutcome.UNSUPPORTED,
@@ -723,7 +804,7 @@ def normalize_license_state(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = {
         key: value
         for key, value in _usable_outputs(raw).items()
-        if "license" in key
+        if "license" in key or (raw.platform == "fortios" and "system_status" in key)
     }
     text = "\n".join(outputs.values())
     if not outputs:
@@ -737,6 +818,13 @@ def normalize_license_state(raw: RawCollectorResult) -> DiagnosticValues:
         r"authorization failed)\b.*$",
         text,
     )
+    if raw.platform == "fortios":
+        failure.extend(
+            re.findall(
+                r"(?im)^\s*License\s+Status:\s*(?:invalid|expired|unlicensed)\b.*$",
+                text,
+            )
+        )
     if failure:
         return _diagnostic(
             EvaluationOutcome.FAIL,
@@ -756,6 +844,13 @@ def normalize_license_state(raw: RawCollectorResult) -> DiagnosticValues:
         if re.search(r"\bin use\b", line, re.I)
         and not re.search(r"\bnot\s+in use\b", line, re.I)
     )
+    if raw.platform == "fortios":
+        healthy.extend(
+            re.findall(
+                r"(?im)^\s*License\s+Status:\s*(?:valid|licensed|active)\b.*$",
+                text,
+            )
+        )
     if healthy:
         return _diagnostic(
             EvaluationOutcome.PASS,
@@ -824,7 +919,7 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
         candidates.extend(
             match.group("date")
             for match in re.finditer(
-                r"(?im)^\s*(?:end date|not after|valid until)\s*:\s*"
+                r"(?im)^\s*(?:end date|not after|valid until|valid to)\s*:\s*"
                 r"(?P<date>.+?)\s*$",
                 value,
             )
@@ -868,8 +963,9 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
 
 
 def _installed_version(outputs: dict[str, str]) -> str | None:
-    text = outputs.get("show_version", "")
+    text = outputs.get("show_version", "") or outputs.get("get_system_status", "")
     for pattern in (
+        r"(?im)^\s*Version:\s*FortiGate\S*\s+v([^,\s]+)",
         r"(?i)\bVersion\s*:\s*(\S+)",
         r"(?i)\bVersion\s+([^,\s]+)",
         r"(?i)\bActive-image\b.*?\bVersion\s*:\s*(\S+)",
@@ -888,7 +984,10 @@ def normalize_firmware_recommendation(raw: RawCollectorResult) -> DiagnosticValu
         "Installed firmware collected; no reviewed recommendation catalog is configured",
         reason_code="firmware_catalog_unavailable",
         metrics={"installed_version": version},
-        outputs={key: value for key, value in outputs.items() if key == "show_version"},
+        outputs={
+            key: value for key, value in outputs.items()
+            if key in {"show_version", "get_system_status"}
+        },
     )
 
 
@@ -896,6 +995,14 @@ def normalize_eol_status(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = _usable_outputs(raw)
     inventory = outputs.get("show_inventory", "")
     product_ids = tuple(dict.fromkeys(re.findall(r"(?im)\bPID:\s*(\S+)", inventory)))
+    fortios_status = outputs.get("get_system_status", "")
+    fortios_model = None
+    if raw.platform == "fortios":
+        match = re.search(
+            r"(?im)^\s*Version:\s*(FortiGate\S*)\s+v",
+            fortios_status,
+        )
+        fortios_model = match.group(1) if match else None
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Product identifiers collected; no reviewed lifecycle record is configured",
@@ -903,12 +1010,17 @@ def normalize_eol_status(raw: RawCollectorResult) -> DiagnosticValues:
         metrics={
             "product_id_count": len(product_ids),
             "primary_product_id": product_ids[0] if product_ids else None,
+            "model": fortios_model,
         },
-        outputs={key: value for key, value in outputs.items() if key == "show_inventory"},
+        outputs={
+            key: value for key, value in outputs.items()
+            if key in {"show_inventory", "get_system_status"}
+        },
     )
 
 
 def normalize_ntp_status(raw: RawCollectorResult) -> DiagnosticValues:
+    command_outputs = _command_outputs(raw)
     outputs = {
         key: value
         for key, value in _usable_outputs(raw).items()
@@ -916,19 +1028,36 @@ def normalize_ntp_status(raw: RawCollectorResult) -> DiagnosticValues:
     }
     text = "\n".join(outputs.values())
     if not outputs:
+        unavailable = command_outputs.get("diagnose_sys_ntp_status", "")
+        if raw.platform == "fortios" and re.search(
+            r"(?im)^\s*Unknown action\s+\d+\s*$",
+            unavailable,
+        ):
+            return _diagnostic(
+                EvaluationOutcome.UNKNOWN,
+                "NTP status requires diagnose access in the FortiOS admin profile",
+                reason_code="fortios_diagnose_access_disabled",
+            )
         return _diagnostic(
             EvaluationOutcome.UNSUPPORTED,
             "No supported NTP/SNTP command returned data",
             reason_code="ntp_command_unsupported",
         )
-    if re.search(r"(?i)\b(?:unsynchronized|not synchronized|not synced)\b", text):
+    if re.search(
+        r"(?i)\b(?:unsynchronized|not synchronized|not synced|synchronized:\s*no)\b",
+        text,
+    ):
         return _diagnostic(
             EvaluationOutcome.FAIL,
             "Device clock is not synchronized",
             reason_code="ntp_unsynchronized",
             outputs=outputs,
         )
-    if re.search(r"(?i)\b(?:clock is synchronized|synchronized, stratum|status:\s*up)\b", text):
+    if re.search(
+        r"(?i)\b(?:clock is synchronized|synchronized, stratum|status:\s*up|"
+        r"synchronized:\s*yes)\b",
+        text,
+    ):
         return _diagnostic(
             EvaluationOutcome.PASS,
             "Device clock reports synchronized state",
@@ -946,7 +1075,12 @@ def normalize_recent_logs(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = {
         key: value
         for key, value in _usable_outputs(raw).items()
-        if "logging" in key or "logfile" in key or "crash" in key
+        if (
+            "logging" in key
+            or "logfile" in key
+            or "crash" in key
+            or (raw.platform == "fortios" and key == "execute_log_display")
+        )
     }
     if not outputs:
         return _diagnostic(
@@ -962,6 +1096,58 @@ def normalize_recent_logs(raw: RawCollectorResult) -> DiagnosticValues:
             EvaluationOutcome.WARNING,
             "Local logging is disabled",
             reason_code="logging_disabled",
+            outputs=outputs,
+        )
+    if raw.platform == "fortios":
+        levels = [
+            value.casefold()
+            for output in outputs.values()
+            for value in re.findall(r'(?i)\blevel="?([a-z]+)"?', output)
+        ]
+        critical_levels = {"emergency", "alert", "critical", "error"}
+        warning_levels = {"warning"}
+        critical = sum(level in critical_levels for level in levels)
+        warnings = sum(level in warning_levels for level in levels)
+        affected = []
+        for output in outputs.values():
+            for line in output.splitlines():
+                level_match = re.search(r'(?i)\blevel="?([a-z]+)"?', line)
+                if not level_match or level_match.group(1).casefold() not in (
+                    critical_levels | warning_levels
+                ):
+                    continue
+                description = re.search(r'\blogdesc="([^"]+)"', line)
+                message = re.search(r'\bmsg="([^"]+)"', line)
+                detail = (
+                    description.group(1)
+                    if description
+                    else message.group(1) if message else "FortiOS event"
+                )
+                affected.append(
+                    f"{level_match.group(1).upper()}: {detail}"[:160]
+                )
+        if critical:
+            outcome = EvaluationOutcome.FAIL
+            reason = "critical_log_events_detected"
+        elif warnings:
+            outcome = EvaluationOutcome.WARNING
+            reason = "warning_log_events_detected"
+        elif levels:
+            outcome = EvaluationOutcome.PASS
+            reason = None
+        else:
+            outcome = EvaluationOutcome.UNKNOWN
+            reason = "log_format_unrecognized"
+        return _diagnostic(
+            outcome,
+            f"Parsed {len(levels)} FortiOS event log entries",
+            reason_code=reason,
+            metrics={
+                "event_count": len(levels),
+                "critical_or_error_count": critical,
+                "warning_count": warnings,
+            },
+            affected_items=affected[:20],
             outputs=outputs,
         )
     severities = [
@@ -1018,7 +1204,9 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = {
         key: value
         for key, value in _usable_outputs(raw).items()
-        if key in {"show_ip_route", "show_route"}
+        if key in {
+            "show_ip_route", "show_route", "get_router_info_routing_table_all",
+        }
     }
     text = "\n".join(outputs.values())
     if not outputs or re.search(r"(?i)\bIP routing (?:is )?not enabled\b", text):
@@ -1053,6 +1241,8 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
                 "bgp_summary",
                 "eigrp_neighbors",
                 "rip_peers",
+                "router_info_ospf_neighbor",
+                "router_info_bgp_summary",
             )
         )
     }
@@ -1063,7 +1253,27 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
             reason_code="routing_protocol_not_configured_or_unsupported",
         )
     text = "\n".join(outputs.values())
+    if raw.platform == "fortios" and re.search(
+        r"(?im)^\s*%?\s*No neighbors exist\s*$",
+        text,
+    ):
+        return _diagnostic(
+            EvaluationOutcome.NOT_APPLICABLE,
+            "No OSPF or BGP neighbors are configured",
+            reason_code="routing_protocol_neighbors_not_configured",
+            metrics={"established_markers": 0, "problem_markers": 0},
+            outputs=outputs,
+        )
     established = len(re.findall(r"(?i)\bFULL(?:/|-)|\bESTABLISHED\b", text))
+    if raw.platform == "fortios":
+        established += sum(
+            1
+            for line in outputs.get("get_router_info_bgp_summary", "").splitlines()
+            if re.match(
+                r"^\s*(?:\d{1,3}\.){3}\d{1,3}\s+\d+\s+\d+.*\s+\d+\s*$",
+                line,
+            )
+        )
     established += sum(
         1
         for line in outputs.get("show_ip_rip_peers", "").splitlines()
@@ -1091,7 +1301,12 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = {
         key: value
         for key, value in _usable_outputs(raw).items()
-        if any(token in key for token in ("show_switch", "stack", "standby", "redundancy"))
+        if any(
+            token in key
+            for token in (
+                "show_switch", "stack", "standby", "redundancy", "system_ha_status",
+            )
+        )
     }
     if not outputs:
         return _diagnostic(
@@ -1100,6 +1315,17 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             reason_code="ha_not_configured_or_unsupported",
         )
     text = "\n".join(outputs.values())
+    if raw.platform == "fortios" and re.search(
+        r"(?im)^\s*Mode:\s*Standalone\s*$",
+        text,
+    ):
+        return _diagnostic(
+            EvaluationOutcome.NOT_APPLICABLE,
+            "FortiGate is operating as a standalone unit",
+            reason_code="ha_not_configured",
+            metrics={"cluster_members": 0},
+            outputs=outputs,
+        )
     bad = re.findall(r"(?im)^.*\b(?:failed|down|not ready|mismatch)\b.*$", text)
     if bad:
         return _diagnostic(
@@ -1110,7 +1336,10 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             affected_items=(" ".join(line.split())[:160] for line in bad[:20]),
             outputs=outputs,
         )
-    healthy = re.findall(r"(?i)\b(?:active|standby|ready|member|master)\b", text)
+    healthy = re.findall(
+        r"(?i)\b(?:active|standby|ready|member|master|primary|secondary|in-sync)\b",
+        text,
+    )
     return _diagnostic(
         EvaluationOutcome.PASS if healthy else EvaluationOutcome.UNKNOWN,
         "HA/stack output collected",
