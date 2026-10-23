@@ -51,11 +51,18 @@ ALLOWED_COMMANDS = {
     "get system performance status",
 }
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[#$>]\s*$")
+ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
+PAGER_MARKER = "--More--"
+
+
+class FortiOSPromptTimeout(TimeoutError):
+    """The SSH session opened but the FortiOS CLI prompt did not return."""
 
 
 def _receive_until_prompt(channel, timeout, expected_prompt=None):
     deadline = time.monotonic() + timeout
     chunks = []
+    acknowledged_pagers = 0
     while time.monotonic() < deadline:
         if channel.recv_ready():
             chunk = channel.recv(65535)
@@ -63,6 +70,13 @@ def _receive_until_prompt(channel, timeout, expected_prompt=None):
                 break
             chunks.append(chunk.decode("utf-8", errors="replace"))
             text = "".join(chunks).replace("\r", "")
+            pager_count = text.count(PAGER_MARKER)
+            while acknowledged_pagers < pager_count:
+                # FortiOS paginates some read-only `get` output even on a tall
+                # pseudo-terminal. Space advances one page without changing
+                # device configuration.
+                channel.send(" ")
+                acknowledged_pagers += 1
             matches = list(PROMPT_PATTERN.finditer(text))
             if matches:
                 prompt = matches[-1].group(0).strip()
@@ -70,10 +84,16 @@ def _receive_until_prompt(channel, timeout, expected_prompt=None):
                     return text, prompt
         else:
             time.sleep(0.05)
-    raise TimeoutError("FortiOS CLI prompt timeout")
+    raise FortiOSPromptTimeout("FortiOS CLI prompt timeout")
 
 
 def _clean_output(text, command, prompt):
+    text = ANSI_ESCAPE_PATTERN.sub("", text)
+    text = re.sub(
+        rf"{re.escape(PAGER_MARKER)}[ \t]*(?:(?:\x08)+[ \t]*)*",
+        "",
+        text,
+    ).replace("\x08", "")
     lines = text.replace("\r", "").splitlines()
     while lines and not lines[0].strip():
         lines.pop(0)
@@ -176,6 +196,8 @@ def main():
                     module.fail_json(msg="host key verification failed")
         except ModuleNotFoundError:
             pass
+        if isinstance(exc, FortiOSPromptTimeout):
+            module.fail_json(msg="FortiOS CLI prompt timed out")
         if isinstance(exc, (TimeoutError, socket.timeout)):
             module.fail_json(msg="FortiOS SSH connection timed out")
         if isinstance(exc, (ConnectionError, socket.gaierror, OSError)):

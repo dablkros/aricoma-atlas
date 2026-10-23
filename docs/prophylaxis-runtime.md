@@ -340,7 +340,9 @@ monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
 súčasťou podporovaného produkčného nastavenia.
 
 SSH režim používa účelový read-only účet a pevný allow-list dvoch `get`
-príkazov. Zdrojom významu týchto príkazov je dokumentácia FortiOS:
+príkazov. Lokálny Ansible modul obsluhuje FortiOS `--More--` stránkovanie
+medzerníkom; nemení tým konfiguráciu zariadenia. Zdrojom významu týchto
+príkazov je dokumentácia FortiOS:
 
 - [FortiOS 7.6.0 CLI troubleshooting cheat sheet](https://docs.fortinet.com/document/fortigate/7.6.0/cli-troubleshooting-cheat-sheet/420966/cli-troubleshooting-cheat-sheet)
 - [FortiOS 7.0.15 Troubleshooting CPU and network resources](https://docs.fortinet.com/document/fortigate/7.0.15/administration-guide/152469/troubleshooting-cpu-and-network-resources)
