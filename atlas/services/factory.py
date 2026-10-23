@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 
 from atlas.config import Settings
+from atlas.integrations.cisco_support import CiscoSupportClient
 from atlas.monitoring.service import MonitoringService
 from atlas.monitoring.secrets import MonitoringSecrets
 from atlas.openbao_client import OpenBaoClient
@@ -12,6 +13,7 @@ from atlas.prophylaxis.run_store import FileRunStore
 from atlas.prophylaxis.service import ProphylaxisService
 from atlas.prophylaxis.store import SQLiteResultStore
 from atlas.services.netbox import NetBoxService
+from atlas.services.cisco_support import CiscoSupportService
 from atlas.services.openbao import OpenBaoService
 from atlas.services.oxidized import OxidizedService
 from atlas.services.oxidized_operations import OxidizedOperationsService
@@ -35,6 +37,7 @@ class DependencyServices:
     zabbix_sync: ZabbixSyncService
     zabbix_monitoring: ZabbixMonitoringService
     monitoring: MonitoringService = None
+    cisco_support: CiscoSupportService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -89,8 +92,16 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     )
     inventory_store = FileInventoryStore(settings.oxidized_inventory_file)
     zabbix_monitoring = ZabbixMonitoringService(zabbix)
+    cisco_support = CiscoSupportService(
+        openbao,
+        CiscoSupportClient(
+            connect_timeout=settings.http_connect_timeout,
+            read_timeout=settings.http_read_timeout,
+        ),
+    )
     return DependencyServices(
         monitoring=monitoring,
+        cisco_support=cisco_support,
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,
@@ -131,6 +142,7 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             inventory_reconciliation_enabled=True,
             zabbix_monitoring=(zabbix_monitoring if settings.zabbix_enabled else None),
             oxidized=(oxidized if settings.oxidized_enabled else None),
+            cisco_support=cisco_support,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,

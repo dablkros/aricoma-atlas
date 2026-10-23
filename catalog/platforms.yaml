@@ -5,6 +5,7 @@ platforms:
   cisco-ios: {name: Cisco IOS, manufacturer: Cisco}
   cisco-ios-xe: {name: Cisco IOS XE, manufacturer: Cisco}
   cisco-nxos: {name: Cisco NX-OS, manufacturer: Cisco}
+  cisco-asa: {name: Cisco ASA, manufacturer: Cisco}
   cisco-cbs: {name: Cisco CBS, manufacturer: Cisco}
   cisco-cbs250-350: {name: Cisco CBS250/350, manufacturer: Cisco}
   fortios: {name: FortiOS, manufacturer: Fortinet}

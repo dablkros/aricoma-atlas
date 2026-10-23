@@ -1,7 +1,7 @@
 """Secret-free execution and normalized Profylaxia result contracts."""
 
 from collections.abc import Iterable
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from enum import StrEnum
 from typing import Any, Literal
 
@@ -240,6 +240,60 @@ class DiagnosticValues(BaseModel):
         return self
 
 
+class FirmwareRecommendationValues(BaseModel):
+    """Cisco suggested-release comparison for one verified device PID."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    reason_code: str = Field(min_length=1, max_length=128)
+    product_id: str = Field(min_length=1, max_length=255)
+    installed_release: str = Field(min_length=1, max_length=255)
+    suggested_releases: tuple[str, ...] = ()
+    software_type: str | None = Field(default=None, max_length=255)
+    source: Literal["cisco_software_suggestion_v2"] = (
+        "cisco_software_suggestion_v2"
+    )
+
+
+class EoxLifecycleRecord(BaseModel):
+    """Normalized lifecycle milestones from one Cisco EoX record."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    scope: Literal["hardware", "software"]
+    product_id: str | None = Field(default=None, max_length=255)
+    description: str | None = Field(default=None, max_length=512)
+    bulletin_number: str | None = Field(default=None, max_length=128)
+    bulletin_url: str | None = Field(default=None, max_length=2048)
+    announcement_date: date | None = None
+    end_of_sale_date: date | None = None
+    end_of_software_maintenance_date: date | None = None
+    end_of_security_support_date: date | None = None
+    last_date_of_support: date | None = None
+    updated_date: date | None = None
+
+
+class EolStatusValues(BaseModel):
+    """Combined hardware and software lifecycle assessment."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    outcome: EvaluationOutcome
+    reason_code: str = Field(min_length=1, max_length=128)
+    serial_number: str = Field(min_length=1, max_length=255)
+    product_id: str = Field(min_length=1, max_length=255)
+    installed_release: str = Field(min_length=1, max_length=255)
+    os_type: Literal["IOS", "IOS-XE", "NX-OS", "ASA"] | None = None
+    hardware_state: Literal["record_found", "no_record", "unavailable"]
+    software_state: Literal["record_found", "no_record", "unavailable"]
+    hardware_record_count: int = Field(default=0, ge=0)
+    software_record_count: int = Field(default=0, ge=0)
+    records_truncated: bool = False
+    records: tuple[EoxLifecycleRecord, ...] = ()
+    source: Literal["cisco_eox_v5"] = "cisco_eox_v5"
+
+
 class RawCollectorResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -342,6 +396,9 @@ __all__ = [
     "HardwareSensorValue",
     "DeviceFactsValues",
     "DiagnosticValues",
+    "EolStatusValues",
+    "EoxLifecycleRecord",
+    "FirmwareRecommendationValues",
     "OSVersionValues",
     "RawCheckResult",
     "RawCollectorResult",

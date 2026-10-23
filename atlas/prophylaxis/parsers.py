@@ -1565,6 +1565,90 @@ def parse_cisco_cbs_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     )
 
 
+def _first_mapping_text(mapping: dict, *keys: str) -> str | None:
+    for key in keys:
+        value = mapping.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+        if isinstance(value, list):
+            first = next(
+                (
+                    item.strip()
+                    for item in value
+                    if isinstance(item, str) and item.strip()
+                ),
+                None,
+            )
+            if first is not None:
+                return first
+    return None
+
+
+def _parse_cisco_ntc_device_facts(
+    raw: RawCollectorResult,
+    *,
+    ntc_platform: str,
+) -> DeviceFactsValues:
+    data = raw.data
+    if not isinstance(data, dict):
+        raise ParseFailedError()
+    version_output = data.get("show_version")
+    inventory_output = data.get("show_inventory")
+    if (
+        not isinstance(version_output, str)
+        or not version_output.strip()
+        or not isinstance(inventory_output, str)
+        or not inventory_output.strip()
+    ):
+        raise ParseFailedError()
+    try:
+        from ntc_templates.parse import parse_output
+
+        version_rows = parse_output(
+            platform=ntc_platform,
+            command="show version",
+            data=version_output,
+        )
+        inventory_rows = parse_output(
+            platform=ntc_platform,
+            command="show inventory",
+            data=inventory_output,
+        )
+    except Exception:
+        raise ParseFailedError() from None
+    if not version_rows or not isinstance(version_rows[0], dict):
+        raise ParseFailedError()
+    version = version_rows[0]
+    model = _first_text(inventory_rows, "pid") or _first_mapping_text(
+        version,
+        "model",
+        "platform",
+        "hardware",
+    )
+    serial_number = _first_text(inventory_rows, "sn") or _first_mapping_text(
+        version,
+        "serial",
+    )
+    uptime = _first_mapping_text(version, "uptime")
+    if uptime is None:
+        raise ParseFailedError()
+    return _device_facts({
+        "hostname": _first_mapping_text(version, "hostname"),
+        "model": model,
+        "os_version": _first_mapping_text(version, "os", "version"),
+        "serial_number": serial_number,
+        "uptime_seconds": _text_uptime_seconds(uptime),
+    })
+
+
+def parse_cisco_nxos_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    return _parse_cisco_ntc_device_facts(raw, ntc_platform="cisco_nxos")
+
+
+def parse_cisco_asa_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
+    return _parse_cisco_ntc_device_facts(raw, ntc_platform="cisco_asa")
+
+
 def parse_aruba_aoscx_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     data = raw.data
     if not isinstance(data, dict):
@@ -1804,6 +1888,8 @@ DEVICE_FACTS_PARSERS = {
     "cisco-ios-xe": parse_cisco_ios_device_facts,
     "cisco-cbs": parse_cisco_cbs_device_facts,
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
+    "cisco-nxos": parse_cisco_nxos_device_facts,
+    "cisco-asa": parse_cisco_asa_device_facts,
     "fortios": parse_fortios_device_facts,
     "aruba-aos-cx": parse_aruba_aoscx_device_facts,
     "checkpoint-gaia": parse_checkpoint_gaia_device_facts,
@@ -1837,9 +1923,7 @@ __all__ = [
     "normalize_cpu",
     "normalize_device_facts",
     "normalize_environment_health",
-    "normalize_eol_status",
     "normalize_fan_health",
-    "normalize_firmware_recommendation",
     "normalize_ha_status",
     "normalize_interface_errors",
     "normalize_interface_state",

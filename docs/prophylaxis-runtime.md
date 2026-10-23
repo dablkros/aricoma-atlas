@@ -129,9 +129,11 @@ hodnotu. Počas migrácie resolver akceptuje aj rozpoznané staré individuálne
 hodnoty. Historické hodnoty `Routing table`, `Routing protocol neighbors` a
 `HA status` sa pri migrácii zachovajú prostredníctvom skupiny `operations`.
 Cisco IOS, IOS-XE a CBS majú pre tematické skupiny read-only collectory;
-neznámy formát ostáva `UNKNOWN`/`UNSUPPORTED`. `firmware_recommendation` a
-`eol_status` sa zámerne nevyhodnocujú z CLI a čakajú na samostatný externý
-zdroj. Nové NetBox UI individuálne voľby neponúka.
+NX-OS a ASA majú zatiaľ read-only identity collector. Neznámy formát ostáva
+`UNKNOWN`/`UNSUPPORTED`. `firmware_recommendation` a `eol_status` sa
+nevyhodnocujú z CLI; pre podporované Cisco platformy ich poskytujú Cisco
+Software Suggestion API a Cisco EoX API. Nové NetBox UI individuálne voľby
+neponúka.
 
 `configuration_backup` je vyhodnotenie existujúceho Oxidized flow. Atlas načíta
 `nodes.json`, vyžaduje presnú zhodu názvu zariadenia a kontroluje `last.status`.
@@ -218,6 +220,8 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
+| `cisco-nxos` | `ansible.netcommon.network_cli` | `cisco.nxos.nxos` | `nxos_command` + NTC `show version`/`show inventory` |
+| `cisco-asa` | `ansible.netcommon.network_cli` | `cisco.asa.asa` | `asa_command` + NTC `show version`/`show inventory` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
 | `fortios` | `ansible.netcommon.httpapi` pri službe `fortios-api`; inak lokálny Ansible modul cez SSH/Paramiko | `fortinet.fortios.fortios` pre API; bez `network_os` pre SSH | API `system_status` + `web-ui/state`, alebo CLI `get system status` + `get system performance status` |
 | `checkpoint-gaia` | lokálny Ansible modul cez SSH/Paramiko | Gaia Clish | allow-list `show hostname`, `show asset all`, `show version all`, `show uptime` |
@@ -248,6 +252,8 @@ Primárne zdroje:
 - [ansible.netcommon.telnet](https://docs.ansible.com/projects/ansible/latest/collections/ansible/netcommon/telnet_module.html)
 - [ansible.utils 6.1.0](https://docs.ansible.com/projects/ansible/latest/collections/ansible/utils/index.html)
 - [cisco.ios 11.5.1](https://docs.ansible.com/projects/ansible/latest/collections/cisco/ios/index.html)
+- [cisco.nxos 11.2.0](https://docs.ansible.com/projects/ansible/latest/collections/cisco/nxos/index.html)
+- [cisco.asa 6.1.0](https://docs.ansible.com/projects/ansible/11/collections/cisco/asa/index.html)
 - [community.ciscosmb 1.0.12](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/index.html)
 - [community.ciscosmb.command](https://docs.ansible.com/projects/ansible/latest/collections/community/ciscosmb/command_module.html)
 - [fortinet.fortios 2.6.0](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/index.html)

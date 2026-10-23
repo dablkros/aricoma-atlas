@@ -9,6 +9,7 @@ DependencyReason = Literal[
     "sealed",
     "not_initialized",
     "secret_not_found",
+    "invalid_credential_schema",
     "invalid_response",
     "unavailable",
 ]
@@ -19,6 +20,7 @@ DEPENDENCY_REASONS = {
     "sealed",
     "not_initialized",
     "secret_not_found",
+    "invalid_credential_schema",
     "invalid_response",
     "unavailable",
 }

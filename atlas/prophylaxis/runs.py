@@ -1,11 +1,12 @@
 """Asynchronous orchestration for NetBox-selected Profylaxia groups."""
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 import logging
 import threading
 
 from atlas.device_credentials import DeviceValidationError
+from atlas.integrations.cisco_support import CiscoEoxRecord, CiscoSupportAPIError
 from atlas.prophylaxis.collectors import (
     CollectionPlan,
     CollectorRegistry,
@@ -24,7 +25,10 @@ from atlas.prophylaxis.models import (
     CPUUtilizationValues,
     DeviceFactsValues,
     DiagnosticValues,
+    EolStatusValues,
+    EoxLifecycleRecord,
     EvaluationOutcome,
+    FirmwareRecommendationValues,
     OSVersionValues,
     SystemMetricValues,
     UptimeValues,
@@ -56,12 +60,26 @@ OPERATION = "selected_checks"
 SERIAL_INVENTORY_CHECK = CheckId.SERIAL_INVENTORY.value
 MODEL_INVENTORY_CHECK = CheckId.MODEL_INVENTORY.value
 INVENTORY_CHECKS = (SERIAL_INVENTORY_CHECK, MODEL_INVENTORY_CHECK)
+EXTERNAL_LIFECYCLE_CHECKS = frozenset({
+    CheckId.FIRMWARE_RECOMMENDATION,
+    CheckId.EOL_STATUS,
+})
+CISCO_LIFECYCLE_OS_TYPES = {
+    "cisco-ios": "IOS",
+    "cisco-ios-xe": "IOS-XE",
+    "cisco-cbs": None,
+    "cisco-cbs250-350": None,
+    "cisco-nxos": "NX-OS",
+    "cisco-asa": "ASA",
+}
+CISCO_LIFECYCLE_PLATFORMS = frozenset(CISCO_LIFECYCLE_OS_TYPES)
 IDENTITY_COLLECTORS = frozenset({
     CollectorId.DEVICE_FACTS,
     CollectorId.IOS_IDENTITY,
 })
 ZABBIX_CHART_METRICS = {CheckId.CPU_UTILIZATION.value: "cpu"}
 ZABBIX_CHART_WINDOW = "1h"
+MAX_STORED_EOX_RECORDS = 50
 
 
 class DeviceFactsRunService:
@@ -80,6 +98,7 @@ class DeviceFactsRunService:
         inventory_reconciliation_enabled: bool = False,
         zabbix_monitoring=None,
         oxidized=None,
+        cisco_support=None,
         chart_renderer=render_metric_svg,
     ) -> None:
         self.netbox = netbox
@@ -92,6 +111,7 @@ class DeviceFactsRunService:
         self.inventory_reconciliation_enabled = inventory_reconciliation_enabled
         self.zabbix_monitoring = zabbix_monitoring
         self.oxidized = oxidized
+        self.cisco_support = cisco_support
         self.chart_renderer = chart_renderer
         self._slots = threading.BoundedSemaphore(concurrency)
         self._run_lock = threading.Lock()
@@ -482,10 +502,16 @@ class DeviceFactsRunService:
         device_id, name, management_ip, platform = self._identity(device)
         selected_checks, unknown_checks = self._selected_checks(device)
         backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks
+        lifecycle_checks = tuple(
+            check
+            for check in selected_checks
+            if check in EXTERNAL_LIFECYCLE_CHECKS
+        )
         known_checks = tuple(
             check
             for check in selected_checks
             if check != CheckId.CONFIGURATION_BACKUP
+            and check not in EXTERNAL_LIFECYCLE_CHECKS
         )
         results = [
             self._check_error(
@@ -525,7 +551,7 @@ class DeviceFactsRunService:
                     device_id, name, management_ip, platform, check.value,
                     status, code,
                 )
-                for check in known_checks
+                for check in known_checks + lifecycle_checks
             )
             if self.inventory_reconciliation_enabled:
                 results.extend(
@@ -535,8 +561,30 @@ class DeviceFactsRunService:
                 )
             return tuple(results)
 
+        lifecycle_supported = (
+            bool(lifecycle_checks)
+            and target.platform in CISCO_LIFECYCLE_PLATFORMS
+            and self.cisco_support is not None
+        )
+        if lifecycle_checks and not lifecycle_supported:
+            results.extend(
+                self._check_error(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    check.value,
+                    "skipped",
+                    "unsupported_check",
+                )
+                for check in lifecycle_checks
+            )
+
+        identity_required = (
+            self.inventory_reconciliation_enabled or lifecycle_supported
+        )
         if (
-            self.inventory_reconciliation_enabled
+            identity_required
             and any(
                 profile.supports_collector(collector_id)
                 for collector_id in IDENTITY_COLLECTORS
@@ -568,7 +616,7 @@ class DeviceFactsRunService:
                         + (CollectorTask(collector=facts_collector, checks=()),),
                         unsupported_checks=plan.unsupported_checks,
                     )
-        elif self.inventory_reconciliation_enabled:
+        elif identity_required:
             results.extend(
                 self._inventory_errors(
                     device_id,
@@ -592,6 +640,8 @@ class DeviceFactsRunService:
 
         prophylaxis_connection = None
         snmp_credentials = None
+        identity_facts: DeviceFactsValues | None = None
+        inventory_results: dict[str, ProphylaxisCheckResult] = {}
         for task in plan.tasks:
             try:
                 if task.collector.id == CollectorId.SNMP_SYSTEM:
@@ -682,7 +732,7 @@ class DeviceFactsRunService:
                     for check in task.checks
                 )
                 if (
-                    self.inventory_reconciliation_enabled
+                    identity_required
                     and task.collector.id in IDENTITY_COLLECTORS
                 ):
                     results.extend(
@@ -707,7 +757,7 @@ class DeviceFactsRunService:
                     for check in task.checks
                 )
                 if (
-                    self.inventory_reconciliation_enabled
+                    identity_required
                     and task.collector.id in IDENTITY_COLLECTORS
                 ):
                     results.extend(
@@ -723,22 +773,25 @@ class DeviceFactsRunService:
                 continue
 
             if (
-                self.inventory_reconciliation_enabled
+                identity_required
                 and task.collector.id in IDENTITY_COLLECTORS
             ):
                 try:
                     facts = task.collector.normalize(CheckId.DEVICE_FACTS, raw)
                     if not isinstance(facts, DeviceFactsValues):
                         raise ValueError("collector returned invalid device facts")
-                    results.extend(
-                        self._reconcile_inventory(
-                            device_id,
-                            name,
-                            management_ip,
-                            platform,
-                            facts,
-                        )
+                    identity_facts = facts
+                    reconciled = self._reconcile_inventory(
+                        device_id,
+                        name,
+                        management_ip,
+                        platform,
+                        facts,
                     )
+                    results.extend(reconciled)
+                    inventory_results.update({
+                        result.check: result for result in reconciled
+                    })
                 except Exception as exc:
                     status, code = self._classify_exception(exc)
                     results.extend(
@@ -765,7 +818,330 @@ class DeviceFactsRunService:
                         status, code,
                     )
                 results.append(result)
+        if lifecycle_supported:
+            results.extend(self._cisco_lifecycle_results(
+                device_id=device_id,
+                name=name,
+                management_ip=management_ip,
+                platform=target.platform,
+                checks=lifecycle_checks,
+                facts=identity_facts,
+                inventory_results=inventory_results,
+            ))
         return tuple(results)
+
+    @staticmethod
+    def _cisco_error_code(exc: Exception) -> str:
+        reason = getattr(exc, "reason", "unavailable")
+        return {
+            "secret_not_found": "cisco_secret_not_found",
+            "invalid_credential_schema": "cisco_secret_invalid",
+            "authentication_failed": "cisco_authentication_failed",
+            "not_authorized": "cisco_api_not_authorized",
+            "connection_failed": "cisco_connection_failed",
+            "tls_validation_failed": "cisco_tls_validation_failed",
+            "invalid_response": "cisco_invalid_response",
+            "invalid_request": "cisco_identifier_invalid",
+            "request_failed": "cisco_request_rejected",
+        }.get(reason, "cisco_api_unavailable")
+
+    @staticmethod
+    def _external_unknown(
+        reason_code: str,
+        summary: str,
+        **metrics,
+    ) -> DiagnosticValues:
+        return DiagnosticValues(
+            outcome=EvaluationOutcome.UNKNOWN,
+            reason_code=reason_code,
+            summary=summary,
+            metrics=metrics,
+        )
+
+    @staticmethod
+    def _verified_inventory_value(
+        result: ProphylaxisCheckResult | None,
+        expected_type,
+        field: str,
+    ) -> str | None:
+        if (
+            result is None
+            or not isinstance(result.values, expected_type)
+            or result.values.state not in {"matched", "populated"}
+        ):
+            return None
+        return getattr(result.values, field)
+
+    def _cisco_lifecycle_results(
+        self,
+        *,
+        device_id: int,
+        name: str,
+        management_ip: str,
+        platform: str,
+        checks: tuple[CheckId, ...],
+        facts: DeviceFactsValues | None,
+        inventory_results: dict[str, ProphylaxisCheckResult],
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        serial_number = self._verified_inventory_value(
+            inventory_results.get(SERIAL_INVENTORY_CHECK),
+            SerialInventoryValues,
+            "netbox_serial",
+        )
+        product_id = self._verified_inventory_value(
+            inventory_results.get(MODEL_INVENTORY_CHECK),
+            ModelInventoryValues,
+            "netbox_model",
+        )
+        installed_release = facts.os_version if facts is not None else None
+        missing = tuple(
+            name
+            for name, value in (
+                ("serial", serial_number),
+                ("product_id", product_id),
+                ("installed_release", installed_release),
+            )
+            if value is None
+        )
+        if missing:
+            values = self._external_unknown(
+                "cisco_identity_not_verified",
+                "Cisco lifecycle lookup requires matching NetBox and device identity",
+                missing_identity=",".join(missing),
+            )
+            return tuple(
+                self._success_result(
+                    device_id,
+                    name,
+                    management_ip,
+                    platform,
+                    check,
+                    values,
+                )
+                for check in checks
+            )
+
+        results: list[ProphylaxisCheckResult] = []
+        if CheckId.FIRMWARE_RECOMMENDATION in checks:
+            try:
+                values = self._firmware_recommendation_values(
+                    product_id,
+                    installed_release,
+                )
+            except (CiscoSupportAPIError, DependencyError) as exc:
+                values = self._external_unknown(
+                    self._cisco_error_code(exc),
+                    "Cisco Software Suggestion could not be evaluated",
+                    product_id=product_id,
+                    installed_release=installed_release,
+                )
+            results.append(self._success_result(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                CheckId.FIRMWARE_RECOMMENDATION,
+                values,
+            ))
+
+        if CheckId.EOL_STATUS in checks:
+            try:
+                values = self._eol_status_values(
+                    serial_number=serial_number,
+                    product_id=product_id,
+                    installed_release=installed_release,
+                    platform=platform,
+                )
+            except (CiscoSupportAPIError, DependencyError) as exc:
+                values = self._external_unknown(
+                    self._cisco_error_code(exc),
+                    "Cisco EoX could not be evaluated",
+                    serial_number=serial_number,
+                    product_id=product_id,
+                    installed_release=installed_release,
+                )
+            results.append(self._success_result(
+                device_id,
+                name,
+                management_ip,
+                platform,
+                CheckId.EOL_STATUS,
+                values,
+            ))
+        return tuple(results)
+
+    def _firmware_recommendation_values(
+        self,
+        product_id: str,
+        installed_release: str,
+    ) -> FirmwareRecommendationValues:
+        suggestions = self.cisco_support.software_suggestions(
+            product_id,
+            installed_release,
+        )
+        if any(
+            item.product_id.casefold() != product_id.casefold()
+            for item in suggestions
+        ):
+            raise CiscoSupportAPIError("invalid_response")
+        suggested = tuple(item for item in suggestions if item.suggested)
+        releases = tuple(dict.fromkeys(
+            value
+            for item in suggested
+            for value in (item.alternate_release, item.release)
+            if value
+        ))
+        comparable = {value.casefold() for value in releases}
+        software_type = next(
+            (item.software_type for item in suggestions if item.software_type),
+            None,
+        )
+        if installed_release.casefold() in comparable:
+            outcome = EvaluationOutcome.PASS
+            reason_code = "installed_release_suggested"
+        elif releases:
+            outcome = EvaluationOutcome.WARNING
+            reason_code = "software_update_available"
+        elif suggestions:
+            outcome = EvaluationOutcome.UNKNOWN
+            reason_code = "cisco_no_suggested_release"
+        else:
+            outcome = EvaluationOutcome.UNKNOWN
+            reason_code = "cisco_pid_not_covered"
+        try:
+            return FirmwareRecommendationValues(
+                outcome=outcome,
+                reason_code=reason_code,
+                product_id=product_id,
+                installed_release=installed_release,
+                suggested_releases=releases,
+                software_type=software_type,
+            )
+        except ValueError:
+            raise CiscoSupportAPIError("invalid_response") from None
+
+    @staticmethod
+    def _iso_date(value: str | None) -> date | None:
+        if value is None:
+            return None
+        try:
+            return date.fromisoformat(value)
+        except ValueError:
+            raise CiscoSupportAPIError("invalid_response") from None
+
+    @classmethod
+    def _lifecycle_record(
+        cls,
+        scope: str,
+        record: CiscoEoxRecord,
+    ) -> EoxLifecycleRecord:
+        try:
+            return EoxLifecycleRecord(
+                scope=scope,
+                product_id=record.product_id,
+                description=record.description,
+                bulletin_number=record.bulletin_number,
+                bulletin_url=record.bulletin_url,
+                announcement_date=cls._iso_date(record.announcement_date),
+                end_of_sale_date=cls._iso_date(record.end_of_sale_date),
+                end_of_software_maintenance_date=cls._iso_date(
+                    record.end_of_software_maintenance_date
+                ),
+                end_of_security_support_date=cls._iso_date(
+                    record.end_of_security_support_date
+                ),
+                last_date_of_support=cls._iso_date(
+                    record.last_date_of_support
+                ),
+                updated_date=cls._iso_date(record.updated_date),
+            )
+        except ValueError:
+            raise CiscoSupportAPIError("invalid_response") from None
+
+    def _eol_status_values(
+        self,
+        *,
+        serial_number: str,
+        product_id: str,
+        installed_release: str,
+        platform: str,
+    ) -> EolStatusValues | DiagnosticValues:
+        try:
+            os_type = CISCO_LIFECYCLE_OS_TYPES[platform]
+        except KeyError:
+            raise CiscoSupportAPIError("invalid_request") from None
+        records: list[EoxLifecycleRecord] = []
+        record_counts = {"hardware": 0, "software": 0}
+        states = {"hardware": "unavailable", "software": "unavailable"}
+        errors: list[str] = []
+        for scope, lookup in (
+            ("hardware", lambda: self.cisco_support.hardware_eox(serial_number)),
+            (
+                "software",
+                lambda: self.cisco_support.software_eox(
+                    installed_release,
+                    os_type,
+                ),
+            ),
+        ):
+            try:
+                response = lookup()
+                normalized = tuple(
+                    self._lifecycle_record(scope, record)
+                    for record in response.records
+                )
+            except (CiscoSupportAPIError, DependencyError) as exc:
+                errors.append(self._cisco_error_code(exc))
+                continue
+            states[scope] = "record_found" if normalized else "no_record"
+            record_counts[scope] = len(normalized)
+            records.extend(normalized)
+
+        if states["hardware"] == states["software"] == "unavailable":
+            return self._external_unknown(
+                errors[0] if errors else "cisco_api_unavailable",
+                "Cisco EoX could not be evaluated",
+                serial_number=serial_number,
+                product_id=product_id,
+                installed_release=installed_release,
+            )
+
+        today = date.today()
+        support_ended = any(
+            record.last_date_of_support is not None
+            and record.last_date_of_support <= today
+            for record in records
+        )
+        if support_ended:
+            outcome = EvaluationOutcome.FAIL
+            reason_code = "last_date_of_support_passed"
+        elif records:
+            outcome = EvaluationOutcome.WARNING
+            reason_code = "eox_record_published"
+        else:
+            outcome = EvaluationOutcome.UNKNOWN
+            reason_code = (
+                "cisco_eox_partial_data"
+                if "unavailable" in states.values()
+                else "cisco_eox_record_not_found"
+            )
+        try:
+            return EolStatusValues(
+                outcome=outcome,
+                reason_code=reason_code,
+                serial_number=serial_number,
+                product_id=product_id,
+                installed_release=installed_release,
+                os_type=os_type,
+                hardware_state=states["hardware"],
+                software_state=states["software"],
+                hardware_record_count=record_counts["hardware"],
+                software_record_count=record_counts["software"],
+                records_truncated=len(records) > MAX_STORED_EOX_RECORDS,
+                records=tuple(records[:MAX_STORED_EOX_RECORDS]),
+            )
+        except ValueError:
+            raise CiscoSupportAPIError("invalid_response") from None
 
     @staticmethod
     def _normalized_inventory_value(value: object) -> str | None:
@@ -1027,6 +1403,8 @@ class DeviceFactsRunService:
             | UptimeValues
             | SystemMetricValues
             | DiagnosticValues
+            | FirmwareRecommendationValues
+            | EolStatusValues
         ),
     ) -> ProphylaxisCheckResult:
         if check == CheckId.DEVICE_FACTS and isinstance(values, DeviceFactsValues):
@@ -1041,7 +1419,12 @@ class DeviceFactsRunService:
                 evaluation=EvaluationOutcome.PASS,
                 facts=values,
             )
-        if isinstance(values, (SystemMetricValues, DiagnosticValues)):
+        if isinstance(values, (
+            SystemMetricValues,
+            DiagnosticValues,
+            FirmwareRecommendationValues,
+            EolStatusValues,
+        )):
             status = {
                 EvaluationOutcome.PASS: "success",
                 EvaluationOutcome.WARNING: "success",

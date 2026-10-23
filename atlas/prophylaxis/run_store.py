@@ -8,7 +8,13 @@ import threading
 from uuid import UUID, uuid4
 
 from atlas.prophylaxis.formatting import format_uptime_seconds
-from atlas.prophylaxis.models import CheckId, CollectionStatus, EvaluationOutcome
+from atlas.prophylaxis.models import (
+    CheckId,
+    CollectionStatus,
+    EolStatusValues,
+    EvaluationOutcome,
+    FirmwareRecommendationValues,
+)
 from atlas.prophylaxis.run_models import ProphylaxisRun
 
 
@@ -139,6 +145,33 @@ class FileRunStore:
                 if value is not None
             )
         if result.values is not None:
+            if isinstance(result.values, FirmwareRecommendationValues):
+                suggested = ",".join(result.values.suggested_releases) or "none"
+                return (
+                    f"pid={result.values.product_id}, "
+                    f"installed={result.values.installed_release}, "
+                    f"suggested={suggested}, "
+                    f"reason={result.values.reason_code}"
+                )
+            if isinstance(result.values, EolStatusValues):
+                milestones = []
+                for record in result.values.records:
+                    milestones.append(
+                        f"{record.scope}:{record.product_id or '-'}:"
+                        f"eos={record.end_of_sale_date or '-'}:"
+                        f"ldos={record.last_date_of_support or '-'}"
+                    )
+                return (
+                    f"pid={result.values.product_id}, "
+                    f"serial={result.values.serial_number}, "
+                    f"hardware={result.values.hardware_state}, "
+                    f"software={result.values.software_state}, "
+                    f"hardware_records={result.values.hardware_record_count}, "
+                    f"software_records={result.values.software_record_count}, "
+                    f"records_truncated={result.values.records_truncated}, "
+                    f"reason={result.values.reason_code}, "
+                    f"milestones={'|'.join(milestones) or 'none'}"
+                )
             values = result.values.model_dump()
             labels = {
                 "current_percent": "current",

@@ -1,0 +1,15 @@
+---
+- name: Collect Cisco NX-OS identity commands
+  cisco.nxos.nxos_command:
+    commands:
+      - show version
+      - show inventory
+  register: atlas_nxos_facts
+  changed_when: false
+
+- name: Prepare Cisco NX-OS command outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        show_version: "{{ atlas_nxos_facts.stdout[0] }}"
+        show_inventory: "{{ atlas_nxos_facts.stdout[1] }}"
