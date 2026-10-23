@@ -1486,21 +1486,8 @@ def _gaia_model(text: str) -> str | None:
     return model
 
 
-def _gaia_uptime_seconds(text: str) -> int:
-    normalized = " ".join(text.split())
-    labelled = re.search(r"(?i)\buptime\s*:\s*(?P<value>.+)$", normalized)
-    linux_uptime = re.search(
-        r"(?i)\bup\s+(?P<value>.+?)"
-        r"(?:,\s*\d+\s+users?\b|,\s*load\s+average\b|$)",
-        normalized,
-    )
-    value = (
-        labelled.group("value")
-        if labelled
-        else linux_uptime.group("value")
-        if linux_uptime
-        else normalized
-    )
+def _text_uptime_seconds(text: str) -> int:
+    value = " ".join(text.split()).replace("(s)", "s")
     total = 0
     found = False
     for amount, unit in re.findall(
@@ -1522,6 +1509,24 @@ def _gaia_uptime_seconds(text: str) -> int:
     if not found:
         raise ParseFailedError()
     return total
+
+
+def _gaia_uptime_seconds(text: str) -> int:
+    normalized = " ".join(text.split())
+    labelled = re.search(r"(?i)\buptime\s*:\s*(?P<value>.+)$", normalized)
+    linux_uptime = re.search(
+        r"(?i)\bup\s+(?P<value>.+?)"
+        r"(?:,\s*\d+\s+users?\b|,\s*load\s+average\b|$)",
+        normalized,
+    )
+    value = (
+        labelled.group("value")
+        if labelled
+        else linux_uptime.group("value")
+        if linux_uptime
+        else normalized
+    )
+    return _text_uptime_seconds(value)
 
 
 def parse_checkpoint_gaia_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
