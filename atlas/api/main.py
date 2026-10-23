@@ -10,7 +10,16 @@ from fastapi.staticfiles import StaticFiles
 
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
-from atlas.api.routes import monitoring, health, oxidized, prophylaxis, readiness, status, zabbix
+from atlas.api.routes import (
+    health,
+    integrations,
+    monitoring,
+    oxidized,
+    prophylaxis,
+    readiness,
+    status,
+    zabbix,
+)
 from atlas.config import Settings, get_settings
 from atlas.logging import configure_logging
 from atlas.services.factory import DependencyServices, build_dependency_services
@@ -63,6 +72,7 @@ def create_app(
     if settings.oxidized_enabled:
         application.include_router(oxidized.router, prefix=settings.api_prefix)
     application.include_router(prophylaxis.router, prefix=settings.api_prefix)
+    application.include_router(integrations.router, prefix=settings.api_prefix)
     if settings.zabbix_enabled:
         application.include_router(zabbix.router, prefix=settings.api_prefix)
     application.mount(

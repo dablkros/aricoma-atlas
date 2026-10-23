@@ -38,6 +38,8 @@ atlas_transport_files:
       cisco-ios-xe: device_facts/cisco_ios.yml
       cisco-cbs: device_facts/cisco_cbs.yml
       cisco-cbs250-350: device_facts/cisco_cbs.yml
+      cisco-nxos: device_facts/cisco_nxos.yml
+      cisco-asa: device_facts/cisco_asa.yml
       aruba-aos-cx: device_facts/aruba_aoscx.yml
       checkpoint-gaia: device_facts/checkpoint_gaia.yml
   https:

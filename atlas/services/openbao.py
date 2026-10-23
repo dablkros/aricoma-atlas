@@ -10,6 +10,7 @@ from atlas.device_credentials import (
     validate_admin_secret,
     validate_snmp_secret,
 )
+from atlas.integrations.cisco_support import CiscoSupportCredentials
 from atlas.openbao_client import (
     OpenBaoAuthenticationError,
     OpenBaoClient,
@@ -138,6 +139,25 @@ class OpenBaoService:
         ):
             raise DependencyError("secret_not_found")
         return token
+
+    def get_cisco_support_credentials(self) -> CiscoSupportCredentials:
+        secret = self.read_secret("integrations/cisco/support-api")
+        client_id = secret.get("client_id") if isinstance(secret, dict) else None
+        client_secret = (
+            secret.get("client_secret") if isinstance(secret, dict) else None
+        )
+        if any(
+            not isinstance(value, str)
+            or not value
+            or value != value.strip()
+            or any(character.isspace() for character in value)
+            for value in (client_id, client_secret)
+        ):
+            raise DependencyError("invalid_credential_schema")
+        return CiscoSupportCredentials(
+            client_id=client_id,
+            client_secret=client_secret,
+        )
 
     def get_snmp_credentials(self, manufacturer: str, profile: str) -> tuple[dict, int]:
         try:

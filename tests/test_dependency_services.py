@@ -168,6 +168,40 @@ class OpenBaoServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "secret_not_found")
 
+    def test_cisco_support_credentials_use_exact_integration_path(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "client_id": "fixture-client-id",
+            "client_secret": "fixture-client-secret",
+        }
+        service = self.service(client)
+
+        credentials = service.get_cisco_support_credentials()
+
+        self.assertEqual(credentials.client_id, "fixture-client-id")
+        self.assertNotIn("fixture-client-secret", repr(credentials))
+        client.kv_read.assert_called_once_with(
+            "runtime-token",
+            "integrations/cisco/support-api",
+            mount="atlas",
+        )
+
+    def test_invalid_cisco_support_secret_is_rejected_without_values(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read.return_value = {
+            "client_id": "fixture-client-id",
+            "client_secret": "",
+        }
+        service = self.service(client)
+
+        with self.assertRaises(DependencyError) as raised:
+            service.get_cisco_support_credentials()
+
+        self.assertEqual(raised.exception.reason, "invalid_credential_schema")
+        self.assertNotIn("fixture-client-id", str(raised.exception))
+
     def test_device_secret_missing_and_malformed_are_isolated_and_redacted(self):
         cases = (
             (

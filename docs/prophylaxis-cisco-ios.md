@@ -1,6 +1,6 @@
 # Cisco IOS/IOS-XE tematické collectory profylaxie
 
-Stav implementácie: 2026-10-20. Rozsah: NetBox platformy `cisco-ios` a
+Stav implementácie: 2026-10-23. Rozsah: NetBox platformy `cisco-ios` a
 `cisco-ios-xe`; CLI normalizátory sú zámerne predbežné do overenia na reálnych
 anonymizovaných výstupoch.
 
@@ -31,7 +31,7 @@ Oxidized polling ani Git históriu.
 | `ios_interfaces` | `interface_state`, `interface_utilization`, `interface_error_counters` | CLI zber implementovaný; očakávaný stav, prahy a counter delta zatiaľ neexistujú |
 | `ios_compliance` | `license_state`, `pki_certificates` | lokálny licenčný a PKI zber implementovaný |
 | `ios_operations` | `ntp_sync`, `recent_log_events`, `routing_table`, `routing_protocol_neighbors`, `ha_status` | CLI zber a konzervatívne normalizátory implementované |
-| externý lifecycle zdroj | `firmware_recommendation`, `eol_status` | zámerne unsupported, kým nebude pripojený samostatný zdroj |
+| Cisco Support API | `firmware_recommendation`, `eol_status` | implementované cez overený NetBox PID/serial a zozbieranú IOS verziu; chyba API vracia `UNKNOWN` |
 
 **Fakt:** Profily `cisco-ios` a `cisco-ios-xe` preferujú všetkých päť
 tematických IOS collectorov. Predchádzajúce interné ID `device_facts` a
@@ -59,7 +59,7 @@ payload s outcome, reason kódom, krátkym súhrnom, bezpečnými metrikami,
 ovplyvnenými položkami a zoznamom zdrojových príkazov. Raw CLI výstup sa do
 reportu ani API výsledku nekopíruje.
 
-**Inference:** Po získaní reálnych výstupov možno všeobecný diagnostický model
+**Inference:** Po získaní reálnych výstupov možno ostatné všeobecné diagnostické modely
 sprísniť na doménové payloady:
 
 | Model | Minimálny normalizovaný obsah |
@@ -70,8 +70,8 @@ sprísniť na doménové payloady:
 | `InterfaceErrorCounterValues` | interface, absolútne input/output error countery, čas vzorky; trend iba s druhou vzorkou alebo Zabbix históriou |
 | `LicenseStateValues` | lokálny feature/license názov, stav a explicitný outcome |
 | `PKICertificateValues` | trustpoint/subject, serial, platnosť od/do a outcome expirácie |
-| `FirmwareRecommendationValues` | zistená verzia, odporúčaná kompatibilná verzia, zdroj a dátum aktualizácie zdroja |
-| `EOLStatusValues` | produkt/PID, lifecycle míľniky, stav zdroja a dátum jeho aktualizácie |
+| `FirmwareRecommendationValues` | implementované: PID, zistená verzia, všetky Cisco suggested formáty, software type a outcome |
+| `EOLStatusValues` | implementované: serial, PID, OS/verzia, oddelený hardware/software stav, bulletin a lifecycle míľniky |
 | `NTPStatusValues` | synchronizácia, vybraný peer a stratum, iba ak ich výstup poskytne |
 | `RecentLogValues` | obmedzený počet normalizovaných záznamov bez raw dumpu |
 

@@ -1,11 +1,19 @@
 import unittest
+from unittest.mock import Mock
 
 from atlas.device_credentials import DeviceValidationError
+from atlas.integrations.cisco_support import (
+    CiscoEoxRecord,
+    CiscoEoxResult,
+    CiscoSoftwareSuggestion,
+)
 from atlas.prophylaxis.collectors import CollectorRegistry
 from atlas.prophylaxis.models import (
     CheckId,
     CollectorId,
+    EolStatusValues,
     EvaluationOutcome,
+    FirmwareRecommendationValues,
     RawCollectorResult,
     expand_check_selection,
 )
@@ -43,6 +51,80 @@ def cbs_raw(model="CBS350-16T-2G", fan_status=5):
 
 
 class SystemMetricTests(unittest.TestCase):
+    def test_cisco_recommendation_compares_both_release_formats(self):
+        cisco = Mock()
+        cisco.software_suggestions.return_value = (
+            CiscoSoftwareSuggestion(
+                product_id="CISCO2811",
+                software_type="IOS Software",
+                release="15.1.4M5",
+                alternate_release="15.1(4)M5",
+                release_date="17 Nov 2014",
+                lifecycle="MD",
+                suggested=True,
+            ),
+        )
+        service = DeviceFactsRunService(
+            netbox=None,
+            openbao=None,
+            backend=None,
+            store=None,
+            concurrency=1,
+            cisco_support=cisco,
+        )
+
+        values = service._firmware_recommendation_values(
+            "CISCO2811",
+            "15.1(4)M5",
+        )
+
+        self.assertIsInstance(values, FirmwareRecommendationValues)
+        self.assertEqual(values.outcome, EvaluationOutcome.PASS)
+        self.assertEqual(values.reason_code, "installed_release_suggested")
+
+    def test_cisco_eox_uses_serial_and_software_release_independently(self):
+        cisco = Mock()
+        cisco.hardware_eox.return_value = CiscoEoxResult((
+            CiscoEoxRecord(
+                product_id="CISCO2811",
+                description="Integrated Services Router",
+                bulletin_number="EOL0001",
+                bulletin_url="https://www.cisco.com/example",
+                announcement_date="2010-01-01",
+                end_of_sale_date="2011-01-01",
+                end_of_software_maintenance_date="2012-01-01",
+                end_of_security_support_date="2013-01-01",
+                last_date_of_support="2016-01-01",
+                updated_date="2010-01-02",
+            ),
+        ))
+        cisco.software_eox.return_value = CiscoEoxResult(())
+        service = DeviceFactsRunService(
+            netbox=None,
+            openbao=None,
+            backend=None,
+            store=None,
+            concurrency=1,
+            cisco_support=cisco,
+        )
+
+        values = service._eol_status_values(
+            serial_number="FTX1234ABCD",
+            product_id="CISCO2811",
+            installed_release="15.1(4)M5",
+            platform="cisco-ios",
+        )
+
+        self.assertIsInstance(values, EolStatusValues)
+        self.assertEqual(values.outcome, EvaluationOutcome.FAIL)
+        self.assertEqual(values.hardware_state, "record_found")
+        self.assertEqual(values.software_state, "no_record")
+        self.assertEqual(values.hardware_record_count, 1)
+        self.assertEqual(values.software_record_count, 0)
+        self.assertFalse(values.records_truncated)
+        cisco.hardware_eox.assert_called_once_with("FTX1234ABCD")
+        cisco.software_eox.assert_called_once_with("15.1(4)M5", "IOS")
+
     def test_oxidized_backup_status_is_reused_without_starting_a_backup(self):
         service = DeviceFactsRunService(
             netbox=None,

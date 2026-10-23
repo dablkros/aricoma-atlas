@@ -35,6 +35,7 @@ Usage:
   sudo atlasctl zabbix sync
   sudo atlasctl zabbix credentials
   sudo atlasctl zabbix logs [docker compose logs options]
+  sudo atlasctl integrations cisco test
   sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
   sudo atlasctl proxy logs [docker compose logs options]
@@ -53,6 +54,7 @@ Commands:
   zabbix sync           Reconcile NetBox desired state into Zabbix.
   zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
+  integrations cisco    Test Cisco OAuth and Support API entitlements.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
   proxy logs            Show Nginx ingress container logs.
@@ -410,6 +412,23 @@ main() {
                 logs)
                     shift
                     zabbix_logs "$@"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        integrations)
+            shift
+            case "${1:-}" in
+                cisco)
+                    shift
+                    [[ "${1:-}" == "test" && $# -eq 1 ]] || \
+                        die "integrations cisco requires the test command"
+                    cd "$ATLAS_ROOT"
+                    exec "$PYTHON" \
+                        "${ATLAS_ROOT}/scripts/cisco_support_cli.py"
                     ;;
                 *)
                     usage

@@ -9,3 +9,7 @@ path "atlas/data/devices/credentials/*" {
 path "atlas/data/zabbix/api" {
   capabilities = ["read"]
 }
+
+path "atlas/data/integrations/cisco/support-api" {
+  capabilities = ["read"]
+}
