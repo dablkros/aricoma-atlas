@@ -37,6 +37,20 @@ class AnsiblePlatformProfile:
 
 
 CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
+FORTIOS_SSH_PROFILE = AnsiblePlatformProfile(
+    slug="fortios",
+    transport="ssh",
+    default_port=22,
+    netbox_service_name=None,
+    # FortiOS CLI is an interactive appliance shell. Atlas executes the fixed
+    # read-only command allow-list through its local Paramiko module.
+    ansible_connection="local",
+    ansible_network_os=None,
+    authentication="ssh",
+    collection="atlas.builtin",
+    module_family="atlas_fortios_cli",
+    supported_collectors=CPU_AND_FACTS,
+)
 IOS_IMPLEMENTED_COLLECTORS = frozenset({
     CollectorId.IOS_IDENTITY,
     CollectorId.IOS_RESOURCES,
@@ -232,6 +246,7 @@ class AnsiblePlatformRegistry:
 
 __all__ = [
     "ANSIBLE_PLATFORMS",
+    "FORTIOS_SSH_PROFILE",
     "AnsiblePlatformProfile",
     "AnsiblePlatformRegistry",
     "AuthenticationType",

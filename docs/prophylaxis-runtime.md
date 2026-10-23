@@ -38,9 +38,17 @@ Profylaxia používa samostatný účelový secret:
 devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 ```
 
+Pre FortiGate s profilom `forti-mt` je cesta:
+
+```text
+devices/credentials/fortinet/forti-mt/prophylaxis
+```
+
 SSH platformy z neho načítajú
-`username`, `password` a voliteľný `enable_password`; FortiGate z neho načíta
-iba `api_token`. Resolver vráti iba polia požadované konkrétnym transportom.
+`username`, `password` a voliteľný `enable_password`. FortiGate načíta
+`api_token`, ak má zariadenie NetBox službu `fortios-api`; bez tejto služby
+načíta `username` a `password` pre SSH. Resolver vráti iba polia požadované
+zvoleným transportom.
 
 Pri upgrade skopíruj iba potrebné hodnoty z existujúceho `admin` secretu do
 nového `prophylaxis` secretu cez autentifikované OpenBao UI. Atlas nemá fallback
@@ -60,8 +68,10 @@ fortios-api -> TCP/444 -> ["tcp/444"]
 
 Port sa odovzdá do `ansible.netcommon.httpapi` ako `ansible_httpapi_port`.
 Atlas porty aktívne neskenuje. Ak služba `fortios-api` na zariadení neexistuje,
-použije platformový default `443`, aby ostala zachovaná kompatibilita. Viac
-služieb s rovnakým názvom alebo viac port mappings skončí s
+Atlas vyberie SSH na porte 22 a spustí iba allow-listed príkazy
+`get system status` a `get system performance status`. Chyba existujúceho API
+spojenia nespustí SSH fallback. Viac služieb s rovnakým názvom alebo viac port
+mappings skončí s
 `ambiguous_service_port`; iný protokol, neplatný port alebo neplatná odpoveď
 skončí s `invalid_service_port`. Port sa vyhodnotí ešte pred čítaním secretu.
 
@@ -209,7 +219,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
-| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
+| `fortios` | `ansible.netcommon.httpapi` pri službe `fortios-api`; inak lokálny Ansible modul cez SSH/Paramiko | `fortinet.fortios.fortios` pre API; bez `network_os` pre SSH | API `system_status` + `web-ui/state`, alebo CLI `get system status` + `get system performance status` |
 | `checkpoint-gaia` | lokálny Ansible modul cez SSH/Paramiko | Gaia Clish | allow-list `show hostname`, `show asset all`, `show version all`, `show uptime` |
 
 `checkpoint-gaia` podporuje v tejto iterácii `device_facts`, `os_version`,
@@ -319,8 +329,8 @@ onboarding, ale neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
 Ak sa strict režim neskôr zapne, backend skopíruje existujúci Oxidized
 `known_hosts` do dočasného Runner HOME.
 
-Nasadzovaný beta profil má `fortios_validate_certs: false`. FortiOS sa stále
-kontaktuje cez HTTPS, ale Atlas neoveruje CA ani identitu servera. Hodnota sa
+Nasadzovaný beta profil má `fortios_validate_certs: false`. Pri zariadení so
+službou `fortios-api` Atlas neoveruje CA ani identitu HTTPS servera. Hodnota sa
 nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`;
 interný fallback aplikácie je tiež `false`.
 
@@ -328,6 +338,12 @@ FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
 monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
 súčasťou podporovaného produkčného nastavenia.
+
+SSH režim používa účelový read-only účet a pevný allow-list dvoch `get`
+príkazov. Zdrojom významu týchto príkazov je dokumentácia FortiOS:
+
+- [FortiOS 7.6.0 CLI troubleshooting cheat sheet](https://docs.fortinet.com/document/fortigate/7.6.0/cli-troubleshooting-cheat-sheet/420966/cli-troubleshooting-cheat-sheet)
+- [FortiOS 7.0.15 Troubleshooting CPU and network resources](https://docs.fortinet.com/document/fortigate/7.0.15/administration-guide/152469/troubleshooting-cpu-and-network-resources)
 
 ## Prevádzková diagnostika
 

@@ -61,6 +61,24 @@ def parse_fortios_cpu(raw: RawCollectorResult) -> CPUUtilizationValues:
     data = raw.data
     if not isinstance(data, dict):
         raise ParseFailedError()
+    if data.get("source_transport") == "ssh":
+        output = data.get("show_performance_status")
+        match = (
+            re.search(
+                r"(?im)^\s*CPU\s+states:\s*.*?"
+                r"(?P<idle>\d+(?:\.\d+)?)%\s+idle\b",
+                output,
+            )
+            if isinstance(output, str)
+            else None
+        )
+        if match is None:
+            raise ParseFailedError()
+        current = 100.0 - float(match.group("idle"))
+        try:
+            return CPUUtilizationValues(current_percent=current)
+        except ValueError:
+            raise ParseFailedError() from None
     cpu = data.get("cpu")
     if not isinstance(cpu, list) or not cpu or not isinstance(cpu[0], dict):
         raise ParseFailedError()
@@ -1384,6 +1402,41 @@ def parse_fortios_device_facts(raw: RawCollectorResult) -> DeviceFactsValues:
     data = raw.data
     if not isinstance(data, dict):
         raise ParseFailedError()
+    if data.get("source_transport") == "ssh":
+        status = data.get("show_system_status")
+        performance = data.get("show_performance_status")
+        if not isinstance(status, str) or not isinstance(performance, str):
+            raise ParseFailedError()
+
+        def field(label: str, text: str) -> str | None:
+            match = re.search(
+                rf"(?im)^\s*{re.escape(label)}\s*:\s*(?P<value>\S.*?)\s*$",
+                text,
+            )
+            return match.group("value").strip() if match else None
+
+        version_line = field("Version", status)
+        version_match = (
+            re.match(
+                r"(?P<model>\S+)\s+v(?P<version>[^,\s]+)",
+                version_line,
+                re.IGNORECASE,
+            )
+            if version_line
+            else None
+        )
+        uptime = field("Uptime", performance)
+        if version_match is None or uptime is None:
+            raise ParseFailedError()
+        return _device_facts(
+            {
+                "hostname": field("Hostname", status),
+                "model": version_match.group("model"),
+                "os_version": version_match.group("version"),
+                "serial_number": field("Serial-Number", status),
+                "uptime_seconds": _text_uptime_seconds(uptime),
+            }
+        )
     uptime_state = data.get("uptime_state")
     results = uptime_state.get("results") if isinstance(uptime_state, dict) else None
     if not isinstance(results, dict):

@@ -1854,16 +1854,21 @@ podporuje `aruba-aos-cx` a `checkpoint-gaia` a zbiera `hostname`, `model`,
 Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
 výrobcu. Vrstva načítava účelové `prophylaxis` credentials cez existujúcu
 OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
-Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
+secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API alebo
+allow-listed FortiOS SSH CLI vykonáva Ansible cez `ansible-runner`; Atlas už
+nemá Netmiko ani všeobecný SSH driver.
 Profylaxia číta výhradne účelový OpenBao secret bez fallbacku na `/admin`:
 
 ```text
 devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 ```
 
+Príklad pre FortiGate s `credential_profile=forti-mt` je
+`devices/credentials/fortinet/forti-mt/prophylaxis`.
+
 SSH platformy očakávajú `username`, `password` a voliteľný
-`enable_password`; FortiOS očakáva `api_token`. Oxidized naďalej používa
+`enable_password`. FortiOS so službou `fortios-api` očakáva `api_token`;
+FortiOS bez nej očakáva `username` a `password`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
 Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Spoločná uptime politika však vracia `WARNING` pri hodnote pod 3 dni
@@ -1886,7 +1891,7 @@ manuálna CPU kontrola zostáva dostupná cez API.
 | `cisco-ios-xe` | `network_cli` | NTC `show version` + `show inventory` |
 | `cisco-cbs`, `cisco-cbs250-350` | `network_cli` | allow-listed show príkazy, NTC Templates `cisco_s300` a explicitný PID parser |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
-| `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
+| `fortios` | `httpapi` cez HTTPS pri službe `fortios-api`; inak SSH | API `system_status` + `web-ui/state`, alebo allow-listed `get system status` + `get system performance status` |
 | `checkpoint-gaia` | SSH do Gaia Clish | `show hostname`, `show asset all`, `show version all`, `show uptime` |
 
 Check Point Gaia používa vlastný allow-list Ansible modul nad Paramiko, pretože
@@ -1971,9 +1976,12 @@ zariadenia z NetBoxu; zoznam načítaný na začiatku behu sa nepovažuje za
 aktuálny podklad pre zápis. Serial aj model sa z tohto detailu vyhodnotia
 spoločne, bez druhého NetBox GET requestu.
 
-FortiOS ostáva pripojený cez HTTPS API, ale beta deployment profil má
-`fortios_validate_certs: false`, aby self-signed certifikát neblokoval zber.
-Prenos je šifrovaný, identita HTTPS servera sa však neoveruje.
+FortiOS používa HTTPS API iba vtedy, keď má zariadenie v NetBoxe aplikačnú
+službu `fortios-api`; jej port určí API port. Bez tejto služby použije SSH/22
+a účelové `username`/`password` z rovnakého `/prophylaxis` secretu. Existujúce
+API spojenie pri chybe automaticky neprechádza na SSH. Beta deployment profil
+má `fortios_validate_certs: false`, takže pri API sa neoveruje identita HTTPS
+servera.
 
 Beta backend deployment nastavuje `ATLAS_SSH_STRICT_HOST_KEYS=false`, takže
 Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto

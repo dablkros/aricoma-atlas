@@ -29,11 +29,13 @@ atlas_transport_files:
       cisco-cbs: operations/cisco_cbs.yml
       cisco-cbs250-350: operations/cisco_cbs.yml
     cpu_usage:
+      fortios: cpu/fortios_ssh.yml
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
       cisco-cbs: cpu/cisco_cbs.yml
       cisco-cbs250-350: cpu/cisco_cbs.yml
     device_facts:
+      fortios: device_facts/fortios_ssh.yml
       cisco-ios: device_facts/cisco_ios.yml
       cisco-ios-xe: device_facts/cisco_ios.yml
       cisco-cbs: device_facts/cisco_cbs.yml

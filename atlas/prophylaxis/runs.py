@@ -44,6 +44,7 @@ from atlas.prophylaxis.run_models import (
 from atlas.prophylaxis.run_store import RunStoreError
 from atlas.prophylaxis.service import (
     device_target,
+    resolve_execution_profile,
     resolve_service_port,
     selected_check_values,
 )
@@ -589,6 +590,7 @@ class DeviceFactsRunService:
         for task in plan.tasks:
             try:
                 if task.collector.id == CollectorId.SNMP_SYSTEM:
+                    execution_profile = profile
                     port = 161
                     telnet_fallback_port = None
                     if snmp_credentials is None:
@@ -616,27 +618,23 @@ class DeviceFactsRunService:
                     credentials = snmp_credentials
                 else:
                     if prophylaxis_connection is None:
-                        services = (
-                            self.netbox.get_device_services(
-                                target.id,
-                                profile.netbox_service_name,
-                            )
-                            if profile.netbox_service_name
-                            else []
+                        execution_profile, port = resolve_execution_profile(
+                            self.netbox,
+                            target,
+                            profile,
                         )
-                        port = resolve_service_port(services, profile.default_port)
                         telnet_services = (
                             self.netbox.get_device_services(
                                 target.id,
-                                profile.telnet_fallback_service_name,
+                                execution_profile.telnet_fallback_service_name,
                             )
-                            if profile.telnet_fallback_service_name
+                            if execution_profile.telnet_fallback_service_name
                             else []
                         )
                         telnet_fallback_port = (
                             resolve_service_port(
                                 telnet_services,
-                                profile.telnet_fallback_default_port,
+                                execution_profile.telnet_fallback_default_port,
                             )
                             if telnet_services
                             else None
@@ -644,15 +642,17 @@ class DeviceFactsRunService:
                         credentials = self.openbao.get_device_credentials(
                             target.vendor,
                             target.credential_profile,
-                            authentication=profile.authentication,
+                            authentication=execution_profile.authentication,
                             purpose="prophylaxis",
                         )
                         prophylaxis_connection = (
+                            execution_profile,
                             port,
                             telnet_fallback_port,
                             credentials,
                         )
                     (
+                        execution_profile,
                         port,
                         telnet_fallback_port,
                         credentials,
@@ -660,7 +660,7 @@ class DeviceFactsRunService:
                 raw = self.backend.execute(
                     host=target.host,
                     port=port,
-                    profile=profile,
+                    profile=execution_profile,
                     collector_id=task.collector.id,
                     check_id=(
                         task.checks[0]
