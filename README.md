@@ -687,6 +687,12 @@ Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbe�
 spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
 `deployment/backend.yaml` (predvolene `4`).
 
+`result.json` zachováva ploché pole `results` pre existujúcich API klientov a
+zároveň poskytuje odvodené pole `devices`. Každá položka `devices` obsahuje
+jednoznačnú identitu zariadenia, jeho vlastný súhrn, pole `checks` a príslušné
+Zabbix grafy. Hodnoty v oboch pohľadoch pochádzajú z rovnakých normalizovaných
+výsledkov; `devices` sa pri načítaní znovu zostaví z kanonického `results`.
+
 ### Manuálny test Profylaxia flow
 
 Najprv over, že browser dostáva aktuálny JavaScript a nie starú cache:
