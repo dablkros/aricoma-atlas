@@ -92,7 +92,7 @@ choose_initial_components() {
 }
 
 configure_components() {
-    [[ -n "$REQUESTED_COMPONENTS" ]] || return
+    [[ -n "$REQUESTED_COMPONENTS" ]] || return 0
     "${VENV_DIR}/bin/python3" "${ATLAS_ROOT}/scripts/configure_components.py" \
         --components "$REQUESTED_COMPONENTS" \
         --target-root "$ATLAS_ROOT" \
