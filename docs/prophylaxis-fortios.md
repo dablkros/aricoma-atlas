@@ -59,7 +59,7 @@ text is never passed to a general shell.
 | certificates, ACME | `system_available-certificates`, `system_acme-certificate-status` | local/CA certificate details and `diagnose sys acme list-domains` | Expiration dates are collected without warning/critical thresholds. Stored certificates differ from service-presented certificates. ACME configuration alone does not prove renewal. |
 | NTP | `system_ntp_status` | `diagnose sys ntp status` | PASS only for an explicit synchronized state. Diagnose permission denial is unknown. |
 | routing | `router_ipv4`, `router_ospf_neighbors`, `router_bgp_neighbors` | routing table, BGP networks, OSPF neighbors and BGP summary | Tables and discovered neighbors are reported without a required-route policy. |
-| HA | HA statistics, history and checksum selectors | HA status, checksum and history diagnostics | Standalone is N/A. Cluster evidence is collected without a manually declared member list. |
+| HA | HA statistics, history and checksum selectors | HA status, checksum and history diagnostics | Standalone is N/A. For verified SSH output Atlas reports mode, group, members, roles, config sync, checksums, per-member usage and heartbeat state. Explicit non-OK health, out-of-sync members or checksum mismatch fail; incomplete evidence stays unknown. |
 | SD-WAN, IPsec | `virtual-wan_health-check`, `vpn_ipsec` | SD-WAN health and VPN tunnel diagnostics | Discovered states and SLA measurements are reported without customer thresholds or assumed always-up tunnels. |
 | recent events, delivery | FortiAnalyzer queue selector; crash/config logs | limited event log plus FortiAnalyzer forwarding setting | Warning-or-higher FortiOS events require review and include their reported reason. Configuration is not receiver-side proof; delivery remains unknown without queue/receiver evidence. |
 | backup | existing Oxidized node/job state | existing Oxidized node/job state | Profylaxia does not trigger a backup. Last successful collection differs from last configuration change and restore testing. |
@@ -73,6 +73,10 @@ text is never passed to a general shell.
   implemented.
 - Interface counter history and stability trends are not yet indexed across
   run artifacts, so single-sample values cannot prove sustained health.
+- Structured diagnostic `records` are currently populated by the verified
+  FortiOS SSH HA parser. The same contract can represent interfaces, routing
+  neighbors, VPN tunnels and certificates after their output shapes are
+  verified; Atlas does not manufacture records from unverified formats.
 - Presented-service TLS validation, FortiAnalyzer receiver confirmation,
   recommended firmware, lifecycle, support entitlement and PSIRT correlation
   require separate verified contracts.

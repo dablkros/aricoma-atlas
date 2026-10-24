@@ -13,6 +13,7 @@ from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_environment_health,
+    normalize_ha_status,
     normalize_interface_errors,
     normalize_interface_state,
     normalize_license_state,
@@ -348,6 +349,61 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.metrics["important_event_count"], 2)
         self.assertIn("Configuration changed", values.affected_items[0])
         self.assertIn("Administrator changed", values.affected_items[0])
+
+    def test_fortios_ha_members_sync_roles_and_heartbeat_are_structured(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_OPERATIONS,
+            get_system_ha_status=(
+                "HA Health Status: OK\n"
+                "Model: FortiGate-VM64-KVM\n"
+                "Mode: HA A-P\n"
+                "Group Name: GNS3-HA\n"
+                "Group ID: 10\n"
+                "Cluster Uptime: 0 days 3h:41m:18s\n"
+                "Configuration Status:\n"
+                "  SERIAL-A(updated 3 seconds ago): in-sync\n"
+                "  SERIAL-A chksum dump: 18 ba 83 0d\n"
+                "  SERIAL-B(updated 1 seconds ago): in-sync\n"
+                "  SERIAL-B chksum dump: 18 ba 83 0d\n"
+                "System Usage stats:\n"
+                "  SERIAL-A(updated 3 seconds ago):\n"
+                "    sessions=6, average-cpu-user/nice/system/idle="
+                "0%/0%/0%/92%, memory=53%\n"
+                "  SERIAL-B(updated 1 seconds ago):\n"
+                "    sessions=0, average-cpu-user/nice/system/idle="
+                "0%/0%/0%/91%, memory=50%\n"
+                "HBDEV stats:\n"
+                "  SERIAL-A(updated 3 seconds ago):\n"
+                "    port3: physical/1000auto, up, "
+                "rx-bytes/packets/dropped/errors=100/10/0/0, "
+                "tx=200/20/0/0\n"
+                "  SERIAL-B(updated 1 seconds ago):\n"
+                "    port3: physical/1000auto, up, "
+                "rx-bytes/packets/dropped/errors=200/20/0/0, "
+                "tx=100/10/0/0\n"
+                "number of member: 2\n"
+                "FGT-01, SERIAL-A, HA cluster index = 0\n"
+                "FGT-02, SERIAL-B, HA cluster index = 1\n"
+                "number of vcluster: 1\n"
+                "Primary: SERIAL-A, HA operating index = 0\n"
+                "Secondary: SERIAL-B, HA operating index = 1\n"
+            ),
+        )
+
+        values = normalize_ha_status(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.PASS)
+        self.assertEqual(values.metrics["mode"], "HA A-P")
+        self.assertEqual(values.metrics["group_name"], "GNS3-HA")
+        self.assertEqual(values.metrics["declared_member_count"], 2)
+        self.assertEqual(values.metrics["in_sync_member_count"], 2)
+        self.assertTrue(values.metrics["checksum_match"])
+        self.assertEqual(len(values.records), 2)
+        self.assertEqual(values.records[0]["hostname"], "FGT-01")
+        self.assertEqual(values.records[0]["role"], "primary")
+        self.assertEqual(values.records[1]["role"], "secondary")
+        self.assertTrue(values.records[0]["heartbeat_all_up"])
 
     def test_license_certificate_ntp_and_logs_have_actionable_outcomes(self):
         compliance = self.command_result(

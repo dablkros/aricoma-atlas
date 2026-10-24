@@ -389,6 +389,7 @@ def _diagnostic(
     reason_code: str | None = None,
     metrics=None,
     affected_items=(),
+    records=(),
     outputs=None,
 ) -> DiagnosticValues:
     return DiagnosticValues(
@@ -397,6 +398,7 @@ def _diagnostic(
         summary=summary,
         metrics=metrics or {},
         affected_items=tuple(affected_items),
+        records=tuple(records),
         source_commands=_commands(outputs or {}),
     )
 
@@ -1559,6 +1561,279 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             "FortiGate is operating as a standalone unit",
             reason_code="ha_not_configured",
             metrics={"cluster_members": 0},
+            outputs=outputs,
+        )
+    if raw.platform == "fortios":
+        def field(pattern):
+            match = re.search(pattern, text, re.MULTILINE | re.IGNORECASE)
+            return match.group(1).strip() if match else None
+
+        def integer(pattern):
+            value = field(pattern)
+            return int(value) if value is not None else None
+
+        health_status = field(r"^\s*HA Health Status:\s*(.+?)\s*$")
+        model = field(r"^\s*Model:\s*(.+?)\s*$")
+        mode = field(r"^\s*Mode:\s*(.+?)\s*$")
+        group_name = field(r"^\s*Group Name:\s*(.+?)\s*$")
+        group_id = integer(r"^\s*Group ID:\s*(\d+)\s*$")
+        declared_members = integer(r"^\s*number of member:\s*(\d+)\s*$")
+        uptime_match = re.search(
+            r"(?im)^\s*Cluster Uptime:\s*(\d+)\s+days\s+"
+            r"(\d+)h:(\d+)m:(\d+)s\s*$",
+            text,
+        )
+        cluster_uptime_seconds = None
+        if uptime_match:
+            days, hours, minutes, seconds = map(int, uptime_match.groups())
+            cluster_uptime_seconds = (
+                days * 86400 + hours * 3600 + minutes * 60 + seconds
+            )
+
+        members = {}
+
+        def member(serial):
+            return members.setdefault(serial, {
+                "record_type": "ha_member",
+                "hostname": None,
+                "serial_number": serial,
+                "role": "member",
+                "cluster_index": None,
+                "operating_index": None,
+                "configuration_status": "unknown",
+                "config_updated_seconds_ago": None,
+                "sessions": None,
+                "cpu_idle_percent": None,
+                "memory_percent": None,
+                "checksum": None,
+                "heartbeat_interfaces": None,
+                "heartbeat_all_up": None,
+                "heartbeat_drop_total": None,
+                "heartbeat_error_total": None,
+            })
+
+        for match in re.finditer(
+            r"(?im)^\s*(\S+)\(updated\s+(\d+)\s+seconds?\s+ago\):\s*"
+            r"(in-sync|out-of-sync)\s*$",
+            text,
+        ):
+            serial, age, state = match.groups()
+            item = member(serial)
+            item["configuration_status"] = state.casefold()
+            item["config_updated_seconds_ago"] = int(age)
+
+        for match in re.finditer(
+            r"(?im)^\s*(\S+)\s+chksum dump:\s*(.+?)\s*$",
+            text,
+        ):
+            serial, checksum = match.groups()
+            member(serial)["checksum"] = " ".join(checksum.split())
+
+        for match in re.finditer(
+            r"(?im)^\s*([^,\n]+?)\s*,\s*(\S+),\s*"
+            r"HA cluster index\s*=\s*(\d+)\s*$",
+            text,
+        ):
+            hostname, serial, index = match.groups()
+            item = member(serial)
+            item["hostname"] = hostname.strip()
+            item["cluster_index"] = int(index)
+
+        for match in re.finditer(
+            r"(?im)^\s*(Primary|Secondary):\s*(\S+),\s*"
+            r"HA operating index\s*=\s*(\d+)\s*$",
+            text,
+        ):
+            role, serial, index = match.groups()
+            item = member(serial)
+            item["role"] = role.casefold()
+            item["operating_index"] = int(index)
+
+        for match in re.finditer(
+            r"(?im)^\s*(\S+)\(updated\s+\d+\s+seconds?\s+ago\):\s*$"
+            r"\n\s*sessions=(\d+),\s*"
+            r"average-cpu-user/nice/system/idle="
+            r"\d+%/\d+%/\d+%/(\d+)%,\s*memory=(\d+)%\s*$",
+            text,
+        ):
+            serial, sessions, idle, memory = match.groups()
+            item = member(serial)
+            item["sessions"] = int(sessions)
+            item["cpu_idle_percent"] = int(idle)
+            item["memory_percent"] = int(memory)
+
+        hb_section = re.search(
+            r"(?ims)^HBDEV stats:\s*$\n(.*?)(?=^number of member:|\Z)",
+            text,
+        )
+        heartbeat = {}
+        if hb_section:
+            current_serial = None
+            for line in hb_section.group(1).splitlines():
+                header = re.match(
+                    r"^\s*(\S+)\(updated\s+\d+\s+seconds?\s+ago\):\s*$",
+                    line,
+                )
+                if header:
+                    current_serial = header.group(1)
+                    member(current_serial)
+                    heartbeat.setdefault(current_serial, [])
+                    continue
+                port = re.match(
+                    r"^\s*(\S+):\s*[^,]+,\s*(up|down),\s*"
+                    r"rx-bytes/packets/dropped/errors="
+                    r"(\d+)/(\d+)/(\d+)/(\d+),\s*"
+                    r"tx=(\d+)/(\d+)/(\d+)/(\d+)\s*$",
+                    line,
+                    re.IGNORECASE,
+                )
+                if port and current_serial:
+                    (
+                        name, state, _rx_bytes, _rx_packets, rx_dropped,
+                        rx_errors, _tx_bytes, _tx_packets, tx_dropped,
+                        tx_errors,
+                    ) = port.groups()
+                    heartbeat[current_serial].append({
+                        "name": name,
+                        "state": state.casefold(),
+                        "drops": int(rx_dropped) + int(tx_dropped),
+                        "errors": int(rx_errors) + int(tx_errors),
+                    })
+
+        heartbeat_down = 0
+        heartbeat_drops = 0
+        heartbeat_errors = 0
+        for serial, interfaces in heartbeat.items():
+            item = member(serial)
+            item["heartbeat_interfaces"] = ",".join(
+                interface["name"] for interface in interfaces
+            ) or None
+            item["heartbeat_all_up"] = bool(interfaces) and all(
+                interface["state"] == "up" for interface in interfaces
+            )
+            item["heartbeat_drop_total"] = sum(
+                interface["drops"] for interface in interfaces
+            )
+            item["heartbeat_error_total"] = sum(
+                interface["errors"] for interface in interfaces
+            )
+            heartbeat_down += sum(
+                interface["state"] != "up" for interface in interfaces
+            )
+            heartbeat_drops += item["heartbeat_drop_total"]
+            heartbeat_errors += item["heartbeat_error_total"]
+
+        checksums = [
+            item["checksum"] for item in members.values() if item["checksum"]
+        ]
+        checksum_match = (
+            len(set(checksums)) == 1 if len(checksums) >= 2 else None
+        )
+        in_sync = sum(
+            item["configuration_status"] == "in-sync"
+            for item in members.values()
+        )
+        out_of_sync = sum(
+            item["configuration_status"] == "out-of-sync"
+            for item in members.values()
+        )
+        parsed_members = len(members)
+        primary = next((
+            serial for serial, item in members.items()
+            if item["role"] == "primary"
+        ), None)
+        secondary = next((
+            serial for serial, item in members.items()
+            if item["role"] == "secondary"
+        ), None)
+
+        metrics = {
+            "ha_configured": bool(mode),
+            "health_status": health_status,
+            "model": model,
+            "mode": mode,
+            "group_name": group_name,
+            "group_id": group_id,
+            "cluster_uptime_seconds": cluster_uptime_seconds,
+            "declared_member_count": declared_members,
+            "parsed_member_count": parsed_members,
+            "in_sync_member_count": in_sync,
+            "out_of_sync_member_count": out_of_sync,
+            "checksum_match": checksum_match,
+            "primary_serial": primary,
+            "secondary_serial": secondary,
+            "heartbeat_down_count": heartbeat_down,
+            "heartbeat_drop_total": heartbeat_drops,
+            "heartbeat_error_total": heartbeat_errors,
+        }
+        def heartbeat_state(value):
+            if value is True:
+                return "up"
+            if value is False:
+                return "down"
+            return "unverified"
+
+        member_evidence = tuple(
+            (
+                f"{item['hostname'] or 'unknown'} ({serial}): "
+                f"role={item['role']}, config={item['configuration_status']}, "
+                f"heartbeat={heartbeat_state(item['heartbeat_all_up'])}"
+            )[:240]
+            for serial, item in members.items()
+        )
+
+        if health_status and health_status.casefold() != "ok":
+            outcome = EvaluationOutcome.FAIL
+            reason = "ha_health_not_ok"
+            summary = f"FortiOS HA health status is {health_status}"
+        elif out_of_sync or checksum_match is False:
+            outcome = EvaluationOutcome.FAIL
+            reason = "ha_configuration_out_of_sync"
+            summary = (
+                f"FortiOS HA configuration is not synchronized: "
+                f"{out_of_sync} out-of-sync member(s)"
+            )
+        elif heartbeat_down:
+            outcome = EvaluationOutcome.WARNING
+            reason = "ha_heartbeat_interface_down"
+            summary = (
+                f"FortiOS HA has {heartbeat_down} down heartbeat interface(s)"
+            )
+        elif (
+            not health_status
+            or declared_members is None
+            or parsed_members != declared_members
+            or not members
+            or (
+                mode is not None
+                and "a-p" in mode.casefold()
+                and (not primary or not secondary)
+            )
+        ):
+            outcome = EvaluationOutcome.UNKNOWN
+            reason = "ha_inventory_incomplete"
+            summary = "FortiOS HA evidence is incomplete"
+        elif in_sync != declared_members:
+            outcome = EvaluationOutcome.UNKNOWN
+            reason = "ha_sync_state_incomplete"
+            summary = (
+                f"FortiOS HA returned sync state for {in_sync} of "
+                f"{declared_members} members"
+            )
+        else:
+            outcome = EvaluationOutcome.PASS
+            reason = None
+            summary = (
+                f"FortiOS HA cluster {group_name or '-'} is healthy; "
+                f"{in_sync}/{declared_members} members are in sync"
+            )
+        return _diagnostic(
+            outcome,
+            summary,
+            reason_code=reason,
+            metrics=metrics,
+            affected_items=member_evidence,
+            records=tuple(members.values()),
             outputs=outputs,
         )
     bad = re.findall(r"(?im)^.*\b(?:failed|down|not ready|mismatch)\b.*$", text)

@@ -677,8 +677,9 @@ raw príkazový výstup.
 
 Každý hromadný beh vybraných kontrol má samostatný adresár
 `/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
-`result.json`, čitateľným `report.txt` a voliteľnými Zabbix SVG grafmi v
-`charts/`. CPU graf sa vytvorí iba vtedy, keď Atlas-managed Zabbix host s
+interným `result.json`, kompaktným per-device `report-data.json`, čitateľným
+`report.txt` a voliteľnými Zabbix SVG grafmi v `charts/`. CPU graf sa vytvorí
+iba vtedy, keď Atlas-managed Zabbix host s
 rovnakým `netbox_id` poskytne numerickú CPU históriu. Nedostupný graf nemení
 výsledok profylaxie. Adresáre majú režim `0700` a súbory
 `0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
@@ -692,6 +693,14 @@ zároveň poskytuje odvodené pole `devices`. Každá položka `devices` obsahuj
 jednoznačnú identitu zariadenia, jeho vlastný súhrn, pole `checks` a príslušné
 Zabbix grafy. Hodnoty v oboch pohľadoch pochádzajú z rovnakých normalizovaných
 výsledkov; `devices` sa pri načítaní znovu zostaví z kanonického `results`.
+
+`report-data.json` je stabilný vstup pre externé generovanie dokumentu. Obsahuje
+beh a zariadenia iba raz a pod každým zariadením jeho súhrn a kontroly. Z
+jednotlivých kontrol vynecháva interné `collected_at`, transportný `context`,
+príkazy, interné evaluation pravidlá a duplicitné evidence; zachováva
+evaluation, slovný súhrn, reason code, metriky, štruktúrované `records`, nálezy
+a normalizované dáta. Prenos cez TLS a autentifikácia cieľovej reportovacej
+služby sú samostatný integračný krok; tento súbor sa zatiaľ nikam neposiela.
 
 ### Manuálny test Profylaxia flow
 
@@ -1943,6 +1952,12 @@ FortiOS `recent_log_events` kontroluje obmedzenú vzorku event logu. Severity
 `warning`, `error`, `critical`, `alert` alebo `emergency` vytvorí `WARNING` na
 manuálne preverenie a report uvedie čas, `logdesc` a `msg`; samotná závažnosť
 udalosti sa bez samostatnej politiky nemení na automatický `FAIL`.
+FortiOS SSH `ha_status` normalizuje názov a režim klastra, členov a ich roly,
+stav konfigurácie a checksumov, per-member CPU/RAM/session údaje a heartbeat
+rozhrania. Členovia sú v JSON uložení ako samostatné `values.records`; textový
+report a UI ich zobrazia pod príslušným zariadením. Explicitné `out-of-sync`,
+checksum mismatch alebo HA health odlišné od `OK` je `FAIL`; neúplný výstup
+ostáva `UNKNOWN`.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |

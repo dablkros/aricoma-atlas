@@ -805,6 +805,19 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
         details.push(`Uptime: ${formatUptimeSeconds(value)}`);
         continue;
       }
+      if (key === "records" && Array.isArray(value)) {
+        for (const record of value) {
+          if (!record || typeof record !== "object") continue;
+          const identity = record.hostname || record.name
+            || record.serial_number || record.record_type || "Record";
+          const fields = Object.entries(record)
+            .filter(([field, item]) => field !== "record_type"
+              && item !== null && item !== undefined && item !== identity)
+            .map(([field, item]) => `${titleCase(field)}=${item}`);
+          details.push(`${identity}: ${fields.join(", ")}`);
+        }
+        continue;
+      }
       if (Array.isArray(value)) {
         if (value.length) details.push(`${titleCase(key)}: ${value.join(", ")}`);
         continue;

@@ -264,6 +264,9 @@ class DiagnosticValues(BaseModel):
         default_factory=dict
     )
     affected_items: tuple[str, ...] = ()
+    records: tuple[
+        dict[str, str | int | float | bool | None], ...
+    ] = ()
     source_commands: tuple[str, ...] = ()
     collected_at: datetime | None = None
     context: dict[str, str | int | float | bool | None] = Field(

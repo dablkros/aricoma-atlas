@@ -90,6 +90,14 @@ class FileRunStore:
                 directory / "result.json",
                 run.model_dump_json(indent=2) + "\n",
             )
+            self._atomic_write(
+                directory / "report-data.json",
+                json.dumps(
+                    self._report_data(run),
+                    indent=2,
+                    ensure_ascii=False,
+                ) + "\n",
+            )
             self._atomic_write(directory / "report.txt", self._report(run))
 
     def write_chart(self, run_id: UUID, name: str, content: str) -> None:
@@ -130,6 +138,99 @@ class FileRunStore:
                 raise
             except (OSError, ValueError, json.JSONDecodeError):
                 raise RunStoreError() from None
+
+    @staticmethod
+    def _report_data(run: ProphylaxisRun) -> dict:
+        """Build the compact per-device contract for report generation."""
+
+        def compact(value):
+            if isinstance(value, dict):
+                return {
+                    key: compact(item)
+                    for key, item in value.items()
+                    if item is not None and compact(item) not in ({}, [])
+                }
+            if isinstance(value, (list, tuple)):
+                return [
+                    compact(item)
+                    for item in value
+                    if item is not None and compact(item) not in ({}, [])
+                ]
+            return value
+
+        devices = []
+        for device in run.devices:
+            checks = []
+            for check in device.checks:
+                item = {
+                    "check": check.check,
+                    "collection_status": check.collection_status.value,
+                    "evaluation": check.evaluation.value,
+                }
+                if check.error:
+                    item["error"] = check.error
+                payload_model = check.facts or check.values
+                if payload_model is not None:
+                    payload = payload_model.model_dump(
+                        mode="json",
+                        exclude_none=True,
+                        exclude_defaults=True,
+                    )
+                    payload.pop("outcome", None)
+                    for technical in (
+                        "collected_at",
+                        "context",
+                        "source_commands",
+                        "evaluation_rule",
+                        "recommended_action",
+                        "evidence",
+                    ):
+                        payload.pop(technical, None)
+                    summary = payload.pop("summary", None)
+                    reason = payload.pop("reason_code", None)
+                    metrics = payload.pop("metrics", None)
+                    records = payload.pop("records", None)
+                    findings = payload.pop("affected_items", None)
+                    if summary:
+                        item["summary"] = summary
+                    if reason:
+                        item["reason_code"] = reason
+                    if metrics:
+                        item["metrics"] = compact(metrics)
+                    if records:
+                        item["records"] = compact(records)
+                    if findings:
+                        item["findings"] = compact(findings)
+                    if payload:
+                        item["data"] = compact(payload)
+                checks.append(item)
+            devices.append(compact({
+                "device": {
+                    "id": device.device_id,
+                    "name": device.device_name,
+                    "address": device.management_ip,
+                    "platform": device.platform,
+                },
+                "summary": device.summary.model_dump(mode="json"),
+                "checks": checks,
+            }))
+        return compact({
+            "schema_version": 1,
+            "document_type": "atlas_prophylaxis_report_data",
+            "run": {
+                "id": str(run.run_id),
+                "operation": run.operation,
+                "status": run.status,
+                "started_at": (
+                    run.started_at.isoformat() if run.started_at else None
+                ),
+                "finished_at": (
+                    run.finished_at.isoformat() if run.finished_at else None
+                ),
+                "summary": run.summary.model_dump(mode="json"),
+            },
+            "devices": devices,
+        })
 
     @staticmethod
     def _result_detail(result) -> str:
@@ -193,6 +294,24 @@ class FileRunStore:
                             f"fan_{sensor['index']}={sensor['status_text']}"
                             f"/{sensor_outcome}"
                         )
+                    continue
+                if field == "records":
+                    for record in value:
+                        identity = (
+                            record.get("hostname")
+                            or record.get("name")
+                            or record.get("serial_number")
+                            or record.get("record_type")
+                            or "record"
+                        )
+                        record_fields = ",".join(
+                            f"{record_field}={record_value}"
+                            for record_field, record_value in record.items()
+                            if record_field != "record_type"
+                            and record_value is not None
+                            and record_value != identity
+                        )
+                        detail.append(f"{identity}[{record_fields}]")
                     continue
                 label = labels.get(field, field)
                 if field == "uptime_seconds":

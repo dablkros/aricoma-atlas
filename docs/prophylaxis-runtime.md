@@ -24,7 +24,8 @@ Atlas UI/API
   -> RawCollectorResult
   -> platform-specific Python parser
   -> normalizovaný check result
-  -> SQLite história alebo runs/<run_id>/{result.json,report.txt} / API / UI
+  -> SQLite história alebo
+     runs/<run_id>/{result.json,report-data.json,report.txt} / API / UI
 ```
 
 Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH polia
