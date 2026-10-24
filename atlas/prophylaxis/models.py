@@ -75,9 +75,6 @@ CHECK_GROUP_CHECKS = {
         CheckId.ENVIRONMENT_HEALTH,
         CheckId.CPU_TEMPERATURE,
         CheckId.FAN_HEALTH,
-        CheckId.SESSION_HEALTH,
-        CheckId.STABILITY_EVENTS,
-        CheckId.STORAGE_HEALTH,
     ),
     CheckGroupId.INTERFACES: (
         CheckId.INTERFACE_STATE,
@@ -89,8 +86,6 @@ CHECK_GROUP_CHECKS = {
         CheckId.PKI_CERTIFICATES,
         CheckId.FIRMWARE_RECOMMENDATION,
         CheckId.EOL_STATUS,
-        CheckId.FORTIGUARD_STATUS,
-        CheckId.ACME_STATUS,
     ),
     CheckGroupId.OPERATIONS: (
         CheckId.NTP_SYNC,
@@ -99,25 +94,49 @@ CHECK_GROUP_CHECKS = {
         CheckId.ROUTING_PROTOCOL_NEIGHBORS,
         CheckId.HA_STATUS,
         CheckId.CONFIGURATION_BACKUP,
-        CheckId.SDWAN_HEALTH,
-        CheckId.VPN_TUNNELS,
-        CheckId.LOG_DELIVERY,
     ),
+}
+
+
+PLATFORM_CHECK_GROUP_EXTENSIONS = {
+    "fortios": {
+        CheckGroupId.RESOURCES: (
+            CheckId.SESSION_HEALTH,
+            CheckId.STABILITY_EVENTS,
+            CheckId.STORAGE_HEALTH,
+        ),
+        CheckGroupId.COMPLIANCE: (
+            CheckId.FORTIGUARD_STATUS,
+            CheckId.ACME_STATUS,
+        ),
+        CheckGroupId.OPERATIONS: (
+            CheckId.SDWAN_HEALTH,
+            CheckId.VPN_TUNNELS,
+            CheckId.LOG_DELIVERY,
+        ),
+    },
 }
 
 
 def expand_check_selection(
     raw_values: Iterable[str],
+    *,
+    platform: str | None = None,
 ) -> tuple[tuple[CheckId, ...], tuple[str, ...]]:
-    """Expand NetBox groups and compatible legacy check values."""
+    """Expand NetBox groups and platform-specific check extensions."""
     values = set(raw_values)
     checks: list[CheckId] = []
     unknown: list[str] = []
+    platform_extensions = PLATFORM_CHECK_GROUP_EXTENSIONS.get(platform, {})
 
     for group_id in CheckGroupId:
         if group_id.value not in values:
             continue
-        for check_id in CHECK_GROUP_CHECKS[group_id]:
+        group_checks = (
+            *CHECK_GROUP_CHECKS[group_id],
+            *platform_extensions.get(group_id, ()),
+        )
+        for check_id in group_checks:
             if check_id not in checks:
                 checks.append(check_id)
 
@@ -408,6 +427,7 @@ StoredCPUCheckResult = StoredCheckResult
 __all__ = [
     "CPU_CHECK_NAME",
     "CHECK_GROUP_CHECKS",
+    "PLATFORM_CHECK_GROUP_EXTENSIONS",
     "CHECK_VALUE_ALIASES",
     "CPUCheckResult",
     "CPUUtilizationValues",

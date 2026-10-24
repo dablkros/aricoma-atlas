@@ -332,7 +332,14 @@ class DeviceFactsRunService:
         fields = device.get("custom_fields")
         fields = fields if isinstance(fields, dict) else {}
         raw_values = selected_check_values(fields.get("profylaxia_checks"))
-        return expand_check_selection(raw_values)
+        platform_data = device.get("platform")
+        platform_value = (
+            platform_data.get("slug")
+            if isinstance(platform_data, dict)
+            else None
+        )
+        platform = platform_value if isinstance(platform_value, str) else None
+        return expand_check_selection(raw_values, platform=platform)
 
     def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
         self._oxidized_nodes = {}

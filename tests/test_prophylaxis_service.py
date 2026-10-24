@@ -156,6 +156,21 @@ class ProphylaxisServiceTests(unittest.TestCase):
         )
         self.assertEqual(unknown, ())
 
+        fortios_checks, fortios_unknown = expand_check_selection(
+            {"identity", "resources"},
+            platform="fortios",
+        )
+        self.assertEqual(
+            fortios_checks,
+            checks
+            + (
+                CheckId.SESSION_HEALTH,
+                CheckId.STABILITY_EVENTS,
+                CheckId.STORAGE_HEALTH,
+            ),
+        )
+        self.assertEqual(fortios_unknown, ())
+
     def test_device_becomes_vendor_neutral_target(self):
         target = device_target(netbox_device())
         self.assertEqual(target.id, 10)
