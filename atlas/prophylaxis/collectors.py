@@ -19,6 +19,8 @@ from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_environment_health,
+    normalize_acme_status,
+    normalize_fortiguard_status,
     normalize_eol_status,
     normalize_fan_health,
     normalize_firmware_recommendation,
@@ -32,10 +34,16 @@ from atlas.prophylaxis.parsers import (
     normalize_os_version,
     normalize_pki_certificates,
     normalize_recent_logs,
+    normalize_log_delivery,
     normalize_routing_neighbors,
     normalize_routing_table,
+    normalize_sdwan_health,
+    normalize_session_health,
+    normalize_stability_events,
+    normalize_storage_health,
     normalize_temperature,
     normalize_uptime,
+    normalize_vpn_tunnels,
     normalize_snmp_cpu,
     normalize_snmp_fans,
     normalize_snmp_memory,
@@ -192,6 +200,9 @@ FORTIOS_RESOURCES_COLLECTOR = CollectorSpec(
         CheckId.ENVIRONMENT_HEALTH: normalize_environment_health,
         CheckId.CPU_TEMPERATURE: normalize_temperature,
         CheckId.FAN_HEALTH: normalize_fan_health,
+        CheckId.SESSION_HEALTH: normalize_session_health,
+        CheckId.STABILITY_EVENTS: normalize_stability_events,
+        CheckId.STORAGE_HEALTH: normalize_storage_health,
     },
 )
 
@@ -211,6 +222,8 @@ FORTIOS_COMPLIANCE_COLLECTOR = CollectorSpec(
         CheckId.PKI_CERTIFICATES: normalize_pki_certificates,
         CheckId.FIRMWARE_RECOMMENDATION: normalize_firmware_recommendation,
         CheckId.EOL_STATUS: normalize_eol_status,
+        CheckId.FORTIGUARD_STATUS: normalize_fortiguard_status,
+        CheckId.ACME_STATUS: normalize_acme_status,
     },
 )
 
@@ -222,6 +235,9 @@ FORTIOS_OPERATIONS_COLLECTOR = CollectorSpec(
         CheckId.ROUTING_TABLE: normalize_routing_table,
         CheckId.ROUTING_PROTOCOL_NEIGHBORS: normalize_routing_neighbors,
         CheckId.HA_STATUS: normalize_ha_status,
+        CheckId.SDWAN_HEALTH: normalize_sdwan_health,
+        CheckId.VPN_TUNNELS: normalize_vpn_tunnels,
+        CheckId.LOG_DELIVERY: normalize_log_delivery,
     },
 )
 

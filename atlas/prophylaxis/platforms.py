@@ -37,7 +37,7 @@ class AnsiblePlatformProfile:
 
 
 CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
-FORTIOS_SSH_COLLECTORS = frozenset({
+FORTIOS_COLLECTORS = frozenset({
     CollectorId.CPU_USAGE,
     CollectorId.DEVICE_FACTS,
     CollectorId.FORTIOS_RESOURCES,
@@ -45,7 +45,7 @@ FORTIOS_SSH_COLLECTORS = frozenset({
     CollectorId.FORTIOS_COMPLIANCE,
     CollectorId.FORTIOS_OPERATIONS,
 })
-FORTIOS_SSH_COLLECTOR_PREFERENCES = (
+FORTIOS_COLLECTOR_PREFERENCES = (
     (CheckId.MEMORY_UTILIZATION, CollectorId.FORTIOS_RESOURCES),
     (CheckId.ENVIRONMENT_HEALTH, CollectorId.FORTIOS_RESOURCES),
     (CheckId.CPU_TEMPERATURE, CollectorId.FORTIOS_RESOURCES),
@@ -62,6 +62,14 @@ FORTIOS_SSH_COLLECTOR_PREFERENCES = (
     (CheckId.ROUTING_TABLE, CollectorId.FORTIOS_OPERATIONS),
     (CheckId.ROUTING_PROTOCOL_NEIGHBORS, CollectorId.FORTIOS_OPERATIONS),
     (CheckId.HA_STATUS, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.SESSION_HEALTH, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.STABILITY_EVENTS, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.STORAGE_HEALTH, CollectorId.FORTIOS_RESOURCES),
+    (CheckId.FORTIGUARD_STATUS, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.ACME_STATUS, CollectorId.FORTIOS_COMPLIANCE),
+    (CheckId.SDWAN_HEALTH, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.VPN_TUNNELS, CollectorId.FORTIOS_OPERATIONS),
+    (CheckId.LOG_DELIVERY, CollectorId.FORTIOS_OPERATIONS),
 )
 FORTIOS_SSH_PROFILE = AnsiblePlatformProfile(
     slug="fortios",
@@ -75,8 +83,8 @@ FORTIOS_SSH_PROFILE = AnsiblePlatformProfile(
     authentication="ssh",
     collection="atlas.builtin",
     module_family="atlas_fortios_cli",
-    supported_collectors=FORTIOS_SSH_COLLECTORS,
-    preferred_collectors=FORTIOS_SSH_COLLECTOR_PREFERENCES,
+    supported_collectors=FORTIOS_COLLECTORS,
+    preferred_collectors=FORTIOS_COLLECTOR_PREFERENCES,
 )
 IOS_IMPLEMENTED_COLLECTORS = frozenset({
     CollectorId.IOS_IDENTITY,
@@ -238,7 +246,8 @@ ANSIBLE_PLATFORMS = {
         authentication="api_token",
         collection="fortinet.fortios",
         module_family="fortinet.fortios.fortios_monitor_fact",
-        supported_collectors=CPU_AND_FACTS,
+        supported_collectors=FORTIOS_COLLECTORS,
+        preferred_collectors=FORTIOS_COLLECTOR_PREFERENCES,
     ),
     "checkpoint-gaia": AnsiblePlatformProfile(
         slug="checkpoint-gaia",

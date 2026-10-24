@@ -1,0 +1,50 @@
+---
+- name: Collect FortiOS license status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: license_status
+    vdom: root
+  register: atlas_fortios_license
+  changed_when: false
+
+- name: Collect FortiOS system status for installed-version evidence
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_status
+    vdom: root
+  register: atlas_fortios_system_status
+  changed_when: false
+
+- name: Collect FortiOS certificates through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_available-certificates
+    vdom: root
+  register: atlas_fortios_certificates
+  changed_when: false
+
+- name: Collect FortiGuard server status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_fortiguard_server-info
+    vdom: root
+  register: atlas_fortios_fortiguard
+  changed_when: false
+
+- name: Collect ACME certificate status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_acme-certificate-status
+    vdom: root
+  register: atlas_fortios_acme
+  changed_when: false
+
+- name: Prepare FortiOS API compliance evidence for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        get_system_status: "{{ atlas_fortios_system_status.meta.results | to_json }}"
+        license_status: "{{ atlas_fortios_license.meta.results | to_json }}"
+        system_available_certificates: "{{ atlas_fortios_certificates.meta.results | to_json }}"
+        system_fortiguard_server_info: "{{ atlas_fortios_fortiguard.meta.results | to_json }}"
+        system_acme_certificate_status: "{{ atlas_fortios_acme.meta.results | to_json }}"

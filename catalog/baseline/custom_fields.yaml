@@ -96,6 +96,49 @@ custom_fields:
     choice_set: "Profylaxia checks"
     comments: ""
 
+  - name: "profylaxia_expectations"
+    object_types:
+      - "dcim.device"
+    type: "json"
+    label: "Profylaxia expectations"
+    group_name: "Profylaxia"
+    description: "Explicit device policy used to evaluate interfaces, routing, HA, VPN, SD-WAN and thresholds"
+    required: false
+    unique: false
+    search_weight: 1000
+    filter_logic: "exact"
+    ui_visible: "always"
+    ui_editable: "yes"
+    is_cloneable: false
+    nulls_first: true
+    default: null
+    weight: 110
+    validation_minimum: null
+    validation_maximum: null
+    validation_regex: ""
+    validation_schema:
+      type: object
+      additionalProperties: false
+      properties:
+        thresholds:
+          type: object
+        interfaces:
+          type: object
+        routing:
+          type: object
+        ha:
+          type: object
+        vpn:
+          type: object
+        sdwan:
+          type: object
+        vdoms:
+          type: array
+          items:
+            type: string
+    related_object_filter: null
+    comments: "Validated again by Atlas before any device connection"
+
   - name: "credential_profile"
     object_types:
       - "dcim.device"

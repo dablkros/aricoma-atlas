@@ -2,6 +2,8 @@
 
 Cisco IOS tematický collector plán, výsledkové stavy a report kontrakt sú
 zdokumentované v [prophylaxis-cisco-ios.md](prophylaxis-cisco-ios.md).
+FortiOS transporty, očakávania a kontrolná matica sú v
+[prophylaxis-fortios.md](prophylaxis-fortios.md).
 
 Stav dokumentácie: 2026-10-20. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
@@ -69,7 +71,7 @@ fortios-api -> TCP/444 -> ["tcp/444"]
 Port sa odovzdá do `ansible.netcommon.httpapi` ako `ansible_httpapi_port`.
 Atlas porty aktívne neskenuje. Ak služba `fortios-api` na zariadení neexistuje,
 Atlas vyberie SSH na porte 22 a spustí iba allow-listed príkazy
-`get system status` a `get system performance status`. Chyba existujúceho API
+zoskupené v rovnakých tematických collectoroch ako API. Chyba existujúceho API
 spojenia nespustí SSH fallback. Viac služieb s rovnakým názvom alebo viac port
 mappings skončí s
 `ambiguous_service_port`; iný protokol, neplatný port alebo neplatná odpoveď
@@ -116,6 +118,14 @@ routing_table
 routing_protocol_neighbors
 ha_status
 configuration_backup
+session_health
+stability_events
+storage_health
+fortiguard_status
+acme_status
+sdwan_health
+vpn_tunnels
+log_delivery
 ```
 
 `device_facts` normalizuje hostname, model, nainštalovaný OS identifikátor,
@@ -147,11 +157,10 @@ Oxidized 0.37.0 serializuje pre uzol `name`, `mtime` a voliteľný posledný job
 poľami `start`, `end`, `status` a `time`:
 [Oxidized 0.37.0 `Node#serialize`](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/node.rb#L86-L105).
 
-PKI parser používa v tomto reze konzervatívne hranice: expirovaný alebo najviac
-30 dní zostávajúci certifikát je `FAIL`, 31 až 60 dní je `WARNING` a viac než
-60 dní je `PASS`. Stav automatickej obnovy zostáva `unverified`; samotná dlhá
-platnosť ho nedokazuje. Prahy sú zatiaľ explicitné konštanty parsera, nie
-zákaznícka konfigurácia.
+PKI parser používa predvolené Atlas policy hranice 30/60 dní; zariadenie ich
+môže explicitne zmeniť v `profylaxia_expectations`. Nejde o Fortinet vendor
+limit. Stav automatickej obnovy zostáva `unverified`; samotná dlhá platnosť ho
+nedokazuje.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
@@ -345,8 +354,8 @@ Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným 
 monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
 súčasťou podporovaného produkčného nastavenia.
 
-SSH režim používa účelový read-only účet a pevný allow-list dvoch `get`
-príkazov. Lokálny Ansible modul obsluhuje FortiOS `--More--` stránkovanie
+SSH režim používa účelový read-only účet a pevný allow-list zdokumentovaných
+`get`, `diagnose` a obmedzených `execute log` príkazov. Lokálny Ansible modul obsluhuje FortiOS `--More--` stránkovanie
 medzerníkom; nemení tým konfiguráciu zariadenia. Zdrojom významu týchto
 príkazov je dokumentácia FortiOS:
 

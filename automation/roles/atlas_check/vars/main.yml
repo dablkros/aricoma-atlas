@@ -53,6 +53,14 @@ atlas_transport_files:
       aruba-aos-cx: device_facts/aruba_aoscx.yml
       checkpoint-gaia: device_facts/checkpoint_gaia.yml
   https:
+    fortios_resources:
+      fortios: resources/fortios.yml
+    fortios_interfaces:
+      fortios: interfaces/fortios.yml
+    fortios_compliance:
+      fortios: compliance/fortios.yml
+    fortios_operations:
+      fortios: operations/fortios.yml
     cpu_usage:
       fortios: cpu/fortios.yml
     device_facts:

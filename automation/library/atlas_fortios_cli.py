@@ -47,21 +47,35 @@ options:
 
 
 ALLOWED_COMMANDS = {
+    "diagnose autoupdate status",
+    "diagnose autoupdate versions",
+    "diagnose debug config-error-log read",
+    "diagnose debug crashlog read",
+    "diagnose hardware deviceinfo disk",
+    "diagnose hardware sysinfo conserve",
     "diagnose hardware sysinfo sensor-status",
     "diagnose netlink interface list",
     "diagnose netlink interface packet-rate",
+    "diagnose sys acme list-domains",
+    "diagnose sys ha checksum cluster",
+    "diagnose sys ha history read",
     "diagnose sys ntp status",
+    "diagnose sys sdwan health-check",
+    "diagnose sys session stat",
+    "diagnose vpn tunnel list",
     "execute log display",
     "execute log filter category event",
     "execute log filter view-lines 50",
     "get router info bgp summary",
     "get router info ospf neighbor",
     "get router info routing-table all",
+    "get log fortianalyzer setting",
     "get system ha status",
     "get system interface physical",
     "get system status",
     "get system performance status",
     "get vpn certificate local details",
+    "get vpn certificate ca details",
 }
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[#$>]\s*$")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")

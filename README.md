@@ -1878,7 +1878,7 @@ Atlas baseline predstavuje konfiguráciu, ktorá má existovať na každej Atlas
 Aktuálne obsahuje:
 
 - 1× Custom Field Choice Set,
-- 4× Custom Fields.
+- 6× Custom Fields.
 
 Konfigurácia baseline je deklaratívne uložená v:
 
@@ -1929,6 +1929,10 @@ Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
 manuálna CPU kontrola zostáva dostupná cez API.
+
+FortiOS používa rovnaké tematické check ID cez API aj SSH. Úplnú maticu,
+konzervatívne hranice parserov a JSON pole `profylaxia_expectations` opisuje
+[FortiOS Profylaxia kontrakt](docs/prophylaxis-fortios.md).
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
@@ -2062,6 +2066,7 @@ Oxidized polling ani Git históriu.
 | `oxidized_enabled` | Boolean | backuping |
 | `profylaxia_enabled` | Boolean | Profylaxia |
 | `profylaxia_checks` | Multiple selection | Profylaxia |
+| `profylaxia_expectations` | JSON | Profylaxia |
 | `credential_profile` | Text | Atlas |
 
 Všetky aktuálne Custom Fields sú priradené k objektu:

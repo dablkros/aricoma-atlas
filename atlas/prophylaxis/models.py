@@ -45,6 +45,14 @@ class CheckId(StrEnum):
     CONFIGURATION_BACKUP = "configuration_backup"
     SERIAL_INVENTORY = "serial_inventory"
     MODEL_INVENTORY = "model_inventory"
+    SESSION_HEALTH = "session_health"
+    STABILITY_EVENTS = "stability_events"
+    STORAGE_HEALTH = "storage_health"
+    FORTIGUARD_STATUS = "fortiguard_status"
+    ACME_STATUS = "acme_status"
+    SDWAN_HEALTH = "sdwan_health"
+    VPN_TUNNELS = "vpn_tunnels"
+    LOG_DELIVERY = "log_delivery"
 
 
 class CheckGroupId(StrEnum):
@@ -67,6 +75,9 @@ CHECK_GROUP_CHECKS = {
         CheckId.ENVIRONMENT_HEALTH,
         CheckId.CPU_TEMPERATURE,
         CheckId.FAN_HEALTH,
+        CheckId.SESSION_HEALTH,
+        CheckId.STABILITY_EVENTS,
+        CheckId.STORAGE_HEALTH,
     ),
     CheckGroupId.INTERFACES: (
         CheckId.INTERFACE_STATE,
@@ -78,6 +89,8 @@ CHECK_GROUP_CHECKS = {
         CheckId.PKI_CERTIFICATES,
         CheckId.FIRMWARE_RECOMMENDATION,
         CheckId.EOL_STATUS,
+        CheckId.FORTIGUARD_STATUS,
+        CheckId.ACME_STATUS,
     ),
     CheckGroupId.OPERATIONS: (
         CheckId.NTP_SYNC,
@@ -86,6 +99,9 @@ CHECK_GROUP_CHECKS = {
         CheckId.ROUTING_PROTOCOL_NEIGHBORS,
         CheckId.HA_STATUS,
         CheckId.CONFIGURATION_BACKUP,
+        CheckId.SDWAN_HEALTH,
+        CheckId.VPN_TUNNELS,
+        CheckId.LOG_DELIVERY,
     ),
 }
 
@@ -230,6 +246,13 @@ class DiagnosticValues(BaseModel):
     )
     affected_items: tuple[str, ...] = ()
     source_commands: tuple[str, ...] = ()
+    collected_at: datetime | None = None
+    context: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict
+    )
+    evidence: tuple[str, ...] = ()
+    evaluation_rule: str | None = Field(default=None, max_length=512)
+    recommended_action: str | None = Field(default=None, max_length=512)
 
     @model_validator(mode="after")
     def validate_evaluation(self):
@@ -304,6 +327,7 @@ class RawCollectorResult(BaseModel):
     data: Any | None = None
     raw_output: str | None = None
     error_code: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_payload(self):

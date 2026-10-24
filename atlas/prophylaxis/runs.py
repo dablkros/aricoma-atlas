@@ -18,6 +18,7 @@ from atlas.prophylaxis.errors import (
     UnsupportedPlatformError,
 )
 from atlas.prophylaxis.evaluation import evaluate_uptime
+from atlas.prophylaxis.expectations import FortiOSExpectations, fortios_expectations
 from atlas.prophylaxis.models import (
     CheckId,
     CollectionStatus,
@@ -506,12 +507,13 @@ class DeviceFactsRunService:
             check
             for check in selected_checks
             if check in EXTERNAL_LIFECYCLE_CHECKS
+            and platform in CISCO_LIFECYCLE_PLATFORMS
         )
         known_checks = tuple(
             check
             for check in selected_checks
             if check != CheckId.CONFIGURATION_BACKUP
-            and check not in EXTERNAL_LIFECYCLE_CHECKS
+            and check not in lifecycle_checks
         )
         results = [
             self._check_error(
@@ -542,6 +544,11 @@ class DeviceFactsRunService:
                 self.netbox,
                 target,
                 base_profile,
+            )
+            expectations = (
+                fortios_expectations(device)
+                if target.platform == "fortios"
+                else FortiOSExpectations()
             )
             plan = self.collector_registry.plan(known_checks, profile)
         except Exception as exc:
@@ -722,6 +729,15 @@ class DeviceFactsRunService:
                     telnet_fallback_port=telnet_fallback_port,
                     device_model=target.model,
                 )
+                if raw.status == "ok":
+                    raw = raw.model_copy(update={
+                        "context": {
+                            "transport": execution_profile.transport,
+                            "port": port,
+                            "vdom": "root",
+                            "expectations": expectations.context(),
+                        }
+                    })
             except Exception as exc:
                 status, code = self._classify_exception(exc)
                 results.extend(
@@ -808,6 +824,13 @@ class DeviceFactsRunService:
             for check in task.checks:
                 try:
                     values = task.collector.normalize(check, raw)
+                    values = self._apply_fortios_policy(
+                        target.platform,
+                        check,
+                        values,
+                        expectations,
+                        raw,
+                    )
                     result = self._success_result(
                         device_id, name, management_ip, platform, check, values,
                     )
@@ -829,6 +852,106 @@ class DeviceFactsRunService:
                 inventory_results=inventory_results,
             ))
         return tuple(results)
+
+    @staticmethod
+    def _apply_fortios_policy(
+        platform: str,
+        check: CheckId,
+        values,
+        expectations: FortiOSExpectations,
+        raw,
+    ):
+        if platform != "fortios":
+            return values
+        thresholds = expectations.thresholds
+        if check == CheckId.CPU_UTILIZATION and isinstance(
+            values, CPUUtilizationValues
+        ):
+            current = values.current_percent
+            if (
+                thresholds.cpu_critical_percent is not None
+                and current >= thresholds.cpu_critical_percent
+            ):
+                outcome, reason = EvaluationOutcome.FAIL, "cpu_policy_critical"
+            elif (
+                thresholds.cpu_warning_percent is not None
+                and current >= thresholds.cpu_warning_percent
+            ):
+                outcome, reason = EvaluationOutcome.WARNING, "cpu_policy_warning"
+            elif (
+                thresholds.cpu_warning_percent is not None
+                or thresholds.cpu_critical_percent is not None
+            ):
+                outcome, reason = EvaluationOutcome.PASS, None
+            else:
+                outcome, reason = (
+                    EvaluationOutcome.UNKNOWN,
+                    "cpu_threshold_unconfigured",
+                )
+            values = DiagnosticValues(
+                outcome=outcome,
+                reason_code=reason,
+                summary="CPU utilization evaluated against Atlas policy",
+                metrics={
+                    "current_percent": current,
+                    "one_minute_percent": values.one_minute_percent,
+                    "five_minute_percent": values.five_minute_percent,
+                    "warning_threshold_percent": thresholds.cpu_warning_percent,
+                    "critical_threshold_percent": thresholds.cpu_critical_percent,
+                },
+            )
+        elif (
+            check == CheckId.MEMORY_UTILIZATION
+            and isinstance(values, SystemMetricValues)
+            and values.value is not None
+        ):
+            current = values.value
+            if (
+                thresholds.memory_critical_percent is not None
+                and current >= thresholds.memory_critical_percent
+            ):
+                outcome, reason = EvaluationOutcome.FAIL, "memory_policy_critical"
+            elif (
+                thresholds.memory_warning_percent is not None
+                and current >= thresholds.memory_warning_percent
+            ):
+                outcome, reason = EvaluationOutcome.WARNING, "memory_policy_warning"
+            elif (
+                thresholds.memory_warning_percent is not None
+                or thresholds.memory_critical_percent is not None
+            ):
+                outcome, reason = EvaluationOutcome.PASS, None
+            else:
+                return values
+            values = values.model_copy(update={
+                "outcome": outcome,
+                "reason_code": reason,
+            })
+        if isinstance(values, DiagnosticValues):
+            context = {
+                "transport": raw.context.get("transport"),
+                "port": raw.context.get("port"),
+                "vdom": raw.context.get("vdom"),
+                "expectations_configured": bool(
+                    expectations.model_dump(exclude_defaults=True)
+                ),
+            }
+            evidence = tuple(values.affected_items[:10])
+            action = {
+                EvaluationOutcome.FAIL: "Investigate the reported evidence before remediation.",
+                EvaluationOutcome.WARNING: "Plan a review of the reported evidence.",
+                EvaluationOutcome.UNKNOWN: "Provide expectations or a verified fixture before evaluation.",
+                EvaluationOutcome.UNSUPPORTED: "Confirm model and FortiOS command or API support.",
+                EvaluationOutcome.NOT_APPLICABLE: "No action unless the declared design differs.",
+            }.get(values.outcome)
+            values = values.model_copy(update={
+                "collected_at": utc_now(),
+                "context": context,
+                "evidence": evidence,
+                "evaluation_rule": values.reason_code or "explicit healthy state",
+                "recommended_action": action,
+            })
+        return values
 
     @staticmethod
     def _cisco_error_code(exc: Exception) -> str:

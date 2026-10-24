@@ -2,6 +2,7 @@
 
 from datetime import datetime, timezone
 from email.utils import parsedate_to_datetime
+import json
 import re
 
 from atlas.prophylaxis.errors import ParseFailedError
@@ -347,6 +348,41 @@ def _command_outputs(raw: RawCollectorResult) -> dict[str, str]:
     return outputs
 
 
+def _json_outputs(raw: RawCollectorResult) -> dict[str, object]:
+    parsed = {}
+    for key, value in _command_outputs(raw).items():
+        if not value.lstrip().startswith(("{", "[")):
+            continue
+        try:
+            parsed[key] = json.loads(value)
+        except (TypeError, ValueError):
+            continue
+    return parsed
+
+
+def _walk_json(value):
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from _walk_json(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _walk_json(child)
+
+
+def _expectations(raw: RawCollectorResult) -> dict:
+    value = raw.context.get("expectations")
+    return value if isinstance(value, dict) else {}
+
+
+def _expected_names(raw: RawCollectorResult, section: str, field: str) -> tuple[str, ...]:
+    section_value = _expectations(raw).get(section)
+    values = section_value.get(field) if isinstance(section_value, dict) else None
+    if not isinstance(values, list):
+        return ()
+    return tuple(value for value in values if isinstance(value, str) and value)
+
+
 def _usable_outputs(raw: RawCollectorResult) -> dict[str, str]:
     return {
         key: value
@@ -394,6 +430,27 @@ def normalize_command_cpu(raw: RawCollectorResult) -> CPUUtilizationValues:
 def normalize_memory(raw: RawCollectorResult) -> SystemMetricValues:
     outputs = _usable_outputs(raw)
     text = "\n".join(outputs.values())
+    for payload in _json_outputs(raw).values():
+        for item in _walk_json(payload):
+            memory = next((
+                value for key, value in item.items()
+                if "memory" in str(key).casefold()
+            ), None)
+            if memory is None:
+                continue
+            for memory_item in _walk_json(memory):
+                current = memory_item.get("current")
+                if (
+                    isinstance(current, (int, float))
+                    and not isinstance(current, bool)
+                    and 0 <= float(current) <= 100
+                ):
+                    return SystemMetricValues(
+                        outcome=EvaluationOutcome.UNKNOWN,
+                        value=float(current),
+                        unit="percent",
+                        reason_code="memory_threshold_unconfigured",
+                    )
     patterns = (
         re.compile(
             r"Processor\s+Pool\s+Total:\s*(?P<total>\d+)\s+"
@@ -460,7 +517,14 @@ def _fortios_is_vm(raw: RawCollectorResult) -> bool:
     if raw.platform != "fortios":
         return False
     status = _usable_outputs(raw).get("get_system_status", "")
-    return bool(re.search(r"(?im)^\s*Version:\s*FortiGate-VM", status))
+    if re.search(r"(?im)^\s*Version:\s*FortiGate-VM", status):
+        return True
+    return any(
+        isinstance(value, str) and "fortigate-vm" in value.casefold()
+        for payload in _json_outputs(raw).values()
+        for item in _walk_json(payload)
+        for value in item.values()
+    )
 
 
 def normalize_environment_health(raw: RawCollectorResult) -> DiagnosticValues:
@@ -547,6 +611,15 @@ def normalize_temperature(raw: RawCollectorResult) -> SystemMetricValues:
         )
     ]
     if raw.platform == "fortios":
+        for payload in _json_outputs(raw).values():
+            for item in _walk_json(payload):
+                for key, value in item.items():
+                    if (
+                        "temp" in str(key).casefold()
+                        and isinstance(value, (int, float))
+                        and not isinstance(value, bool)
+                    ):
+                        values.append(float(value))
         for output in outputs.values():
             blocks = re.split(r"(?m)(?=^\S[^:\n]*:\s*[^\n]*$)", output)
             for block in blocks:
@@ -693,13 +766,48 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
                 re.I,
             ):
                 down.append(normalized[:160])
-    if bad:
+    for payload in _json_outputs(raw).values():
+        for item in _walk_json(payload):
+            name = next((
+                item.get(key) for key in ("name", "interface", "interface_name", "port")
+                if isinstance(item.get(key), str) and item.get(key)
+            ), None)
+            state = next((
+                item.get(key) for key in ("status", "link", "state", "link_status")
+                if isinstance(item.get(key), str)
+            ), None)
+            if not name or not state:
+                continue
+            if state.casefold() in {"up", "online", "connected"}:
+                up.append(f"{name}: up"[:160])
+            elif state.casefold() in {"down", "offline", "disconnected"}:
+                down.append(f"{name}: down"[:160])
+    required = _expected_names(raw, "interfaces", "required_up")
+    up_text = "\n".join(up).casefold()
+    missing_required = tuple(
+        name for name in required if name.casefold() not in up_text
+    )
+    if bad or missing_required:
         return _diagnostic(
             EvaluationOutcome.FAIL,
-            f"{len(bad)} interfaces are err-disabled",
-            reason_code="interface_err_disabled",
-            metrics={"err_disabled": len(bad), "down_or_unused": len(down)},
-            affected_items=bad,
+            "Required interface state does not match NetBox expectations",
+            reason_code=(
+                "required_interface_down" if missing_required else "interface_err_disabled"
+            ),
+            metrics={
+                "err_disabled": len(bad),
+                "down_or_unused": len(down),
+                "required_up": len(required),
+                "required_down": len(missing_required),
+            },
+            affected_items=bad + list(missing_required),
+            outputs=outputs,
+        )
+    if required:
+        return _diagnostic(
+            EvaluationOutcome.PASS,
+            "All explicitly required interfaces are up",
+            metrics={"required_up": len(required), "required_down": 0},
             outputs=outputs,
         )
     return _diagnostic(
@@ -777,6 +885,16 @@ def normalize_interface_errors(raw: RawCollectorResult) -> DiagnosticValues:
                 text,
             )
         )
+        for payload in _json_outputs(raw).values():
+            for item in _walk_json(payload):
+                counters.extend(
+                    int(value)
+                    for key, value in item.items()
+                    if any(token in str(key).casefold() for token in ("error", "drop", "crc"))
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                    and value >= 0
+                )
     if not counters:
         return _diagnostic(
             EvaluationOutcome.UNKNOWN if outputs else EvaluationOutcome.UNSUPPORTED,
@@ -869,6 +987,16 @@ def normalize_license_state(raw: RawCollectorResult) -> DiagnosticValues:
 def _parse_certificate_date(value: str) -> datetime | None:
     normalized = " ".join(value.replace(",", " ").split())
     try:
+        iso = datetime.fromisoformat(normalized.replace("Z", "+00:00"))
+    except ValueError:
+        iso = None
+    if iso is not None:
+        return (
+            iso.astimezone(timezone.utc)
+            if iso.tzinfo
+            else iso.replace(tzinfo=timezone.utc)
+        )
+    try:
         parsed = parsedate_to_datetime(normalized)
     except (TypeError, ValueError, OverflowError):
         parsed = None
@@ -924,6 +1052,14 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
                 value,
             )
         )
+    for payload in _json_outputs(raw).values():
+        for item in _walk_json(payload):
+            candidates.extend(
+                value
+                for key, value in item.items()
+                if any(token in str(key).casefold() for token in ("not_after", "valid_to", "end_date", "expiry", "expires"))
+                and isinstance(value, str)
+            )
     dates = [parsed for value in candidates if (parsed := _parse_certificate_date(value))]
     if not dates:
         return _diagnostic(
@@ -935,13 +1071,21 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
     now = datetime.now(timezone.utc)
     days = [int((value - now).total_seconds() // 86400) for value in dates]
     minimum = min(days)
+    threshold_values = _expectations(raw).get("thresholds")
+    threshold_values = threshold_values if isinstance(threshold_values, dict) else {}
+    warning_days = threshold_values.get(
+        "certificate_warning_days", CERTIFICATE_WARNING_DAYS
+    )
+    critical_days = threshold_values.get(
+        "certificate_critical_days", CERTIFICATE_CRITICAL_DAYS
+    )
     if minimum < 0:
         outcome = EvaluationOutcome.FAIL
         reason = "certificate_expired"
-    elif minimum <= CERTIFICATE_CRITICAL_DAYS:
+    elif minimum <= critical_days:
         outcome = EvaluationOutcome.FAIL
         reason = "certificate_renewal_urgent"
-    elif minimum <= CERTIFICATE_WARNING_DAYS:
+    elif minimum <= warning_days:
         outcome = EvaluationOutcome.WARNING
         reason = "certificate_renewal_due"
     else:
@@ -954,8 +1098,8 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
         metrics={
             "certificate_count": len(dates),
             "minimum_days_remaining": minimum,
-            "warning_threshold_days": CERTIFICATE_WARNING_DAYS,
-            "critical_threshold_days": CERTIFICATE_CRITICAL_DAYS,
+            "warning_threshold_days": warning_days,
+            "critical_threshold_days": critical_days,
             "automatic_renewal_state": "unverified",
         },
         outputs=outputs,
@@ -979,6 +1123,14 @@ def _installed_version(outputs: dict[str, str]) -> str | None:
 def normalize_firmware_recommendation(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = _usable_outputs(raw)
     version = _installed_version(outputs)
+    if version is None:
+        version = next((
+            str(item[key])
+            for payload in _json_outputs(raw).values()
+            for item in _walk_json(payload)
+            for key in ("version", "firmware_version", "build")
+            if isinstance(item.get(key), (str, int))
+        ), None)
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Installed firmware collected; no reviewed recommendation catalog is configured",
@@ -1003,6 +1155,14 @@ def normalize_eol_status(raw: RawCollectorResult) -> DiagnosticValues:
             fortios_status,
         )
         fortios_model = match.group(1) if match else None
+        if fortios_model is None:
+            fortios_model = next((
+                str(item[key])
+                for payload in _json_outputs(raw).values()
+                for item in _walk_json(payload)
+                for key in ("model_number", "model", "platform")
+                if isinstance(item.get(key), str) and item.get(key)
+            ), None)
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Product identifiers collected; no reviewed lifecycle record is configured",
@@ -1053,6 +1213,31 @@ def normalize_ntp_status(raw: RawCollectorResult) -> DiagnosticValues:
             reason_code="ntp_unsynchronized",
             outputs=outputs,
         )
+    structured_states = []
+    for payload in _json_outputs(raw).values():
+        for item in _walk_json(payload):
+            for key, value in item.items():
+                if any(token in str(key).casefold() for token in ("sync", "status", "state")):
+                    structured_states.append(value)
+    if any(value is False for value in structured_states) or any(
+        isinstance(value, str) and value.casefold() in {"down", "unsynchronized", "not synchronized", "failed"}
+        for value in structured_states
+    ):
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "Device clock is not synchronized",
+            reason_code="ntp_unsynchronized",
+            outputs=outputs,
+        )
+    if any(value is True for value in structured_states) or any(
+        isinstance(value, str) and value.casefold() in {"up", "synchronized", "synced", "success"}
+        for value in structured_states
+    ):
+        return _diagnostic(
+            EvaluationOutcome.PASS,
+            "Device clock reports synchronized state",
+            outputs=outputs,
+        )
     if re.search(
         r"(?i)\b(?:clock is synchronized|synchronized, stratum|status:\s*up|"
         r"synchronized:\s*yes)\b",
@@ -1078,6 +1263,7 @@ def normalize_recent_logs(raw: RawCollectorResult) -> DiagnosticValues:
         if (
             "logging" in key
             or "logfile" in key
+            or key == "log_event"
             or "crash" in key
             or (raw.platform == "fortios" and key == "execute_log_display")
         )
@@ -1206,6 +1392,7 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
         for key, value in _usable_outputs(raw).items()
         if key in {
             "show_ip_route", "show_route", "get_router_info_routing_table_all",
+            "router_ipv4",
         }
     }
     text = "\n".join(outputs.values())
@@ -1221,11 +1408,23 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
         text,
     )
     default = bool(re.search(r"(?im)\b0\.0\.0\.0/0\b|gateway of last resort", text))
+    expected = _expected_names(raw, "routing", "required_routes")
+    missing = tuple(route for route in expected if route not in text)
+    outcome = (
+        EvaluationOutcome.FAIL if missing
+        else EvaluationOutcome.PASS if expected
+        else EvaluationOutcome.UNKNOWN
+    )
     return _diagnostic(
-        EvaluationOutcome.PASS if routes or default else EvaluationOutcome.UNKNOWN,
-        "Routing table collected" if routes or default else "Routing table format is unrecognized",
-        reason_code=None if routes or default else "routing_table_unrecognized",
+        outcome,
+        "Required routes evaluated" if expected else "Routing table collected without explicit route expectations",
+        reason_code=(
+            "required_route_missing" if missing
+            else None if expected
+            else "routing_expectation_unconfigured"
+        ),
         metrics={"parsed_routes": len(routes), "default_route_present": default},
+        affected_items=missing,
         outputs=outputs,
     )
 
@@ -1243,6 +1442,8 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
                 "rip_peers",
                 "router_info_ospf_neighbor",
                 "router_info_bgp_summary",
+                "router_ospf_neighbors",
+                "router_bgp_neighbors",
             )
         )
     }
@@ -1280,6 +1481,20 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
         if re.match(r"^\s*(?:\d{1,3}\.){3}\d{1,3}\b", line)
     )
     bad = len(re.findall(r"(?i)\b(?:DOWN|INIT|IDLE|ACTIVE)\b", text))
+    expected = (
+        _expected_names(raw, "routing", "bgp_neighbors")
+        + _expected_names(raw, "routing", "ospf_neighbors")
+    )
+    missing = tuple(name for name in expected if name not in text)
+    if missing:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "Expected routing neighbors were not found in an established state",
+            reason_code="required_routing_neighbor_missing",
+            metrics={"expected_neighbors": len(expected), "missing_neighbors": len(missing)},
+            affected_items=missing,
+            outputs=outputs,
+        )
     if bad:
         return _diagnostic(
             EvaluationOutcome.WARNING,
@@ -1289,9 +1504,13 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
             outputs=outputs,
         )
     return _diagnostic(
-        EvaluationOutcome.PASS if established else EvaluationOutcome.UNKNOWN,
+        EvaluationOutcome.PASS if expected and established else EvaluationOutcome.UNKNOWN,
         "Routing-neighbor output collected",
-        reason_code=None if established else "routing_neighbor_format_unrecognized",
+        reason_code=(
+            None if expected and established
+            else "routing_expectation_unconfigured" if established
+            else "routing_neighbor_format_unrecognized"
+        ),
         metrics={"established_markers": established, "problem_markers": 0},
         outputs=outputs,
     )
@@ -1305,6 +1524,7 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             token in key
             for token in (
                 "show_switch", "stack", "standby", "redundancy", "system_ha_status",
+                "system_ha_",
             )
         )
     }
@@ -1315,14 +1535,37 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             reason_code="ha_not_configured_or_unsupported",
         )
     text = "\n".join(outputs.values())
-    if raw.platform == "fortios" and re.search(
-        r"(?im)^\s*Mode:\s*Standalone\s*$",
-        text,
+    ha_expectations = _expectations(raw).get("ha")
+    ha_expectations = ha_expectations if isinstance(ha_expectations, dict) else {}
+    expected_mode = ha_expectations.get("mode")
+    expected_members = _expected_names(raw, "ha", "members")
+    monitored_interfaces = _expected_names(raw, "ha", "monitored_interfaces")
+    structured_modes = tuple(
+        value.casefold()
+        for payload in _json_outputs(raw).values()
+        for item in _walk_json(payload)
+        for key, value in item.items()
+        if "mode" in str(key).casefold() and isinstance(value, str)
+    )
+    if raw.platform == "fortios" and (
+        re.search(r"(?im)^\s*Mode:\s*Standalone\s*$", text)
+        or "standalone" in structured_modes
     ):
+        outcome = (
+            EvaluationOutcome.PASS
+            if expected_mode == "standalone"
+            else EvaluationOutcome.FAIL
+            if expected_mode in {"active-passive", "active-active"}
+            else EvaluationOutcome.NOT_APPLICABLE
+        )
         return _diagnostic(
-            EvaluationOutcome.NOT_APPLICABLE,
+            outcome,
             "FortiGate is operating as a standalone unit",
-            reason_code="ha_not_configured",
+            reason_code=(
+                None if outcome == EvaluationOutcome.PASS
+                else "ha_expected_but_standalone" if outcome == EvaluationOutcome.FAIL
+                else "ha_not_configured"
+            ),
             metrics={"cluster_members": 0},
             outputs=outputs,
         )
@@ -1336,15 +1579,424 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             affected_items=(" ".join(line.split())[:160] for line in bad[:20]),
             outputs=outputs,
         )
+    missing_members = tuple(member for member in expected_members if member not in text)
+    if missing_members:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "Expected HA members are missing from the collected state",
+            reason_code="ha_member_missing",
+            metrics={"expected_members": len(expected_members), "missing_members": len(missing_members)},
+            affected_items=missing_members,
+            outputs=outputs,
+        )
+    missing_monitors = tuple(
+        interface for interface in monitored_interfaces if interface not in text
+    )
+    if missing_monitors:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "Expected HA monitored interfaces are missing from the collected state",
+            reason_code="ha_monitored_interface_missing",
+            metrics={
+                "expected_monitored_interfaces": len(monitored_interfaces),
+                "missing_monitored_interfaces": len(missing_monitors),
+            },
+            affected_items=missing_monitors,
+            outputs=outputs,
+        )
     healthy = re.findall(
         r"(?i)\b(?:active|standby|ready|member|master|primary|secondary|in-sync)\b",
         text,
     )
     return _diagnostic(
-        EvaluationOutcome.PASS if healthy else EvaluationOutcome.UNKNOWN,
+        EvaluationOutcome.PASS if healthy and (expected_mode or expected_members or monitored_interfaces) else EvaluationOutcome.UNKNOWN,
         "HA/stack output collected",
-        reason_code=None if healthy else "ha_state_unrecognized",
+        reason_code=(
+            None if healthy and (expected_mode or expected_members or monitored_interfaces)
+            else "ha_expectation_unconfigured" if healthy
+            else "ha_state_unrecognized"
+        ),
         metrics={"healthy_markers": len(healthy)},
+        outputs=outputs,
+    )
+
+
+def normalize_session_health(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("session", "performance", "resource_usage"))
+    }
+    if not outputs:
+        return _diagnostic(
+            EvaluationOutcome.UNSUPPORTED,
+            "No session or resource-usage evidence was returned",
+            reason_code="session_health_unsupported",
+        )
+    text = "\n".join(outputs.values())
+    conserve = bool(re.search(r"(?i)conserve(?:\s+mode)?.{0,30}(?:on|active|entered)", text))
+    sessions = None
+    match = re.search(r"(?i)(?:session count|sessions?)\s*[:=]\s*(\d+)", text)
+    if match:
+        sessions = int(match.group(1))
+    if conserve:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "FortiOS reports conserve mode",
+            reason_code="conserve_mode_active",
+            metrics={"conserve_mode": True, "session_count": sessions},
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "Session evidence collected; no capacity policy or history is configured",
+        reason_code="session_policy_or_history_unavailable",
+        metrics={"conserve_mode": False, "session_count": sessions},
+        outputs=outputs,
+    )
+
+
+def normalize_stability_events(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("crash", "config_error", "reboot"))
+    }
+    if not outputs:
+        command_outputs = _command_outputs(raw)
+        if any("diagnose" in key for key in command_outputs):
+            return _diagnostic(
+                EvaluationOutcome.UNKNOWN,
+                "Stability diagnostics require additional FortiOS diagnose permission",
+                reason_code="fortios_diagnose_access_disabled",
+            )
+        return _diagnostic(
+            EvaluationOutcome.UNSUPPORTED,
+            "No supported stability evidence was returned",
+            reason_code="stability_evidence_unsupported",
+        )
+    findings = tuple(
+        " ".join(line.split())[:160]
+        for value in outputs.values()
+        for line in value.splitlines()
+        if re.search(r"(?i)\b(?:crash|segfault|panic|unexpected reboot|error)\b", line)
+        and not re.search(r"(?i)\b(?:no|zero|0)\s+(?:crash|error)", line)
+    )
+    if findings:
+        return _diagnostic(
+            EvaluationOutcome.WARNING,
+            "Recent stability evidence requires review",
+            reason_code="stability_events_detected",
+            metrics={"finding_count": len(findings), "history_comparison": "unavailable"},
+            affected_items=findings[:20],
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "No stability event was parsed from the current sample; historical comparison is unavailable",
+        reason_code="stability_history_unavailable",
+        metrics={"finding_count": 0, "history_comparison": "unavailable"},
+        outputs=outputs,
+    )
+
+
+def normalize_storage_health(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("disk", "sensor", "monitor_sensor"))
+    }
+    if not outputs:
+        if _fortios_is_vm(raw):
+            return _diagnostic(
+                EvaluationOutcome.NOT_APPLICABLE,
+                "No physical storage sensor applies to this FortiGate VM",
+                reason_code="virtual_appliance_storage_sensor_not_applicable",
+            )
+        return _diagnostic(
+            EvaluationOutcome.UNSUPPORTED,
+            "No supported storage-health evidence was returned",
+            reason_code="storage_health_unsupported",
+        )
+    text = "\n".join(outputs.values())
+    faults = tuple(
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if re.search(r"(?i)\b(?:disk|storage|ssd|flash)\b", line)
+        and re.search(r"(?i)\b(?:fail|fault|critical|degraded|read-only)\b", line)
+    )
+    if faults:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "Storage evidence contains an explicit fault state",
+            reason_code="storage_fault_detected",
+            metrics={"fault_count": len(faults)},
+            affected_items=faults[:20],
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "Storage evidence was collected but model-specific health semantics are not verified",
+        reason_code="storage_health_format_unverified",
+        outputs=outputs,
+    )
+
+
+def normalize_fortiguard_status(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("autoupdate", "fortiguard", "license_status"))
+    }
+    if not outputs:
+        return _diagnostic(
+            EvaluationOutcome.UNSUPPORTED,
+            "No FortiGuard or update status evidence was returned",
+            reason_code="fortiguard_status_unsupported",
+        )
+    text = "\n".join(outputs.values())
+    expired = tuple(
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if re.search(r"(?i)\b(?:expired|invalid|unlicensed)\b", line)
+    )
+    unreachable = bool(re.search(r"(?i)\b(?:unreachable|connection failed|timeout)\b", text))
+    if expired:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "FortiGuard evidence contains an expired or invalid entitlement",
+            reason_code="fortiguard_entitlement_invalid",
+            metrics={"entitlement_problem_count": len(expired), "service_reachable": not unreachable},
+            affected_items=expired[:20],
+            outputs=outputs,
+        )
+    if unreachable:
+        return _diagnostic(
+            EvaluationOutcome.WARNING,
+            "FortiGuard service reachability problem was reported",
+            reason_code="fortiguard_service_unreachable",
+            metrics={"service_reachable": False},
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "FortiGuard data was collected; entitlement, database currency and reachability require separate verified rules",
+        reason_code="fortiguard_policy_unconfigured",
+        metrics={"service_reachable": None, "database_currency": "unverified"},
+        outputs=outputs,
+    )
+
+
+def normalize_acme_status(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if "acme" in key
+    }
+    if not outputs:
+        return _diagnostic(
+            EvaluationOutcome.NOT_APPLICABLE,
+            "No ACME certificate status was returned",
+            reason_code="acme_not_configured_or_unsupported",
+        )
+    text = "\n".join(outputs.values())
+    failures = tuple(
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if re.search(r"(?i)\b(?:failed|error|invalid|expired)\b", line)
+    )
+    if failures:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            "ACME evidence contains a renewal or certificate failure",
+            reason_code="acme_failure_detected",
+            metrics={"failure_count": len(failures)},
+            affected_items=failures[:20],
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "ACME status was collected; successful automatic renewal is not proven by configuration alone",
+        reason_code="acme_renewal_not_verified",
+        outputs=outputs,
+    )
+
+
+def _expected_state_check(
+    raw: RawCollectorResult,
+    *,
+    section: str,
+    required_field: str,
+    output_tokens: tuple[str, ...],
+    unsupported_code: str,
+    expectation_code: str,
+    missing_code: str,
+    label: str,
+) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in output_tokens)
+    }
+    if not outputs:
+        return _diagnostic(
+            EvaluationOutcome.UNSUPPORTED,
+            f"No supported {label} evidence was returned",
+            reason_code=unsupported_code,
+        )
+    expected = _expected_names(raw, section, required_field)
+    text = "\n".join(outputs.values())
+    if not expected:
+        return _diagnostic(
+            EvaluationOutcome.UNKNOWN,
+            f"{label.capitalize()} evidence collected without explicit NetBox expectations",
+            reason_code=expectation_code,
+            outputs=outputs,
+        )
+    missing = tuple(name for name in expected if name not in text)
+    if missing:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            f"Expected {label} entries are missing or not proven up",
+            reason_code=missing_code,
+            metrics={"expected": len(expected), "missing": len(missing)},
+            affected_items=missing,
+            outputs=outputs,
+        )
+    unhealthy = tuple(
+        name for name in expected
+        if re.search(
+            rf"(?is){re.escape(name)}.{{0,240}}\b(?:down|dead|failed|error|inactive)\b",
+            text,
+        )
+    )
+    if unhealthy:
+        return _diagnostic(
+            EvaluationOutcome.FAIL,
+            f"Expected {label} entries report an unhealthy state",
+            reason_code=missing_code,
+            metrics={"expected": len(expected), "unhealthy": len(unhealthy)},
+            affected_items=unhealthy,
+            outputs=outputs,
+        )
+    proven = tuple(
+        name for name in expected
+        if re.search(
+            rf"(?is){re.escape(name)}.{{0,240}}\b(?:up|alive|established|success|healthy)\b",
+            text,
+        )
+    )
+    if len(proven) != len(expected):
+        return _diagnostic(
+            EvaluationOutcome.UNKNOWN,
+            f"Expected {label} entries were found but their healthy state was not proven",
+            reason_code=f"{section}_state_unverified",
+            metrics={"expected": len(expected), "state_proven": len(proven)},
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.PASS,
+        f"All explicitly expected {label} entries were found",
+        metrics={"expected": len(expected), "missing": 0},
+        outputs=outputs,
+    )
+
+
+def normalize_sdwan_health(raw: RawCollectorResult) -> DiagnosticValues:
+    base = _expected_state_check(
+        raw,
+        section="sdwan",
+        required_field="health_checks",
+        output_tokens=("sdwan", "virtual_wan"),
+        unsupported_code="sdwan_health_unsupported",
+        expectation_code="sdwan_expectation_unconfigured",
+        missing_code="required_sdwan_health_check_missing",
+        label="SD-WAN health check",
+    )
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("sdwan", "virtual_wan"))
+    }
+    text = "\n".join(outputs.values())
+    measurements = {
+        "packet_loss_percent": [
+            float(value) for value in re.findall(
+                r"(?i)(?:packet[-_ ]?loss|loss)\D{0,20}(\d+(?:\.\d+)?)\s*%",
+                text,
+            )
+        ],
+        "latency_ms": [
+            float(value) for value in re.findall(
+                r"(?i)latency\D{0,20}(\d+(?:\.\d+)?)\s*(?:ms)?",
+                text,
+            )
+        ],
+        "jitter_ms": [
+            float(value) for value in re.findall(
+                r"(?i)jitter\D{0,20}(\d+(?:\.\d+)?)\s*(?:ms)?",
+                text,
+            )
+        ],
+    }
+    thresholds = _expectations(raw).get("thresholds")
+    thresholds = thresholds if isinstance(thresholds, dict) else {}
+    breaches = []
+    for metric, threshold_key in (
+        ("packet_loss_percent", "sdwan_packet_loss_warning_percent"),
+        ("latency_ms", "sdwan_latency_warning_ms"),
+        ("jitter_ms", "sdwan_jitter_warning_ms"),
+    ):
+        threshold = thresholds.get(threshold_key)
+        if isinstance(threshold, (int, float)) and measurements[metric]:
+            maximum = max(measurements[metric])
+            if maximum > float(threshold):
+                breaches.append(f"{metric}={maximum:g}>{float(threshold):g}")
+    if breaches and base.outcome != EvaluationOutcome.FAIL:
+        return _diagnostic(
+            EvaluationOutcome.WARNING,
+            "SD-WAN SLA measurements exceed Atlas policy",
+            reason_code="sdwan_policy_threshold_exceeded",
+            metrics={
+                "maximum_packet_loss_percent": max(measurements["packet_loss_percent"], default=None),
+                "maximum_latency_ms": max(measurements["latency_ms"], default=None),
+                "maximum_jitter_ms": max(measurements["jitter_ms"], default=None),
+            },
+            affected_items=breaches,
+            outputs=outputs,
+        )
+    return base
+
+
+def normalize_vpn_tunnels(raw: RawCollectorResult) -> DiagnosticValues:
+    return _expected_state_check(
+        raw,
+        section="vpn",
+        required_field="required_up",
+        output_tokens=("vpn", "ipsec", "tunnel"),
+        unsupported_code="vpn_tunnel_status_unsupported",
+        expectation_code="vpn_expectation_unconfigured",
+        missing_code="required_vpn_tunnel_missing",
+        label="VPN tunnel",
+    )
+
+
+def normalize_log_delivery(raw: RawCollectorResult) -> DiagnosticValues:
+    outputs = {
+        key: value for key, value in _usable_outputs(raw).items()
+        if any(token in key for token in ("fortianalyzer", "syslog", "log_queue"))
+    }
+    if not outputs:
+        return _diagnostic(
+            EvaluationOutcome.UNKNOWN,
+            "No receiver-side evidence of log delivery is available",
+            reason_code="log_delivery_unverified",
+        )
+    text = "\n".join(outputs.values())
+    if re.search(r"(?i)\b(?:queue full|connection failed|unreachable|disconnected)\b", text):
+        return _diagnostic(
+            EvaluationOutcome.WARNING,
+            "Log forwarding evidence reports a delivery problem",
+            reason_code="log_delivery_problem_detected",
+            outputs=outputs,
+        )
+    return _diagnostic(
+        EvaluationOutcome.UNKNOWN,
+        "Forwarding configuration or queue state was collected; receiver-side delivery remains unverified",
+        reason_code="log_receiver_confirmation_unavailable",
         outputs=outputs,
     )
 
@@ -1923,6 +2575,8 @@ __all__ = [
     "normalize_cpu",
     "normalize_device_facts",
     "normalize_environment_health",
+    "normalize_acme_status",
+    "normalize_fortiguard_status",
     "normalize_fan_health",
     "normalize_ha_status",
     "normalize_interface_errors",
@@ -1934,10 +2588,16 @@ __all__ = [
     "normalize_os_version",
     "normalize_pki_certificates",
     "normalize_recent_logs",
+    "normalize_log_delivery",
     "normalize_routing_neighbors",
     "normalize_routing_table",
+    "normalize_sdwan_health",
+    "normalize_session_health",
+    "normalize_stability_events",
+    "normalize_storage_health",
     "normalize_temperature",
     "normalize_uptime",
+    "normalize_vpn_tunnels",
     "parse_aruba_aoscx_device_facts",
     "parse_cisco_cbs_device_facts",
     "parse_cisco_cbs_cpu",

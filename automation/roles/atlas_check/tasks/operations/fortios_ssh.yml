@@ -11,6 +11,11 @@
       - get router info ospf neighbor
       - get router info bgp summary
       - get system ha status
+      - diagnose sys ha checksum cluster
+      - diagnose sys ha history read
+      - diagnose sys sdwan health-check
+      - diagnose vpn tunnel list
+      - get log fortianalyzer setting
       - execute log filter category event
       - execute log filter view-lines 50
       - execute log display
@@ -30,4 +35,9 @@
         get_router_info_ospf_neighbor: "{{ atlas_fortios_operations.outputs['get router info ospf neighbor'] }}"
         get_router_info_bgp_summary: "{{ atlas_fortios_operations.outputs['get router info bgp summary'] }}"
         get_system_ha_status: "{{ atlas_fortios_operations.outputs['get system ha status'] }}"
+        diagnose_sys_ha_checksum_cluster: "{{ atlas_fortios_operations.outputs['diagnose sys ha checksum cluster'] }}"
+        diagnose_sys_ha_history_read: "{{ atlas_fortios_operations.outputs['diagnose sys ha history read'] }}"
+        diagnose_sys_sdwan_health_check: "{{ atlas_fortios_operations.outputs['diagnose sys sdwan health-check'] }}"
+        diagnose_vpn_tunnel_list: "{{ atlas_fortios_operations.outputs['diagnose vpn tunnel list'] }}"
+        get_log_fortianalyzer_setting: "{{ atlas_fortios_operations.outputs['get log fortianalyzer setting'] }}"
         execute_log_display: "{{ atlas_fortios_operations.outputs['execute log display'] }}"

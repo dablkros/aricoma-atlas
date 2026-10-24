@@ -1,0 +1,35 @@
+---
+- name: Collect FortiOS operational facts through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    vdom: root
+    selectors:
+      - selector: system_ntp_status
+      - selector: router_ipv4
+      - selector: router_ospf_neighbors
+      - selector: router_bgp_neighbors
+      - selector: system_ha-statistics
+      - selector: system_ha-history
+      - selector: system_ha-checksums
+      - selector: virtual-wan_health-check
+      - selector: vpn_ipsec
+      - selector: log_fortianalyzer-queue
+      - selector: log_event
+  register: atlas_fortios_operations
+  changed_when: false
+
+- name: Prepare FortiOS API operational evidence for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        system_ntp_status: "{{ atlas_fortios_operations.results | to_json }}"
+        router_ipv4: "{{ atlas_fortios_operations.results | to_json }}"
+        router_ospf_neighbors: "{{ atlas_fortios_operations.results | to_json }}"
+        router_bgp_neighbors: "{{ atlas_fortios_operations.results | to_json }}"
+        system_ha_statistics: "{{ atlas_fortios_operations.results | to_json }}"
+        system_ha_history: "{{ atlas_fortios_operations.results | to_json }}"
+        system_ha_checksums: "{{ atlas_fortios_operations.results | to_json }}"
+        virtual_wan_health_check: "{{ atlas_fortios_operations.results | to_json }}"
+        vpn_ipsec: "{{ atlas_fortios_operations.results | to_json }}"
+        log_fortianalyzer_queue: "{{ atlas_fortios_operations.results | to_json }}"
+        log_event: "{{ atlas_fortios_operations.results | to_json }}"
