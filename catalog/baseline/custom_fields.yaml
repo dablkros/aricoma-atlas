@@ -75,9 +75,9 @@ custom_fields:
     object_types:
       - "dcim.device"
     type: "multiselect"
-    label: "Profylaxia areas"
+    label: ""
     group_name: "Profylaxia"
-    description: "Select device-native collection areas; Atlas discovers applicable objects automatically"
+    description: "choices for profylaxia"
     required: false
     unique: false
     search_weight: 1000
