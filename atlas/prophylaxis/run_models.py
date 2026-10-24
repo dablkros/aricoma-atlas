@@ -156,6 +156,7 @@ class RunSummary(BaseModel):
     total: int = Field(default=0, ge=0)
     success: int = Field(default=0, ge=0)
     warning: int = Field(default=0, ge=0)
+    unknown: int = Field(default=0, ge=0)
     failure: int = Field(default=0, ge=0)
     skipped: int = Field(default=0, ge=0)
 
@@ -285,16 +286,22 @@ class ProphylaxisRun(BaseModel):
             summary = RunSummary(
                 total=len(checks),
                 success=sum(
-                    check.status == "success"
-                    and check.evaluation != EvaluationOutcome.WARNING
+                    check.evaluation == EvaluationOutcome.PASS
                     for check in checks
                 ),
                 warning=sum(
                     check.evaluation == EvaluationOutcome.WARNING
                     for check in checks
                 ),
+                unknown=sum(
+                    check.evaluation == EvaluationOutcome.UNKNOWN
+                    and check.values is not None
+                    and check.error is None
+                    for check in checks
+                ),
                 failure=sum(
-                    check.status in {"failed", "incomplete"}
+                    check.status == "failed"
+                    or (check.status == "incomplete" and check.error is not None)
                     for check in checks
                 ),
                 skipped=sum(check.status == "skipped" for check in checks),

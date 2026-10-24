@@ -34,6 +34,14 @@ device exposes an unambiguous intrinsic state, Atlas preserves that evidence.
 Where operational intent is required, the result remains `UNKNOWN` rather than
 manufacturing `PASS`, `WARNING` or `FAIL`.
 
+A successfully collected `UNKNOWN` result is reported separately as
+`summary.unknown`; it is not a collection failure. FortiOS uptime and
+routing-neighbor state stay informational until an explicit policy defines the
+expected age and required adjacencies. Recent event logs use the severity
+reported by FortiOS: `warning`, `error`, `critical`, `alert` and `emergency`
+produce a `WARNING` review result, while the report retains the timestamp,
+`logdesc` and `msg` as bounded evidence.
+
 For SSH, physical interface names are discovered from `get system interface`.
 Only names matching the module's restricted interface-name grammar are used to
 build `diagnose hardware deviceinfo nic <interface>` commands. Device-provided
@@ -53,7 +61,7 @@ text is never passed to a general shell.
 | routing | `router_ipv4`, `router_ospf_neighbors`, `router_bgp_neighbors` | routing table, BGP networks, OSPF neighbors and BGP summary | Tables and discovered neighbors are reported without a required-route policy. |
 | HA | HA statistics, history and checksum selectors | HA status, checksum and history diagnostics | Standalone is N/A. Cluster evidence is collected without a manually declared member list. |
 | SD-WAN, IPsec | `virtual-wan_health-check`, `vpn_ipsec` | SD-WAN health and VPN tunnel diagnostics | Discovered states and SLA measurements are reported without customer thresholds or assumed always-up tunnels. |
-| recent events, delivery | FortiAnalyzer queue selector; crash/config logs | limited event log plus FortiAnalyzer forwarding setting | Configuration is not receiver-side proof. Delivery remains unknown without queue/receiver evidence. |
+| recent events, delivery | FortiAnalyzer queue selector; crash/config logs | limited event log plus FortiAnalyzer forwarding setting | Warning-or-higher FortiOS events require review and include their reported reason. Configuration is not receiver-side proof; delivery remains unknown without queue/receiver evidence. |
 | backup | existing Oxidized node/job state | existing Oxidized node/job state | Profylaxia does not trigger a backup. Last successful collection differs from last configuration change and restore testing. |
 | firmware/lifecycle/PSIRT | future reviewed Fortinet integration | installed version/model only | Installed data is collected; recommendation, lifecycle and PSIRT stay unverified until an official integrated source is reviewed. |
 

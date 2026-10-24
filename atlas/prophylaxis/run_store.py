@@ -217,6 +217,7 @@ class FileRunStore:
             "",
             f"Success: {run.summary.success}",
             f"Warning: {run.summary.warning}",
+            f"Unknown: {run.summary.unknown}",
             f"Failure: {run.summary.failure}",
             f"Skipped: {run.summary.skipped}",
             f"Total: {run.summary.total}",

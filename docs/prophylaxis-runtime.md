@@ -172,7 +172,9 @@ uložené hodnoty pre obe porovnania.
 ## Všeobecná uptime politika
 
 Uptime sa vyhodnocuje až nad normalizovanou hodnotou `uptime_seconds`, preto je
-politika spoločná pre všetky platformy a transporty:
+politika spoločná pre platformy s existujúcim hodnotiacim kontraktom. FortiOS
+je v tejto iterácii collection-first: uptime uloží ako `UNKNOWN` a nepoužije
+nasledujúce prahy, kým nebude nakonfigurovaná explicitná politika:
 
 | Hodnota | Evaluation | Reason code |
 | --- | --- | --- |

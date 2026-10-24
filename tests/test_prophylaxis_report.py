@@ -40,9 +40,10 @@ class ProphylaxisReportTests(unittest.TestCase):
             status="PARTIAL",
             report_path="/run/report.txt",
             summary=RunSummary(
-                total=5,
+                total=6,
                 success=2,
                 warning=1,
+                unknown=1,
                 failure=1,
                 skipped=1,
             ),
@@ -74,6 +75,15 @@ class ProphylaxisReportTests(unittest.TestCase):
                     error="unsupported_check",
                 ),
                 result(
+                    check=CheckId.ROUTING_TABLE.value,
+                    status="incomplete",
+                    evaluation=EvaluationOutcome.UNKNOWN,
+                    values=SystemMetricValues(
+                        outcome=EvaluationOutcome.UNKNOWN,
+                        reason_code="automatic_evaluation_not_configured",
+                    ),
+                ),
+                result(
                     check=CheckId.INTERFACE_ERROR_COUNTERS.value,
                     status="failed",
                     collection_status=CollectionStatus.FAILED,
@@ -96,6 +106,8 @@ class ProphylaxisReportTests(unittest.TestCase):
         ):
             self.assertIn(section, report)
         self.assertIn("collection=COLLECTED, evaluation=WARNING", report)
+        self.assertIn("Unknown: 1", report)
+        self.assertIn("collection=COLLECTED, evaluation=UNKNOWN", report)
         self.assertIn("collection=UNSUPPORTED, evaluation=UNSUPPORTED", report)
 
 

@@ -14,11 +14,13 @@ from atlas.prophylaxis.parsers import (
     normalize_device_facts,
     normalize_environment_health,
     normalize_interface_errors,
+    normalize_interface_state,
     normalize_license_state,
     normalize_memory,
     normalize_ntp_status,
     normalize_pki_certificates,
     normalize_recent_logs,
+    normalize_storage_health,
     normalize_uptime,
 )
 
@@ -264,6 +266,88 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
         self.assertEqual(values.reason_code, "counter_delta_unavailable")
         self.assertEqual(values.metrics["absolute_error_total"], 15)
+
+    def test_fortios_physical_interfaces_and_spaced_error_counters(self):
+        raw = RawCollectorResult(
+            collector=CollectorId.FORTIOS_INTERFACES,
+            platform="fortios",
+            status="ok",
+            data={
+                "get_system_interface_physical": (
+                    "== [onboard]\n"
+                    "        ==[port1]\n"
+                    "                status: up\n"
+                    "        ==[port2]\n"
+                    "                status: down\n"
+                    "        ==[port3]\n"
+                    "                status: up\n"
+                ),
+                "diagnose_hardware_deviceinfo_nic": (
+                    "===== diagnose hardware deviceinfo nic port1 =====\n"
+                    "Link: up\nRx errors: 0\nTx errors: 0\n"
+                    "===== diagnose hardware deviceinfo nic port2 =====\n"
+                    "Link: down\nRx errors: 0\nTx errors: 0\n"
+                    "===== diagnose hardware deviceinfo nic port3 =====\n"
+                    "Link: up\nRx errors: 0\nTx errors: 0\n"
+                ),
+                "discovered_interface_count": 3,
+                "interface_diagnostics_truncated": False,
+            },
+        )
+
+        state = normalize_interface_state(raw)
+        errors = normalize_interface_errors(raw)
+
+        self.assertEqual(state.metrics["discovered_physical_interfaces"], 3)
+        self.assertEqual(state.metrics["up"], 2)
+        self.assertEqual(state.metrics["down_or_unused"], 1)
+        self.assertEqual(errors.reason_code, "counter_delta_unavailable")
+        self.assertEqual(errors.metrics["absolute_error_total"], 0)
+
+    def test_fortios_storage_inventory_is_normalized_without_threshold(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_RESOURCES,
+            diagnose_hardware_deviceinfo_disk=(
+                "Disk SYSTEM(boot) 2.0GiB type: IDE [Virtio Disk]\n"
+                "  partition 479.0MiB, 289.0MiB free mounted: Y\n"
+                "  partition 1.4GiB, 1.3GiB free mounted: Y\n"
+                "Disk Virtual-Disk ref: 16 30.0GiB type: IDE [Virtio Disk]\n"
+                "  partition ref: 17 29.4GiB, 29.4GiB free mounted: Y\n"
+                "Total available disks: 2\n"
+                "Max SSD disks: 8 Available storage disks: 1\n"
+            ),
+        )
+
+        values = normalize_storage_health(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertEqual(values.reason_code, "storage_threshold_unconfigured")
+        self.assertEqual(values.metrics["disk_count"], 2)
+        self.assertEqual(values.metrics["available_storage_disk_count"], 1)
+
+    def test_fortios_important_log_severities_include_event_reason(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_OPERATIONS,
+            execute_log_display=(
+                'date=2026-10-24 time=20:00:01 level="alert" '
+                'logdesc="Configuration changed" '
+                'msg="Administrator changed system settings"\n'
+                'date=2026-10-24 time=20:01:02 level="warning" '
+                'logdesc="Update failed" msg="FortiGuard timeout"\n'
+                'date=2026-10-24 time=20:02:03 level="information" '
+                'logdesc="Admin login successful"\n'
+            ),
+        )
+
+        values = normalize_recent_logs(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertEqual(values.reason_code, "important_log_events_detected")
+        self.assertEqual(values.metrics["important_event_count"], 2)
+        self.assertIn("Configuration changed", values.affected_items[0])
+        self.assertIn("Administrator changed", values.affected_items[0])
 
     def test_license_certificate_ntp_and_logs_have_actionable_outcomes(self):
         compliance = self.command_result(

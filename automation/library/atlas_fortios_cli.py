@@ -89,8 +89,9 @@ ALLOWED_COMMANDS = {
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[#$>]\s*$")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 PAGER_MARKER = "--More--"
-INTERFACE_HEADER_PATTERN = re.compile(
-    r"(?m)^==\s*\[\s*([A-Za-z0-9_.:-]{1,64})\s*]\s*$"
+INTERFACE_BLOCK_PATTERN = re.compile(
+    r"(?ms)^\s*==\s*\[\s*([A-Za-z0-9_.:-]{1,64})\s*]\s*$"
+    r"(?P<body>.*?)(?=^\s*==\s*\[|\Z)"
 )
 MAX_DISCOVERED_INTERFACES = 256
 
@@ -222,7 +223,14 @@ def main():
                 or outputs.get("get system interface", "")
             )
             discovered_interfaces = tuple(dict.fromkeys(
-                INTERFACE_HEADER_PATTERN.findall(interface_output)
+                name
+                for name, body in INTERFACE_BLOCK_PATTERN.findall(
+                    interface_output
+                )
+                if re.search(
+                    r"(?m)^\s*(?:mode|ip|ipv6|status|speed)\s*:",
+                    body,
+                )
             ))
             for interface in discovered_interfaces[:MAX_DISCOVERED_INTERFACES]:
                 command = f"diagnose hardware deviceinfo nic {interface}"

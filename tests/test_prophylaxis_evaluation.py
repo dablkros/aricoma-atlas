@@ -1,4 +1,5 @@
 import unittest
+from types import SimpleNamespace
 from uuid import uuid4
 
 from atlas.prophylaxis.evaluation import (
@@ -9,6 +10,7 @@ from atlas.prophylaxis.evaluation import (
 from atlas.prophylaxis.models import (
     CheckId,
     CollectionStatus,
+    DiagnosticValues,
     EvaluationOutcome,
     UptimeValues,
 )
@@ -55,6 +57,57 @@ class UptimeEvaluationTests(unittest.TestCase):
         self.assertEqual(result.collection_status, CollectionStatus.COLLECTED)
         self.assertEqual(result.evaluation, EvaluationOutcome.WARNING)
         self.assertEqual(result.values.reason_code, "uptime_too_long")
+
+    def test_fortios_uptime_is_collected_without_threshold_evaluation(self):
+        result = DeviceFactsRunService._success_result(
+            7,
+            "FGT-01",
+            "10.99.98.104",
+            "fortios",
+            CheckId.UPTIME,
+            UptimeValues(uptime_seconds=UPTIME_TOO_SHORT_SECONDS - 1),
+        )
+        summary = DeviceFactsRunService._summary((result,))
+
+        self.assertEqual(result.status, "incomplete")
+        self.assertEqual(result.collection_status, CollectionStatus.COLLECTED)
+        self.assertEqual(result.evaluation, EvaluationOutcome.UNKNOWN)
+        self.assertEqual(
+            result.values.reason_code,
+            "automatic_evaluation_not_configured",
+        )
+        self.assertEqual(summary.unknown, 1)
+        self.assertEqual(summary.failure, 0)
+
+    def test_fortios_neighbors_preserve_evidence_without_policy(self):
+        raw = SimpleNamespace(
+            context={"transport": "ssh", "port": 22, "vdom": "root"}
+        )
+        cases = (
+            (CheckId.ROUTING_PROTOCOL_NEIGHBORS, EvaluationOutcome.WARNING),
+        )
+        for check, collected_outcome in cases:
+            with self.subTest(check=check.value):
+                result = DeviceFactsRunService._annotate_fortios_result(
+                    "fortios",
+                    check,
+                    DiagnosticValues(
+                        outcome=collected_outcome,
+                        reason_code="collected_state",
+                        summary="Collected evidence",
+                        metrics={"finding_count": 1},
+                        affected_items=("device evidence",),
+                    ),
+                    raw,
+                )
+
+                self.assertEqual(result.outcome, EvaluationOutcome.UNKNOWN)
+                self.assertEqual(
+                    result.reason_code,
+                    "automatic_evaluation_not_configured",
+                )
+                self.assertEqual(result.metrics["finding_count"], 1)
+                self.assertEqual(result.affected_items, ("device evidence",))
 
     def test_short_uptime_warning_is_visible_in_report(self):
         result = DeviceFactsRunService._success_result(

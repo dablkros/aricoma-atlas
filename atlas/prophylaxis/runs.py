@@ -149,9 +149,19 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
-            if summary.failure and not summary.success and not summary.warning:
+            if (
+                summary.failure
+                and not summary.success
+                and not summary.warning
+                and not summary.unknown
+            ):
                 status = "FAILED"
-            elif summary.failure or summary.skipped or summary.warning:
+            elif (
+                summary.failure
+                or summary.skipped
+                or summary.warning
+                or summary.unknown
+            ):
                 status = "PARTIAL"
             else:
                 status = "COMPLETED"
@@ -861,6 +871,20 @@ class DeviceFactsRunService:
     ):
         if platform != "fortios":
             return values
+        if check in {
+            CheckId.ROUTING_PROTOCOL_NEIGHBORS,
+        } and isinstance(values, DiagnosticValues):
+            summaries = {
+                CheckId.ROUTING_PROTOCOL_NEIGHBORS: (
+                    "Routing-neighbor inventory collected; expected adjacencies "
+                    "are not configured"
+                ),
+            }
+            values = values.model_copy(update={
+                "outcome": EvaluationOutcome.UNKNOWN,
+                "reason_code": "automatic_evaluation_not_configured",
+                "summary": summaries[check],
+            })
         if check == CheckId.CPU_UTILIZATION and isinstance(
             values, CPUUtilizationValues
         ):
@@ -1512,6 +1536,20 @@ class DeviceFactsRunService:
                 values=values,
             )
         if check == CheckId.UPTIME and isinstance(values, UptimeValues):
+            if platform == "fortios":
+                return ProphylaxisCheckResult(
+                    check=check.value,
+                    device_id=device_id,
+                    device_name=name,
+                    management_ip=management_ip,
+                    platform=platform,
+                    status="incomplete",
+                    collection_status=CollectionStatus.COLLECTED,
+                    evaluation=EvaluationOutcome.UNKNOWN,
+                    values=values.model_copy(update={
+                        "reason_code": "automatic_evaluation_not_configured"
+                    }),
+                )
             outcome, reason_code = evaluate_uptime(values)
             return ProphylaxisCheckResult(
                 check=check.value,
@@ -1620,21 +1658,29 @@ class DeviceFactsRunService:
     @staticmethod
     def _summary(results: tuple[ProphylaxisCheckResult, ...]) -> RunSummary:
         success = sum(
-            result.status == "success"
-            and result.evaluation != EvaluationOutcome.WARNING
+            result.evaluation == EvaluationOutcome.PASS
             for result in results
         )
         warning = sum(
             result.evaluation == EvaluationOutcome.WARNING for result in results
         )
+        unknown = sum(
+            result.evaluation == EvaluationOutcome.UNKNOWN
+            and result.values is not None
+            and result.error is None
+            for result in results
+        )
         skipped = sum(result.status == "skipped" for result in results)
         failure = sum(
-            result.status in {"failed", "incomplete"} for result in results
+            result.status == "failed"
+            or (result.status == "incomplete" and result.error is not None)
+            for result in results
         )
         return RunSummary(
             total=len(results),
             success=success,
             warning=warning,
+            unknown=unknown,
             failure=failure,
             skipped=skipped,
         )

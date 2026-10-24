@@ -44,6 +44,8 @@ const elements = {
   prophylaxisRun: document.querySelector("#prophylaxis-run"),
   prophylaxisStatus: document.querySelector("#prophylaxis-status"),
   prophylaxisSuccess: document.querySelector("#prophylaxis-success"),
+  prophylaxisWarning: document.querySelector("#prophylaxis-warning"),
+  prophylaxisUnknown: document.querySelector("#prophylaxis-unknown"),
   prophylaxisFailure: document.querySelector("#prophylaxis-failure"),
   prophylaxisSkipped: document.querySelector("#prophylaxis-skipped"),
   prophylaxisReport: document.querySelector("#prophylaxis-report"),
@@ -771,6 +773,8 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
         : "unknown";
   setPill(elements.prophylaxisStatus, visualStatus, status);
   elements.prophylaxisSuccess.textContent = String(run?.summary?.success ?? 0);
+  elements.prophylaxisWarning.textContent = String(run?.summary?.warning ?? 0);
+  elements.prophylaxisUnknown.textContent = String(run?.summary?.unknown ?? 0);
   elements.prophylaxisFailure.textContent = String(run?.summary?.failure ?? 0);
   elements.prophylaxisSkipped.textContent = String(run?.summary?.skipped ?? 0);
   elements.prophylaxisReport.textContent = run

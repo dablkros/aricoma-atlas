@@ -780,6 +780,8 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
                 up.append(f"{name}: up"[:160])
             elif state.casefold() in {"down", "offline", "disconnected"}:
                 down.append(f"{name}: down"[:160])
+    up = list(dict.fromkeys(up))
+    down = list(dict.fromkeys(down))
     discovered_count = raw.data.get("discovered_interface_count")
     diagnostics_truncated = raw.data.get("interface_diagnostics_truncated")
     inventory_metrics = {
@@ -875,7 +877,7 @@ def normalize_interface_errors(raw: RawCollectorResult) -> DiagnosticValues:
         counters.extend(
             int(value)
             for value in re.findall(
-                r"(?im)\b(?:rx|tx)[_-]?(?:errors?|crc|drops?)\s*[:=]\s*(\d+)",
+                r"(?im)\b(?:rx|tx)[\s_-]*(?:errors?|crc|drops?)\s*[:=]\s*(\d+)",
                 text,
             )
         )
@@ -1284,39 +1286,43 @@ def normalize_recent_logs(raw: RawCollectorResult) -> DiagnosticValues:
             outputs=outputs,
         )
     if raw.platform == "fortios":
-        levels = [
-            value.casefold()
-            for output in outputs.values()
-            for value in re.findall(r'(?i)\blevel="?([a-z]+)"?', output)
-        ]
+        events = []
+        for output in outputs.values():
+            for line in output.splitlines():
+                level_match = re.search(
+                    r'(?i)\blevel="?([a-z]+)"?', line
+                )
+                if level_match:
+                    events.append((level_match.group(1).casefold(), line))
+        levels = [level for level, _line in events]
         critical_levels = {"emergency", "alert", "critical", "error"}
         warning_levels = {"warning"}
         critical = sum(level in critical_levels for level in levels)
         warnings = sum(level in warning_levels for level in levels)
         affected = []
-        for output in outputs.values():
-            for line in output.splitlines():
-                level_match = re.search(r'(?i)\blevel="?([a-z]+)"?', line)
-                if not level_match or level_match.group(1).casefold() not in (
-                    critical_levels | warning_levels
-                ):
-                    continue
-                description = re.search(r'\blogdesc="([^"]+)"', line)
-                message = re.search(r'\bmsg="([^"]+)"', line)
-                detail = (
-                    description.group(1)
-                    if description
-                    else message.group(1) if message else "FortiOS event"
-                )
-                affected.append(
-                    f"{level_match.group(1).upper()}: {detail}"[:160]
-                )
-        if critical:
-            outcome = EvaluationOutcome.FAIL
-            reason = "critical_log_events_detected"
-        elif warnings:
+        for level, line in events:
+            if level not in critical_levels | warning_levels:
+                continue
+            date = re.search(r'\bdate="?([^"\s]+)"?', line)
+            event_time = re.search(r'\btime="?([^"\s]+)"?', line)
+            description = re.search(r'\blogdesc="([^"]+)"', line)
+            message = re.search(r'\bmsg="([^"]+)"', line)
+            details = []
+            for match in (description, message):
+                if match and match.group(1) not in details:
+                    details.append(match.group(1))
+            timestamp = " ".join(
+                match.group(1)
+                for match in (date, event_time)
+                if match
+            )
+            prefix = f"{timestamp} " if timestamp else ""
+            detail = " — ".join(details) or "FortiOS event"
+            affected.append(f"{prefix}{level.upper()}: {detail}"[:240])
+        affected = list(dict.fromkeys(affected))
+        if critical or warnings:
             outcome = EvaluationOutcome.WARNING
-            reason = "warning_log_events_detected"
+            reason = "important_log_events_detected"
         elif levels:
             outcome = EvaluationOutcome.PASS
             reason = None
@@ -1325,12 +1331,32 @@ def normalize_recent_logs(raw: RawCollectorResult) -> DiagnosticValues:
             reason = "log_format_unrecognized"
         return _diagnostic(
             outcome,
-            f"Parsed {len(levels)} FortiOS event log entries",
+            (
+                f"Parsed {len(levels)} FortiOS event log entries; "
+                f"{critical + warnings} require review"
+                if critical or warnings
+                else f"Parsed {len(levels)} FortiOS event log entries"
+            ),
             reason_code=reason,
             metrics={
                 "event_count": len(levels),
                 "critical_or_error_count": critical,
                 "warning_count": warnings,
+                "important_event_count": critical + warnings,
+                **{
+                    f"severity_{level}_count": levels.count(level)
+                    for level in (
+                        "emergency",
+                        "alert",
+                        "critical",
+                        "error",
+                        "warning",
+                        "notice",
+                        "information",
+                        "debug",
+                    )
+                    if level in levels
+                },
             },
             affected_items=affected[:20],
             outputs=outputs,
@@ -1668,6 +1694,66 @@ def normalize_storage_health(raw: RawCollectorResult) -> DiagnosticValues:
             affected_items=faults[:20],
             outputs=outputs,
         )
+    if raw.platform == "fortios":
+        unit_to_gib = {
+            "KiB": 1 / (1024 * 1024),
+            "MiB": 1 / 1024,
+            "GiB": 1,
+            "TiB": 1024,
+        }
+        disks = re.findall(
+            r"(?im)^Disk\s+.+?\s+(?:ref:\s*\d+\s+)?"
+            r"(\d+(?:\.\d+)?)(KiB|MiB|GiB|TiB)\s+type:",
+            text,
+        )
+        partitions = re.findall(
+            r"(?im)^\s*partition(?:\s+ref:\s*\d+)?\s+"
+            r"(\d+(?:\.\d+)?)(KiB|MiB|GiB|TiB),\s+"
+            r"(\d+(?:\.\d+)?)(KiB|MiB|GiB|TiB)\s+free\b",
+            text,
+        )
+        available_match = re.search(
+            r"(?im)^Total available disks:\s*(\d+)\s*$",
+            text,
+        )
+        storage_match = re.search(
+            r"(?im)\bAvailable storage disks:\s*(\d+)\b",
+            text,
+        )
+        if disks or partitions or available_match or storage_match:
+            total_capacity = sum(
+                float(value) * unit_to_gib[unit] for value, unit in disks
+            )
+            partition_capacity = sum(
+                float(total) * unit_to_gib[total_unit]
+                for total, total_unit, _free, _free_unit in partitions
+            )
+            partition_free = sum(
+                float(free) * unit_to_gib[free_unit]
+                for _total, _total_unit, free, free_unit in partitions
+            )
+            metrics = {
+                "disk_count": len(disks),
+                "total_capacity_gib": round(total_capacity, 3),
+                "partition_count": len(partitions),
+                "partition_capacity_gib": round(partition_capacity, 3),
+                "partition_free_gib": round(partition_free, 3),
+            }
+            if available_match:
+                metrics["available_disk_count"] = int(
+                    available_match.group(1)
+                )
+            if storage_match:
+                metrics["available_storage_disk_count"] = int(
+                    storage_match.group(1)
+                )
+            return _diagnostic(
+                EvaluationOutcome.UNKNOWN,
+                "FortiOS storage inventory collected without a health threshold",
+                reason_code="storage_threshold_unconfigured",
+                metrics=metrics,
+                outputs=outputs,
+            )
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Storage evidence was collected but model-specific health semantics are not verified",

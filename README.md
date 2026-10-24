@@ -1916,9 +1916,11 @@ SSH platformy očakávajú `username`, `password` a voliteľný
 FortiOS bez nej očakáva `username` a `password`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
 Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
-vrstvy. Spoločná uptime politika však vracia `WARNING` pri hodnote pod 3 dni
-alebo nad 365 dní bez ohľadu na platformu. UI a textový report zobrazujú uptime
-v ľudskom formáte, kým JSON/API zachováva sekundy. Operations UI poskytuje
+vrstvy. Existujúca uptime politika vracia `WARNING` pri hodnote pod 3 dni alebo
+nad 365 dní na platformách s hodnotiacim kontraktom. FortiOS je collection-first
+a uptime ponechá `UNKNOWN`, kým nebude zadaná explicitná politika. UI a textový
+report zobrazujú uptime v ľudskom formáte, kým JSON/API zachováva sekundy.
+Operations UI poskytuje
 manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Skupina
 `identity` vytvára výsledky
 `device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
@@ -1934,6 +1936,13 @@ FortiOS používa rovnaké tematické check ID cez API aj SSH. Atlas automaticky
 objaví dostupné objekty a uloží ich hodnoty bez per-device thresholdov. Úplnú
 maticu a konzervatívne hranice parserov opisuje
 [FortiOS Profylaxia kontrakt](docs/prophylaxis-fortios.md).
+Úspešne získaný výsledok bez nakonfigurovaného hodnotenia sa počíta v
+`summary.unknown`, nie v `summary.failure`; UI aj textový report zobrazujú túto
+kategóriu samostatne.
+FortiOS `recent_log_events` kontroluje obmedzenú vzorku event logu. Severity
+`warning`, `error`, `critical`, `alert` alebo `emergency` vytvorí `WARNING` na
+manuálne preverenie a report uvedie čas, `logdesc` a `msg`; samotná závažnosť
+udalosti sa bez samostatnej politiky nemení na automatický `FAIL`.
 
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
