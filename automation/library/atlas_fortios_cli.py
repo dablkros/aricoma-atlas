@@ -31,6 +31,9 @@ options:
     type: list
     elements: str
     required: true
+  collect_interface_diagnostics:
+    type: bool
+    default: false
   connect_timeout:
     type: int
     default: 10
@@ -52,6 +55,9 @@ ALLOWED_COMMANDS = {
     "diagnose debug config-error-log read",
     "diagnose debug crashlog read",
     "diagnose hardware deviceinfo disk",
+    "diagnose hardware deviceinfo psu",
+    "diagnose hardware deviceinfo tpm",
+    "diagnose hardware sysinfo memory",
     "diagnose hardware sysinfo conserve",
     "diagnose hardware sysinfo sensor-status",
     "diagnose netlink interface list",
@@ -67,10 +73,13 @@ ALLOWED_COMMANDS = {
     "execute log filter category event",
     "execute log filter view-lines 50",
     "get router info bgp summary",
+    "get router info bgp network",
     "get router info ospf neighbor",
     "get router info routing-table all",
     "get log fortianalyzer setting",
     "get system ha status",
+    "get system fortiguard-service status",
+    "get system interface",
     "get system interface physical",
     "get system status",
     "get system performance status",
@@ -80,6 +89,10 @@ ALLOWED_COMMANDS = {
 PROMPT_PATTERN = re.compile(r"(?m)^[^\r\n]*[#$>]\s*$")
 ANSI_ESCAPE_PATTERN = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]")
 PAGER_MARKER = "--More--"
+INTERFACE_HEADER_PATTERN = re.compile(
+    r"(?m)^==\s*\[\s*([A-Za-z0-9_.:-]{1,64})\s*]\s*$"
+)
+MAX_DISCOVERED_INTERFACES = 256
 
 
 class FortiOSPromptTimeout(TimeoutError):
@@ -172,6 +185,7 @@ def main():
             "username": {"type": "str", "required": True},
             "password": {"type": "str", "required": True, "no_log": True},
             "commands": {"type": "list", "elements": "str", "required": True},
+            "collect_interface_diagnostics": {"type": "bool", "default": False},
             "connect_timeout": {"type": "int", "default": 10},
             "command_timeout": {"type": "int", "default": 30},
             "host_key_checking": {"type": "bool", "default": True},
@@ -201,9 +215,41 @@ def main():
                 expected_prompt=prompt,
             )
             outputs[command] = _clean_output(output, command, returned_prompt)
+        interface_diagnostics = []
+        if params["collect_interface_diagnostics"]:
+            interface_output = (
+                outputs.get("get system interface physical", "")
+                or outputs.get("get system interface", "")
+            )
+            discovered_interfaces = tuple(dict.fromkeys(
+                INTERFACE_HEADER_PATTERN.findall(interface_output)
+            ))
+            for interface in discovered_interfaces[:MAX_DISCOVERED_INTERFACES]:
+                command = f"diagnose hardware deviceinfo nic {interface}"
+                channel.send(command + "\n")
+                output, returned_prompt = _receive_until_prompt(
+                    channel,
+                    params["command_timeout"],
+                    expected_prompt=prompt,
+                )
+                cleaned = _clean_output(output, command, returned_prompt)
+                outputs[command] = cleaned
+                interface_diagnostics.append(
+                    f"===== {command} =====\n{cleaned}"
+                )
         module.exit_json(
             changed=False,
             outputs=outputs,
+            interface_diagnostics="\n\n".join(interface_diagnostics),
+            discovered_interface_count=len(
+                discovered_interfaces
+                if params["collect_interface_diagnostics"]
+                else ()
+            ),
+            interface_diagnostics_truncated=(
+                params["collect_interface_diagnostics"]
+                and len(discovered_interfaces) > MAX_DISCOVERED_INTERFACES
+            ),
             banner=_clean_output(banner, "", prompt),
         )
     except ModuleNotFoundError:

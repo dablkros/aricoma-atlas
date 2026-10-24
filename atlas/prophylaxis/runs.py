@@ -18,7 +18,6 @@ from atlas.prophylaxis.errors import (
     UnsupportedPlatformError,
 )
 from atlas.prophylaxis.evaluation import evaluate_uptime
-from atlas.prophylaxis.expectations import FortiOSExpectations, fortios_expectations
 from atlas.prophylaxis.models import (
     CheckId,
     CollectionStatus,
@@ -552,11 +551,6 @@ class DeviceFactsRunService:
                 target,
                 base_profile,
             )
-            expectations = (
-                fortios_expectations(device)
-                if target.platform == "fortios"
-                else FortiOSExpectations()
-            )
             plan = self.collector_registry.plan(known_checks, profile)
         except Exception as exc:
             status, code = self._classify_exception(exc)
@@ -742,7 +736,6 @@ class DeviceFactsRunService:
                             "transport": execution_profile.transport,
                             "port": port,
                             "vdom": "root",
-                            "expectations": expectations.context(),
                         }
                     })
             except Exception as exc:
@@ -831,11 +824,10 @@ class DeviceFactsRunService:
             for check in task.checks:
                 try:
                     values = task.collector.normalize(check, raw)
-                    values = self._apply_fortios_policy(
+                    values = self._annotate_fortios_result(
                         target.platform,
                         check,
                         values,
-                        expectations,
                         raw,
                     )
                     result = self._success_result(
@@ -861,93 +853,38 @@ class DeviceFactsRunService:
         return tuple(results)
 
     @staticmethod
-    def _apply_fortios_policy(
+    def _annotate_fortios_result(
         platform: str,
         check: CheckId,
         values,
-        expectations: FortiOSExpectations,
         raw,
     ):
         if platform != "fortios":
             return values
-        thresholds = expectations.thresholds
         if check == CheckId.CPU_UTILIZATION and isinstance(
             values, CPUUtilizationValues
         ):
-            current = values.current_percent
-            if (
-                thresholds.cpu_critical_percent is not None
-                and current >= thresholds.cpu_critical_percent
-            ):
-                outcome, reason = EvaluationOutcome.FAIL, "cpu_policy_critical"
-            elif (
-                thresholds.cpu_warning_percent is not None
-                and current >= thresholds.cpu_warning_percent
-            ):
-                outcome, reason = EvaluationOutcome.WARNING, "cpu_policy_warning"
-            elif (
-                thresholds.cpu_warning_percent is not None
-                or thresholds.cpu_critical_percent is not None
-            ):
-                outcome, reason = EvaluationOutcome.PASS, None
-            else:
-                outcome, reason = (
-                    EvaluationOutcome.UNKNOWN,
-                    "cpu_threshold_unconfigured",
-                )
             values = DiagnosticValues(
-                outcome=outcome,
-                reason_code=reason,
-                summary="CPU utilization evaluated against Atlas policy",
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code="automatic_evaluation_not_configured",
+                summary="CPU utilization collected for inventory and reporting",
                 metrics={
-                    "current_percent": current,
+                    "current_percent": values.current_percent,
                     "one_minute_percent": values.one_minute_percent,
                     "five_minute_percent": values.five_minute_percent,
-                    "warning_threshold_percent": thresholds.cpu_warning_percent,
-                    "critical_threshold_percent": thresholds.cpu_critical_percent,
                 },
             )
-        elif (
-            check == CheckId.MEMORY_UTILIZATION
-            and isinstance(values, SystemMetricValues)
-            and values.value is not None
-        ):
-            current = values.value
-            if (
-                thresholds.memory_critical_percent is not None
-                and current >= thresholds.memory_critical_percent
-            ):
-                outcome, reason = EvaluationOutcome.FAIL, "memory_policy_critical"
-            elif (
-                thresholds.memory_warning_percent is not None
-                and current >= thresholds.memory_warning_percent
-            ):
-                outcome, reason = EvaluationOutcome.WARNING, "memory_policy_warning"
-            elif (
-                thresholds.memory_warning_percent is not None
-                or thresholds.memory_critical_percent is not None
-            ):
-                outcome, reason = EvaluationOutcome.PASS, None
-            else:
-                return values
-            values = values.model_copy(update={
-                "outcome": outcome,
-                "reason_code": reason,
-            })
         if isinstance(values, DiagnosticValues):
             context = {
                 "transport": raw.context.get("transport"),
                 "port": raw.context.get("port"),
                 "vdom": raw.context.get("vdom"),
-                "expectations_configured": bool(
-                    expectations.model_dump(exclude_defaults=True)
-                ),
             }
             evidence = tuple(values.affected_items[:10])
             action = {
                 EvaluationOutcome.FAIL: "Investigate the reported evidence before remediation.",
                 EvaluationOutcome.WARNING: "Plan a review of the reported evidence.",
-                EvaluationOutcome.UNKNOWN: "Provide expectations or a verified fixture before evaluation.",
+                EvaluationOutcome.UNKNOWN: "Review the collected values; automatic policy evaluation is not configured.",
                 EvaluationOutcome.UNSUPPORTED: "Confirm model and FortiOS command or API support.",
                 EvaluationOutcome.NOT_APPLICABLE: "No action unless the declared design differs.",
             }.get(values.outcome)

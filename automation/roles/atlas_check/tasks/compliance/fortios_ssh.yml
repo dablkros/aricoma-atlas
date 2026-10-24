@@ -7,6 +7,7 @@
     password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
     commands:
       - get system status
+      - get system fortiguard-service status
       - get vpn certificate local details
       - get vpn certificate ca details
       - diagnose autoupdate status
@@ -24,6 +25,7 @@
     atlas_transport_result:
       data:
         get_system_status: "{{ atlas_fortios_compliance.outputs['get system status'] }}"
+        get_system_fortiguard_service_status: "{{ atlas_fortios_compliance.outputs['get system fortiguard-service status'] }}"
         get_vpn_certificate_local_details: "{{ atlas_fortios_compliance.outputs['get vpn certificate local details'] }}"
         get_vpn_certificate_ca_details: "{{ atlas_fortios_compliance.outputs['get vpn certificate ca details'] }}"
         diagnose_autoupdate_status: "{{ atlas_fortios_compliance.outputs['diagnose autoupdate status'] }}"

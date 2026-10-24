@@ -370,19 +370,6 @@ def _walk_json(value):
             yield from _walk_json(child)
 
 
-def _expectations(raw: RawCollectorResult) -> dict:
-    value = raw.context.get("expectations")
-    return value if isinstance(value, dict) else {}
-
-
-def _expected_names(raw: RawCollectorResult, section: str, field: str) -> tuple[str, ...]:
-    section_value = _expectations(raw).get(section)
-    values = section_value.get(field) if isinstance(section_value, dict) else None
-    if not isinstance(values, list):
-        return ()
-    return tuple(value for value in values if isinstance(value, str) and value)
-
-
 def _usable_outputs(raw: RawCollectorResult) -> dict[str, str]:
     return {
         key: value
@@ -507,7 +494,8 @@ def _environment_outputs(raw: RawCollectorResult) -> dict[str, str]:
             token in key
             for token in (
                 "environment", "power_inline", "post", "system_resources",
-                "sensor_status", "session_banner",
+                "sensor_status", "session_banner", "deviceinfo_psu",
+                "deviceinfo_tpm",
             )
         )
     }
@@ -718,7 +706,10 @@ def _interface_outputs(raw: RawCollectorResult) -> dict[str, str]:
     return {
         key: value
         for key, value in _usable_outputs(raw).items()
-        if any(token in key for token in ("interface", "interfaces"))
+        if any(
+            token in key
+            for token in ("interface", "interfaces", "deviceinfo_nic")
+        )
     }
 
 
@@ -739,8 +730,15 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
             normalized = " ".join(line.split())
             if raw.platform == "fortios":
                 interface_match = re.match(r"^==\[([^]]+)]$", normalized)
+                nic_match = re.match(
+                    r"^===== diagnose hardware deviceinfo nic (\S+) =====$",
+                    normalized,
+                )
                 if interface_match:
                     current_interface = interface_match.group(1)
+                    continue
+                if nic_match:
+                    current_interface = nic_match.group(1)
                     continue
             if re.search(r"\berr-disabled\b", normalized, re.I):
                 bad.append(normalized[:160])
@@ -782,44 +780,40 @@ def normalize_interface_state(raw: RawCollectorResult) -> DiagnosticValues:
                 up.append(f"{name}: up"[:160])
             elif state.casefold() in {"down", "offline", "disconnected"}:
                 down.append(f"{name}: down"[:160])
-    required = _expected_names(raw, "interfaces", "required_up")
-    up_text = "\n".join(up).casefold()
-    missing_required = tuple(
-        name for name in required if name.casefold() not in up_text
-    )
-    if bad or missing_required:
+    discovered_count = raw.data.get("discovered_interface_count")
+    diagnostics_truncated = raw.data.get("interface_diagnostics_truncated")
+    inventory_metrics = {
+        "err_disabled": 0,
+        "up": len(up),
+        "down_or_unused": len(down),
+        "discovered_physical_interfaces": (
+            discovered_count
+            if isinstance(discovered_count, int)
+            and not isinstance(discovered_count, bool)
+            else None
+        ),
+        "interface_diagnostics_truncated": (
+            diagnostics_truncated
+            if isinstance(diagnostics_truncated, bool)
+            else None
+        ),
+    }
+    if bad:
+        inventory_metrics["err_disabled"] = len(bad)
         return _diagnostic(
             EvaluationOutcome.FAIL,
-            "Required interface state does not match NetBox expectations",
-            reason_code=(
-                "required_interface_down" if missing_required else "interface_err_disabled"
-            ),
-            metrics={
-                "err_disabled": len(bad),
-                "down_or_unused": len(down),
-                "required_up": len(required),
-                "required_down": len(missing_required),
-            },
-            affected_items=bad + list(missing_required),
-            outputs=outputs,
-        )
-    if required:
-        return _diagnostic(
-            EvaluationOutcome.PASS,
-            "All explicitly required interfaces are up",
-            metrics={"required_up": len(required), "required_down": 0},
+            "Interface inventory contains an explicit error-disabled state",
+            reason_code="interface_err_disabled",
+            metrics=inventory_metrics,
+            affected_items=bad,
             outputs=outputs,
         )
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
-        "Interface state collected; expected administrative state is not configured",
-        reason_code="interface_expectation_unconfigured",
-        metrics={
-            "err_disabled": 0,
-            "up": len(up),
-            "down_or_unused": len(down),
-        },
-        affected_items=down[:20],
+        "Interface inventory and current link states were collected",
+        reason_code="automatic_evaluation_not_configured",
+        metrics=inventory_metrics,
+        affected_items=tuple(dict.fromkeys(up + down))[:200],
         outputs=outputs,
     )
 
@@ -1071,35 +1065,40 @@ def normalize_pki_certificates(raw: RawCollectorResult) -> DiagnosticValues:
     now = datetime.now(timezone.utc)
     days = [int((value - now).total_seconds() // 86400) for value in dates]
     minimum = min(days)
-    threshold_values = _expectations(raw).get("thresholds")
-    threshold_values = threshold_values if isinstance(threshold_values, dict) else {}
-    warning_days = threshold_values.get(
-        "certificate_warning_days", CERTIFICATE_WARNING_DAYS
-    )
-    critical_days = threshold_values.get(
-        "certificate_critical_days", CERTIFICATE_CRITICAL_DAYS
-    )
-    if minimum < 0:
-        outcome = EvaluationOutcome.FAIL
-        reason = "certificate_expired"
-    elif minimum <= critical_days:
-        outcome = EvaluationOutcome.FAIL
-        reason = "certificate_renewal_urgent"
-    elif minimum <= warning_days:
-        outcome = EvaluationOutcome.WARNING
-        reason = "certificate_renewal_due"
-    else:
-        outcome = EvaluationOutcome.PASS
-        reason = None
+    if raw.platform != "fortios":
+        if minimum < 0:
+            outcome = EvaluationOutcome.FAIL
+            reason = "certificate_expired"
+        elif minimum <= CERTIFICATE_CRITICAL_DAYS:
+            outcome = EvaluationOutcome.FAIL
+            reason = "certificate_renewal_urgent"
+        elif minimum <= CERTIFICATE_WARNING_DAYS:
+            outcome = EvaluationOutcome.WARNING
+            reason = "certificate_renewal_due"
+        else:
+            outcome = EvaluationOutcome.PASS
+            reason = None
+        return _diagnostic(
+            outcome,
+            f"Parsed {len(dates)} certificate expiration dates",
+            reason_code=reason,
+            metrics={
+                "certificate_count": len(dates),
+                "minimum_days_remaining": minimum,
+                "warning_threshold_days": CERTIFICATE_WARNING_DAYS,
+                "critical_threshold_days": CERTIFICATE_CRITICAL_DAYS,
+                "automatic_renewal_state": "unverified",
+            },
+            outputs=outputs,
+        )
     return _diagnostic(
-        outcome,
+        EvaluationOutcome.UNKNOWN,
         f"Parsed {len(dates)} certificate expiration dates",
-        reason_code=reason,
+        reason_code="automatic_evaluation_not_configured",
         metrics={
             "certificate_count": len(dates),
             "minimum_days_remaining": minimum,
-            "warning_threshold_days": warning_days,
-            "critical_threshold_days": critical_days,
+            "expired_certificate_count": sum(day < 0 for day in days),
             "automatic_renewal_state": "unverified",
         },
         outputs=outputs,
@@ -1392,7 +1391,7 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
         for key, value in _usable_outputs(raw).items()
         if key in {
             "show_ip_route", "show_route", "get_router_info_routing_table_all",
-            "router_ipv4",
+            "get_router_info_bgp_network", "router_ipv4",
         }
     }
     text = "\n".join(outputs.values())
@@ -1408,23 +1407,14 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
         text,
     )
     default = bool(re.search(r"(?im)\b0\.0\.0\.0/0\b|gateway of last resort", text))
-    expected = _expected_names(raw, "routing", "required_routes")
-    missing = tuple(route for route in expected if route not in text)
-    outcome = (
-        EvaluationOutcome.FAIL if missing
-        else EvaluationOutcome.PASS if expected
-        else EvaluationOutcome.UNKNOWN
-    )
     return _diagnostic(
-        outcome,
-        "Required routes evaluated" if expected else "Routing table collected without explicit route expectations",
-        reason_code=(
-            "required_route_missing" if missing
-            else None if expected
-            else "routing_expectation_unconfigured"
-        ),
+        EvaluationOutcome.UNKNOWN,
+        "Routing table inventory collected",
+        reason_code="automatic_evaluation_not_configured",
         metrics={"parsed_routes": len(routes), "default_route_present": default},
-        affected_items=missing,
+        affected_items=tuple(dict.fromkeys(
+            " ".join(route.split())[:160] for route in routes
+        ))[:200],
         outputs=outputs,
     )
 
@@ -1481,37 +1471,29 @@ def normalize_routing_neighbors(raw: RawCollectorResult) -> DiagnosticValues:
         if re.match(r"^\s*(?:\d{1,3}\.){3}\d{1,3}\b", line)
     )
     bad = len(re.findall(r"(?i)\b(?:DOWN|INIT|IDLE|ACTIVE)\b", text))
-    expected = (
-        _expected_names(raw, "routing", "bgp_neighbors")
-        + _expected_names(raw, "routing", "ospf_neighbors")
-    )
-    missing = tuple(name for name in expected if name not in text)
-    if missing:
-        return _diagnostic(
-            EvaluationOutcome.FAIL,
-            "Expected routing neighbors were not found in an established state",
-            reason_code="required_routing_neighbor_missing",
-            metrics={"expected_neighbors": len(expected), "missing_neighbors": len(missing)},
-            affected_items=missing,
-            outputs=outputs,
+    observed = tuple(
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if re.search(
+            r"(?i)\b(?:FULL|ESTABLISHED|DOWN|INIT|IDLE|ACTIVE)\b",
+            line,
         )
+    )
     if bad:
         return _diagnostic(
             EvaluationOutcome.WARNING,
             f"Routing-neighbor output contains {bad} non-established states",
             reason_code="routing_neighbor_not_established",
             metrics={"established_markers": established, "problem_markers": bad},
+            affected_items=observed[:100],
             outputs=outputs,
         )
     return _diagnostic(
-        EvaluationOutcome.PASS if expected and established else EvaluationOutcome.UNKNOWN,
-        "Routing-neighbor output collected",
-        reason_code=(
-            None if expected and established
-            else "routing_expectation_unconfigured" if established
-            else "routing_neighbor_format_unrecognized"
-        ),
+        EvaluationOutcome.UNKNOWN,
+        "Routing-neighbor inventory collected",
+        reason_code="automatic_evaluation_not_configured",
         metrics={"established_markers": established, "problem_markers": 0},
+        affected_items=observed[:100],
         outputs=outputs,
     )
 
@@ -1535,11 +1517,6 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             reason_code="ha_not_configured_or_unsupported",
         )
     text = "\n".join(outputs.values())
-    ha_expectations = _expectations(raw).get("ha")
-    ha_expectations = ha_expectations if isinstance(ha_expectations, dict) else {}
-    expected_mode = ha_expectations.get("mode")
-    expected_members = _expected_names(raw, "ha", "members")
-    monitored_interfaces = _expected_names(raw, "ha", "monitored_interfaces")
     structured_modes = tuple(
         value.casefold()
         for payload in _json_outputs(raw).values()
@@ -1551,21 +1528,10 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
         re.search(r"(?im)^\s*Mode:\s*Standalone\s*$", text)
         or "standalone" in structured_modes
     ):
-        outcome = (
-            EvaluationOutcome.PASS
-            if expected_mode == "standalone"
-            else EvaluationOutcome.FAIL
-            if expected_mode in {"active-passive", "active-active"}
-            else EvaluationOutcome.NOT_APPLICABLE
-        )
         return _diagnostic(
-            outcome,
+            EvaluationOutcome.NOT_APPLICABLE,
             "FortiGate is operating as a standalone unit",
-            reason_code=(
-                None if outcome == EvaluationOutcome.PASS
-                else "ha_expected_but_standalone" if outcome == EvaluationOutcome.FAIL
-                else "ha_not_configured"
-            ),
+            reason_code="ha_not_configured",
             metrics={"cluster_members": 0},
             outputs=outputs,
         )
@@ -1579,43 +1545,14 @@ def normalize_ha_status(raw: RawCollectorResult) -> DiagnosticValues:
             affected_items=(" ".join(line.split())[:160] for line in bad[:20]),
             outputs=outputs,
         )
-    missing_members = tuple(member for member in expected_members if member not in text)
-    if missing_members:
-        return _diagnostic(
-            EvaluationOutcome.FAIL,
-            "Expected HA members are missing from the collected state",
-            reason_code="ha_member_missing",
-            metrics={"expected_members": len(expected_members), "missing_members": len(missing_members)},
-            affected_items=missing_members,
-            outputs=outputs,
-        )
-    missing_monitors = tuple(
-        interface for interface in monitored_interfaces if interface not in text
-    )
-    if missing_monitors:
-        return _diagnostic(
-            EvaluationOutcome.FAIL,
-            "Expected HA monitored interfaces are missing from the collected state",
-            reason_code="ha_monitored_interface_missing",
-            metrics={
-                "expected_monitored_interfaces": len(monitored_interfaces),
-                "missing_monitored_interfaces": len(missing_monitors),
-            },
-            affected_items=missing_monitors,
-            outputs=outputs,
-        )
     healthy = re.findall(
         r"(?i)\b(?:active|standby|ready|member|master|primary|secondary|in-sync)\b",
         text,
     )
     return _diagnostic(
-        EvaluationOutcome.PASS if healthy and (expected_mode or expected_members or monitored_interfaces) else EvaluationOutcome.UNKNOWN,
-        "HA/stack output collected",
-        reason_code=(
-            None if healthy and (expected_mode or expected_members or monitored_interfaces)
-            else "ha_expectation_unconfigured" if healthy
-            else "ha_state_unrecognized"
-        ),
+        EvaluationOutcome.UNKNOWN,
+        "HA/stack inventory collected",
+        reason_code="automatic_evaluation_not_configured",
         metrics={"healthy_markers": len(healthy)},
         outputs=outputs,
     )
@@ -1817,15 +1754,11 @@ def normalize_acme_status(raw: RawCollectorResult) -> DiagnosticValues:
     )
 
 
-def _expected_state_check(
+def _discovered_state_check(
     raw: RawCollectorResult,
     *,
-    section: str,
-    required_field: str,
     output_tokens: tuple[str, ...],
     unsupported_code: str,
-    expectation_code: str,
-    missing_code: str,
     label: str,
 ) -> DiagnosticValues:
     outputs = {
@@ -1838,73 +1771,55 @@ def _expected_state_check(
             f"No supported {label} evidence was returned",
             reason_code=unsupported_code,
         )
-    expected = _expected_names(raw, section, required_field)
     text = "\n".join(outputs.values())
-    if not expected:
+    reason_prefix = re.sub(r"[^a-z0-9]+", "_", label.casefold()).strip("_")
+    if re.search(
+        r"(?i)\b(?:not configured|no entries|no tunnels?|no members?)\b",
+        text,
+    ):
         return _diagnostic(
-            EvaluationOutcome.UNKNOWN,
-            f"{label.capitalize()} evidence collected without explicit NetBox expectations",
-            reason_code=expectation_code,
-            outputs=outputs,
-        )
-    missing = tuple(name for name in expected if name not in text)
-    if missing:
-        return _diagnostic(
-            EvaluationOutcome.FAIL,
-            f"Expected {label} entries are missing or not proven up",
-            reason_code=missing_code,
-            metrics={"expected": len(expected), "missing": len(missing)},
-            affected_items=missing,
+            EvaluationOutcome.NOT_APPLICABLE,
+            f"No configured {label} entries were reported",
+            reason_code=f"{reason_prefix}_not_configured",
             outputs=outputs,
         )
     unhealthy = tuple(
-        name for name in expected
-        if re.search(
-            rf"(?is){re.escape(name)}.{{0,240}}\b(?:down|dead|failed|error|inactive)\b",
-            text,
-        )
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if re.search(r"(?i)\b(?:down|dead|failed|error|inactive)\b", line)
     )
     if unhealthy:
         return _diagnostic(
-            EvaluationOutcome.FAIL,
-            f"Expected {label} entries report an unhealthy state",
-            reason_code=missing_code,
-            metrics={"expected": len(expected), "unhealthy": len(unhealthy)},
-            affected_items=unhealthy,
-            outputs=outputs,
-        )
-    proven = tuple(
-        name for name in expected
-        if re.search(
-            rf"(?is){re.escape(name)}.{{0,240}}\b(?:up|alive|established|success|healthy)\b",
-            text,
-        )
-    )
-    if len(proven) != len(expected):
-        return _diagnostic(
             EvaluationOutcome.UNKNOWN,
-            f"Expected {label} entries were found but their healthy state was not proven",
-            reason_code=f"{section}_state_unverified",
-            metrics={"expected": len(expected), "state_proven": len(proven)},
+            f"{label.capitalize()} inventory contains non-active states",
+            reason_code="automatic_evaluation_not_configured",
+            metrics={"non_active_markers": len(unhealthy)},
+            affected_items=unhealthy[:20],
             outputs=outputs,
         )
+    active = len(re.findall(
+        r"(?i)\b(?:up|alive|established|success|healthy)\b", text
+    ))
+    observed = tuple(
+        " ".join(line.split())[:160]
+        for line in text.splitlines()
+        if line.strip()
+    )
     return _diagnostic(
-        EvaluationOutcome.PASS,
-        f"All explicitly expected {label} entries were found",
-        metrics={"expected": len(expected), "missing": 0},
+        EvaluationOutcome.UNKNOWN,
+        f"{label.capitalize()} inventory collected",
+        reason_code="automatic_evaluation_not_configured",
+        metrics={"active_markers": active},
+        affected_items=observed[:100],
         outputs=outputs,
     )
 
 
 def normalize_sdwan_health(raw: RawCollectorResult) -> DiagnosticValues:
-    base = _expected_state_check(
+    base = _discovered_state_check(
         raw,
-        section="sdwan",
-        required_field="health_checks",
         output_tokens=("sdwan", "virtual_wan"),
         unsupported_code="sdwan_health_unsupported",
-        expectation_code="sdwan_expectation_unconfigured",
-        missing_code="required_sdwan_health_check_missing",
         label="SD-WAN health check",
     )
     outputs = {
@@ -1932,44 +1847,22 @@ def normalize_sdwan_health(raw: RawCollectorResult) -> DiagnosticValues:
             )
         ],
     }
-    thresholds = _expectations(raw).get("thresholds")
-    thresholds = thresholds if isinstance(thresholds, dict) else {}
-    breaches = []
-    for metric, threshold_key in (
-        ("packet_loss_percent", "sdwan_packet_loss_warning_percent"),
-        ("latency_ms", "sdwan_latency_warning_ms"),
-        ("jitter_ms", "sdwan_jitter_warning_ms"),
-    ):
-        threshold = thresholds.get(threshold_key)
-        if isinstance(threshold, (int, float)) and measurements[metric]:
-            maximum = max(measurements[metric])
-            if maximum > float(threshold):
-                breaches.append(f"{metric}={maximum:g}>{float(threshold):g}")
-    if breaches and base.outcome != EvaluationOutcome.FAIL:
-        return _diagnostic(
-            EvaluationOutcome.WARNING,
-            "SD-WAN SLA measurements exceed Atlas policy",
-            reason_code="sdwan_policy_threshold_exceeded",
-            metrics={
-                "maximum_packet_loss_percent": max(measurements["packet_loss_percent"], default=None),
-                "maximum_latency_ms": max(measurements["latency_ms"], default=None),
-                "maximum_jitter_ms": max(measurements["jitter_ms"], default=None),
-            },
-            affected_items=breaches,
-            outputs=outputs,
-        )
-    return base
+    metrics = dict(base.metrics)
+    metrics.update({
+        "maximum_packet_loss_percent": max(
+            measurements["packet_loss_percent"], default=None
+        ),
+        "maximum_latency_ms": max(measurements["latency_ms"], default=None),
+        "maximum_jitter_ms": max(measurements["jitter_ms"], default=None),
+    })
+    return base.model_copy(update={"metrics": metrics})
 
 
 def normalize_vpn_tunnels(raw: RawCollectorResult) -> DiagnosticValues:
-    return _expected_state_check(
+    return _discovered_state_check(
         raw,
-        section="vpn",
-        required_field="required_up",
         output_tokens=("vpn", "ipsec", "tunnel"),
         unsupported_code="vpn_tunnel_status_unsupported",
-        expectation_code="vpn_expectation_unconfigured",
-        missing_code="required_vpn_tunnel_missing",
         label="VPN tunnel",
     )
 

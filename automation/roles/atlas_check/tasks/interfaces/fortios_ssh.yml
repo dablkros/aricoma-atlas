@@ -6,9 +6,11 @@
     username: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
     password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
     commands:
+      - get system interface
       - get system interface physical
       - diagnose netlink interface list
       - diagnose netlink interface packet-rate
+    collect_interface_diagnostics: true
     connect_timeout: "{{ ansible_connect_timeout | int }}"
     command_timeout: "{{ ansible_command_timeout | int }}"
     host_key_checking: "{{ ansible_host_key_checking | bool }}"
@@ -20,6 +22,10 @@
   ansible.builtin.set_fact:
     atlas_transport_result:
       data:
+        get_system_interface: "{{ atlas_fortios_interfaces.outputs['get system interface'] }}"
         get_system_interface_physical: "{{ atlas_fortios_interfaces.outputs['get system interface physical'] }}"
         diagnose_netlink_interface_list: "{{ atlas_fortios_interfaces.outputs['diagnose netlink interface list'] }}"
         diagnose_netlink_interface_packet_rate: "{{ atlas_fortios_interfaces.outputs['diagnose netlink interface packet-rate'] }}"
+        diagnose_hardware_deviceinfo_nic: "{{ atlas_fortios_interfaces.interface_diagnostics | default('') }}"
+        discovered_interface_count: "{{ atlas_fortios_interfaces.discovered_interface_count | default(0) }}"
+        interface_diagnostics_truncated: "{{ atlas_fortios_interfaces.interface_diagnostics_truncated | default(false) }}"

@@ -10,6 +10,7 @@
       - get router info routing-table all
       - get router info ospf neighbor
       - get router info bgp summary
+      - get router info bgp network
       - get system ha status
       - diagnose sys ha checksum cluster
       - diagnose sys ha history read
@@ -34,6 +35,7 @@
         get_router_info_routing_table_all: "{{ atlas_fortios_operations.outputs['get router info routing-table all'] }}"
         get_router_info_ospf_neighbor: "{{ atlas_fortios_operations.outputs['get router info ospf neighbor'] }}"
         get_router_info_bgp_summary: "{{ atlas_fortios_operations.outputs['get router info bgp summary'] }}"
+        get_router_info_bgp_network: "{{ atlas_fortios_operations.outputs['get router info bgp network'] }}"
         get_system_ha_status: "{{ atlas_fortios_operations.outputs['get system ha status'] }}"
         diagnose_sys_ha_checksum_cluster: "{{ atlas_fortios_operations.outputs['diagnose sys ha checksum cluster'] }}"
         diagnose_sys_ha_history_read: "{{ atlas_fortios_operations.outputs['diagnose sys ha history read'] }}"

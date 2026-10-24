@@ -157,10 +157,11 @@ Oxidized 0.37.0 serializuje pre uzol `name`, `mtime` a voliteľný posledný job
 poľami `start`, `end`, `status` a `time`:
 [Oxidized 0.37.0 `Node#serialize`](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/node.rb#L86-L105).
 
-PKI parser používa predvolené Atlas policy hranice 30/60 dní; zariadenie ich
-môže explicitne zmeniť v `profylaxia_expectations`. Nejde o Fortinet vendor
-limit. Stav automatickej obnovy zostáva `unverified`; samotná dlhá platnosť ho
-nedokazuje.
+FortiOS PKI parser ukladá počet certifikátov, najkratšiu zostávajúcu platnosť a
+počet už expirovaných certifikátov. V tejto fáze nad nimi neuplatňuje Atlas
+warning/critical thresholdy. Stav automatickej obnovy zostáva `unverified`;
+samotná dlhá platnosť ju nedokazuje. Existujúce Cisco parsery si zachovávajú
+svoj doterajší kontrakt.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán

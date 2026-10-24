@@ -993,6 +993,12 @@ def provision_custom_fields(
         existing_by_name,
         apply_changes,
     )
+    retired_expectations = retire_empty_custom_field(
+        client,
+        existing_by_name,
+        "profylaxia_expectations",
+        apply_changes,
+    )
 
     return {
         "existing": existing_count,
@@ -1000,7 +1006,61 @@ def provision_custom_fields(
         "created": created_count,
         "drift": drift_count,
         "monitoring_migration": migration,
+        "retired_expectations": retired_expectations,
     }
+
+
+def retire_empty_custom_field(
+    client,
+    existing_by_name,
+    field_name,
+    apply_changes,
+):
+    """Remove one retired field only when every Device value is empty."""
+    existing = existing_by_name.get(field_name)
+    result = {
+        "found": existing is not None,
+        "devices_examined": 0,
+        "nonempty_devices": 0,
+        "removed": False,
+    }
+    if existing is None:
+        return result
+
+    devices = client.get_all("/api/dcim/devices/")
+    result["devices_examined"] = len(devices)
+    nonempty = []
+    for device in devices:
+        custom_fields = device.get("custom_fields")
+        if not isinstance(custom_fields, dict):
+            raise RuntimeError(
+                f"Device {device.get('id')} returned invalid custom_fields"
+            )
+        if custom_fields.get(field_name) not in (None, {}):
+            nonempty.append(device.get("id"))
+
+    result["nonempty_devices"] = len(nonempty)
+    print()
+    print("Retired custom field cleanup")
+    print("-" * 72)
+    if nonempty:
+        print(
+            f"[KEEP] {field_name}: {len(nonempty)} Device values are not empty"
+        )
+        return result
+
+    print(f"[REMOVE] {field_name}: all Device values are empty")
+    if not apply_changes:
+        return result
+
+    field_id = existing.get("id")
+    if isinstance(field_id, bool) or not isinstance(field_id, int):
+        raise RuntimeError(f"Retired {field_name} field has no valid id")
+    client.delete(f"/api/extras/custom-fields/{field_id}/")
+    existing_by_name.pop(field_name, None)
+    result["removed"] = True
+    print(f"[REMOVED] retired {field_name} field")
+    return result
 
 
 def migrate_monitoring_enabled(client, existing_by_name, apply_changes):

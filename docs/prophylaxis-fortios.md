@@ -21,57 +21,38 @@ If that service is absent, Atlas selects SSH/22 and reads `username` and
 falls back to SSH. Both transports map to the same thematic collectors and
 stable check IDs.
 
-## Explicit evaluation policy
+## Device-native discovery
 
-The optional NetBox JSON custom field `profylaxia_expectations` stores only
-expected state and Atlas policy. Atlas validates it before opening a device
-connection. Missing expectations do not manufacture a PASS or FAIL.
+NetBox selects the Profylaxia areas, but it does not contain a manually curated
+list of expected interfaces, routes, HA members, VPN tunnels or SD-WAN members.
+Atlas discovers the objects exposed by the selected FortiOS transport and stores
+their current values in the structured run result.
 
-```json
-{
-  "thresholds": {
-    "cpu_warning_percent": 75,
-    "cpu_critical_percent": 90,
-    "memory_warning_percent": 75,
-    "memory_critical_percent": 90,
-    "certificate_warning_days": 60,
-    "certificate_critical_days": 30
-  },
-  "interfaces": {"required_up": ["port1", "port2"]},
-  "routing": {
-    "required_routes": ["0.0.0.0/0"],
-    "bgp_neighbors": ["192.0.2.1"],
-    "ospf_neighbors": []
-  },
-  "ha": {
-    "mode": "active-passive",
-    "members": ["FGT-A", "FGT-B"],
-    "monitored_interfaces": ["port1"]
-  },
-  "vpn": {"required_up": ["hq"], "on_demand": ["support"]},
-  "sdwan": {"members": ["wan1", "wan2"], "health_checks": ["internet"]},
-  "vdoms": ["root"]
-}
-```
+This iteration is collection-first. It does not apply customer-specific CPU,
+memory, interface-utilization, certificate, VPN or SD-WAN thresholds. Where the
+device exposes an unambiguous intrinsic state, Atlas preserves that evidence.
+Where operational intent is required, the result remains `UNKNOWN` rather than
+manufacturing `PASS`, `WARNING` or `FAIL`.
 
-Thresholds are Atlas operational policy, not Fortinet vendor limits. The JSON
-result records transport, VDOM, collection time, rule, evidence and recommended
-action without storing raw credentials or a full configuration.
+For SSH, physical interface names are discovered from `get system interface`.
+Only names matching the module's restricted interface-name grammar are used to
+build `diagnose hardware deviceinfo nic <interface>` commands. Device-provided
+text is never passed to a general shell.
 
 ## Collector matrix
 
 | Area/checks | HTTPS monitor selectors | SSH read-only evidence | Evaluation boundary |
 | --- | --- | --- | --- |
 | identity, OS, serial, uptime | `system_status`, `/api/v2/monitor/web-ui/state` | `get system status`, `get system performance status` | Exact parsed values; model/serial reconciliation remains separate. |
-| CPU, memory, sessions | `system_resource_usage`, `system_performance_status` | `get system performance status`, `diagnose sys session stat`, `diagnose hardware sysinfo conserve` | CPU/memory need configured policy thresholds. One sample is not a trend. Conserve mode is an explicit failure. |
-| stability, storage, sensors | `system_sensor-info`, `system_crash-log_download`, `system_config-error-log_download` | sensor, disk, crash and config-error diagnostics | Explicit faults can fail; empty current evidence without history remains unknown. VM-only hardware checks can be not applicable. |
-| interfaces | `system_interface` | physical interface and netlink status/rates | A down port fails only when it is in `interfaces.required_up`. The traffic-history selector still needs a verified parameter contract; absolute counters remain unknown until a reliable delta exists. |
+| CPU, memory, sessions | `system_resource_usage`, `system_performance_status` | `get system performance status`, `diagnose sys session stat`, `diagnose hardware sysinfo memory`, `diagnose hardware sysinfo conserve` | Values are collected without Atlas warning/critical thresholds. One sample is not a trend. |
+| stability, storage, sensors | `system_sensor-info`, `system_storage`, crash/config-error selectors | sensor, disk, PSU, TPM, crash and config-error diagnostics | Unsupported model-specific commands remain unsupported; empty current evidence is not proof of historical stability. |
+| interfaces | `system_interface` | `get system interface`, netlink status/rates and dynamically discovered NIC diagnostics | All exposed interfaces are inventoried. A down port is not automatically a fault. Absolute counters remain informational until reliable deltas exist. |
 | licenses, FortiGuard | `license_status`, `system_fortiguard_server-info` | system status and autoupdate status/versions | Entitlement validity, database currency and service reachability are reported separately. Old or N/A database values do not fail by themselves. |
-| certificates, ACME | `system_available-certificates`, `system_acme-certificate-status` | local/CA certificate details and `diagnose sys acme list-domains` | Stored certificates and ACME status are distinct from a certificate presented by a service. SSH lists domains but does not call `status-full <domain>` until a verified per-domain plan exists. ACME configuration alone does not prove renewal. |
+| certificates, ACME | `system_available-certificates`, `system_acme-certificate-status` | local/CA certificate details and `diagnose sys acme list-domains` | Expiration dates are collected without warning/critical thresholds. Stored certificates differ from service-presented certificates. ACME configuration alone does not prove renewal. |
 | NTP | `system_ntp_status` | `diagnose sys ntp status` | PASS only for an explicit synchronized state. Diagnose permission denial is unknown. |
-| routing | `router_ipv4`, `router_ospf_neighbors`, `router_bgp_neighbors` | routing table, OSPF neighbors, BGP summary | Required routes/neighbors come from NetBox. Without expectations, collected state remains informational/unknown. |
-| HA | HA statistics, history and checksum selectors | HA status, checksum and history diagnostics | Standalone is N/A unless HA was expected. Expected members must be present; primary reachability alone is insufficient. |
-| SD-WAN, IPsec | `virtual-wan_health-check`, `vpn_ipsec` | SD-WAN health and VPN tunnel diagnostics | Required health checks and always-up tunnels come from NetBox. On-demand tunnels are not failed merely for being idle. |
+| routing | `router_ipv4`, `router_ospf_neighbors`, `router_bgp_neighbors` | routing table, BGP networks, OSPF neighbors and BGP summary | Tables and discovered neighbors are reported without a required-route policy. |
+| HA | HA statistics, history and checksum selectors | HA status, checksum and history diagnostics | Standalone is N/A. Cluster evidence is collected without a manually declared member list. |
+| SD-WAN, IPsec | `virtual-wan_health-check`, `vpn_ipsec` | SD-WAN health and VPN tunnel diagnostics | Discovered states and SLA measurements are reported without customer thresholds or assumed always-up tunnels. |
 | recent events, delivery | FortiAnalyzer queue selector; crash/config logs | limited event log plus FortiAnalyzer forwarding setting | Configuration is not receiver-side proof. Delivery remains unknown without queue/receiver evidence. |
 | backup | existing Oxidized node/job state | existing Oxidized node/job state | Profylaxia does not trigger a backup. Last successful collection differs from last configuration change and restore testing. |
 | firmware/lifecycle/PSIRT | future reviewed Fortinet integration | installed version/model only | Installed data is collected; recommendation, lifecycle and PSIRT stay unverified until an official integrated source is reviewed. |
@@ -81,11 +62,10 @@ action without storing raw credentials or a full configuration.
 - API payload normalization is conservative until real anonymized results are
   captured for every selector on supported FortiOS branches.
 - VDOM collection currently executes in `root`; multi-VDOM fan-out is not yet
-  implemented. A non-root expectation therefore must not be reported as
-  covered.
+  implemented.
 - Interface counter history and stability trends are not yet indexed across
   run artifacts, so single-sample values cannot prove sustained health.
-- TPM, presented-service TLS validation, FortiAnalyzer receiver confirmation,
+- Presented-service TLS validation, FortiAnalyzer receiver confirmation,
   recommended firmware, lifecycle, support entitlement and PSIRT correlation
   require separate verified contracts.
 - Needed fixtures: physical appliance sensors/disk/PSU; HA pair with checksum
