@@ -18,11 +18,17 @@ from atlas.services.oxidized_operations import OxidizedOperationFailure
 from atlas.services.oxidized_sync import OxidizedSyncFailure
 from atlas.services.platform_status import PlatformStatusService
 
+OPERATOR_TOKEN = "operator-token-for-tests-1234567890"
+OPERATOR_TOKEN_FILE = Path("/tmp/atlas-api-test-operator-token")
+OPERATOR_TOKEN_FILE.write_text(OPERATOR_TOKEN, encoding="utf-8")
+OPERATOR_HEADERS = {"Authorization": f"Bearer {OPERATOR_TOKEN}"}
+
 
 def test_settings(**overrides):
     values = {
         "environment": "test",
         "log_level": "CRITICAL",
+        "monitoring_operator_token_file": OPERATOR_TOKEN_FILE,
         "_env_file": None,
     }
     values.update(overrides)
@@ -210,24 +216,71 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(page.status_code, 200)
         self.assertIn("ARICOMA ATLAS", page.text)
+        self.assertIn("Import devices", page.text)
         self.assertEqual(script.status_code, 200)
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261020-1", page.text)
-        self.assertIn("/static/styles.css?v=20261018-1", page.text)
+        self.assertIn("/static/app.js?v=20261025-2", page.text)
+        self.assertIn("/static/styles.css?v=20261025-2", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
         self.assertIn('id="monitoring-activity"', page.text)
         self.assertIn('id="monitoring-bulk-preview"', page.text)
         self.assertIn('id="monitoring-bulk-apply"', page.text)
+        self.assertIn('id="inventory-import-dialog"', page.text)
         self.assertIn("/api/prophylaxis/runs", script.text)
         self.assertIn("Waiting for SNMP data", script.text)
         self.assertIn("MONITORING_VERIFICATION_TIMEOUT_MS", script.text)
         self.assertIn("renderMonitoringBulkPreview", script.text)
         self.assertIn("applyAllMonitoringPlans", script.text)
+        self.assertIn("/api/inventory/import/plan", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)
+
+    def test_inventory_plan_requires_operator_token(self):
+        response = self.client.post(
+            "/api/inventory/import/plan",
+            json={
+                "table": "Hostname,Hardware model,Management IP\nSW01,C9500,10.0.0.1\n",
+            },
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "inventory_unauthorized")
+
+    def test_inventory_plan_endpoint_is_registered(self):
+        planned = {
+            "plan_hash": "a" * 64,
+            "apply_allowed": True,
+            "missing_device_types": [],
+            "device_type_issues": [],
+            "report": {"summary": {"total_rows": 1}, "rows": []},
+        }
+        with patch("atlas.api.routes.inventory._execute", return_value=planned):
+            response = self.client.post(
+                "/api/inventory/import/plan",
+                headers=OPERATOR_HEADERS,
+                json={
+                    "table": "Hostname,Hardware model,Management IP\nSW01,C9500,10.0.0.1\n",
+                },
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), planned)
+
+    def test_inventory_apply_rejects_changed_input_before_dependencies(self):
+        response = self.client.post(
+            "/api/inventory/import/apply",
+            headers=OPERATOR_HEADERS,
+            json={
+                "table": "Hostname,Hardware model,Management IP\nSW01,C9500,10.0.0.1\n",
+                "plan_hash": "0" * 64,
+            },
+        )
+
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "inventory_plan_stale")
 
     def test_not_found_uses_stable_error_contract_and_request_id(self):
         response = self.client.get(
@@ -451,10 +504,17 @@ class OxidizedSyncApiTests(unittest.TestCase):
         for result, status_code, expected_status in cases:
             with self.subTest(expected_status=expected_status, changed=result.inventory_changed):
                 response = self.client(FakeSync(result=result)).post(
-                    "/api/oxidized/sync"
+                    "/api/oxidized/sync", headers=OPERATOR_HEADERS
                 )
                 self.assertEqual(response.status_code, status_code)
                 self.assertEqual(response.json()["status"], expected_status)
+
+    def test_sync_requires_operator_token(self):
+        response = self.client(FakeSync(result=sync_result())).post(
+            "/api/oxidized/sync"
+        )
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "oxidized_unauthorized")
 
     def test_sync_conflict_and_global_failures_use_safe_error_contract(self):
         cases = (
@@ -467,7 +527,7 @@ class OxidizedSyncApiTests(unittest.TestCase):
             with self.subTest(code=code):
                 response = self.client(
                     FakeSync(error=OxidizedSyncFailure(code, status_code))
-                ).post("/api/oxidized/sync")
+                ).post("/api/oxidized/sync", headers=OPERATOR_HEADERS)
                 self.assertEqual(response.status_code, status_code)
                 self.assertEqual(response.json()["error"]["code"], code)
 
@@ -483,7 +543,7 @@ class OxidizedSyncApiTests(unittest.TestCase):
                     issues=(issue,),
                 )
             )
-        ).post("/api/oxidized/sync")
+        ).post("/api/oxidized/sync", headers=OPERATOR_HEADERS)
 
         self.assertEqual(response.status_code, 503)
         self.assertTrue(response.json()["inventory_updated"])
@@ -491,7 +551,7 @@ class OxidizedSyncApiTests(unittest.TestCase):
 
     def test_sync_response_never_contains_secrets(self):
         response = self.client(FakeSync(result=sync_result())).post(
-            "/api/oxidized/sync"
+            "/api/oxidized/sync", headers=OPERATOR_HEADERS
         )
         serialized = response.text.lower()
         for forbidden in ("password", "secret_id", "nbt_sensitive", "openbao-token"):
@@ -612,21 +672,21 @@ class OperationsApiTests(unittest.TestCase):
     def test_backup_valid_unknown_invalid_and_unavailable(self):
         operations = FakeOperations()
         accepted = self.client(operations).post(
-            "/api/oxidized/devices/SW01/backup"
+            "/api/oxidized/devices/SW01/backup", headers=OPERATOR_HEADERS
         )
         unknown = self.client(operations).post(
-            "/api/oxidized/devices/UNKNOWN/backup"
+            "/api/oxidized/devices/UNKNOWN/backup", headers=OPERATOR_HEADERS
         )
         invalid = self.client(
             FakeOperations(
                 OxidizedOperationFailure("invalid_device_name", 422)
             )
-        ).post("/api/oxidized/devices/bad%25name/backup")
+        ).post("/api/oxidized/devices/bad%25name/backup", headers=OPERATOR_HEADERS)
         unavailable = self.client(
             FakeOperations(
                 OxidizedOperationFailure("oxidized_unavailable", 503)
             )
-        ).post("/api/oxidized/devices/SW01/backup")
+        ).post("/api/oxidized/devices/SW01/backup", headers=OPERATOR_HEADERS)
 
         self.assertEqual(accepted.status_code, 202)
         self.assertEqual(
@@ -637,6 +697,11 @@ class OperationsApiTests(unittest.TestCase):
         self.assertEqual(unknown.status_code, 404)
         self.assertEqual(invalid.status_code, 422)
         self.assertEqual(unavailable.status_code, 503)
+
+    def test_backup_requires_operator_token(self):
+        response = self.client().post("/api/oxidized/devices/SW01/backup")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "oxidized_unauthorized")
 
 
 if __name__ == "__main__":

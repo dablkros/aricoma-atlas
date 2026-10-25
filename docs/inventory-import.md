@@ -43,6 +43,33 @@ Library. Voliteľné sú
 `Tenant`, `Site`, `Device Role`, `Platform` a `VRF`. Ukážka je v
 `examples/inventory/acme-devices.csv`.
 
+### Import cez Atlas Operations UI
+
+Bežný operátor nemusí pripravovať runtime súbor ani používať textový editor.
+V Atlas Operations UI otvorí v časti **Operator tools** položku **Import
+devices** a vykoná tento kontrolovaný postup:
+
+1. vloží tabuľku skopírovanú z Excelu alebo obsah CSV;
+2. voliteľne určí spoločný Tenant a Site, inak sa použijú hodnoty z tabuľky
+   alebo predvolená runtime konfigurácia;
+3. spustí **Create dry-run plan** bez zápisu do NetBoxu;
+4. vyrieši všetky riadky `INVALID`, `CONFLICT` alebo `ERROR`;
+5. ak chýba Device Type, vloží jeho YAML priamo v okne; Atlas ho schémovo
+   overí, uloží do chráneného runtime katalógu a automaticky zopakuje plán;
+6. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
+   **Apply approved plan**.
+
+Apply je viazané SHA-256 odtlačkom na presný obsah tabuľky a zadané Tenant/Site
+hodnoty. Zmena ktoréhokoľvek vstupu zneplatní potvrdenie. Backend bezprostredne
+pred zápisom zopakuje dry-run a odmietne operáciu, ak sa objaví neplatný,
+konfliktný alebo chybový riadok. API operácie vyžadujú runtime operator token;
+token ani vložené dáta sa neukladajú do browser storage a po zatvorení karty
+sa nezachovávajú.
+
+GUI prijíma tabulátor, čiarku alebo bodkočiarku ako oddeľovač. XLSX súbor možno
+otvoriť v tabuľkovom editore a označené bunky priamo skopírovať do okna. CLI
+import zostáva k dispozícii pre automatizáciu a natívne `.xlsx` súbory.
+
 Súbor mimo runtime Atlasu možno bezpečne nahrať jedným príkazom:
 
 ```bash
@@ -120,6 +147,10 @@ Lokálny YAML zostáva mimo Git a Atlas ho neprepisuje. Pred provisioningom mus�
 prejsť rovnakou schémovou a komponentovou validáciou ako zostavený katalóg.
 Za pôvod a oprávnenie na použitie ručne dodaného súboru zodpovedá operátor;
 Atlas externý obsah automaticky nezískava ani nedistribuuje.
+
+Rovnaký adresár je pripojený do backendu na
+`/run/atlas/inventory/device-types`. YAML vložený cez Operations UI preto
+prežije opätovné vytvorenie kontajnera a je dostupný aj následnému CLI importu.
 
 CSV/XLSX import má integrovaný preflight. Pre každý chýbajúci model postupuje:
 

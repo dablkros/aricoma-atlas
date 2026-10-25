@@ -411,6 +411,14 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/atlas/prophylaxis/results.sqlite3",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_CONFIG"],
+            "/run/atlas/inventory/config.yaml",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_DEVICE_TYPES"],
+            "/run/atlas/inventory/device-types",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
             "10000",
         )
@@ -461,6 +469,11 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertIn(
             f"{(self.root / '.runtime/prophylaxis').resolve()}:"
             "/run/atlas/prophylaxis:rw",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / '.runtime/inventory/device-types').resolve()}:"
+            "/run/atlas/inventory/device-types:rw",
             service["volumes"],
         )
         self.assertEqual(

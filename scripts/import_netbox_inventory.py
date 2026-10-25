@@ -317,6 +317,7 @@ def prepare_import_device_types(
     config: dict,
     *,
     apply: bool,
+    local_device_type_dir: Path = LOCAL_DEVICE_TYPE_DIR,
 ) -> tuple[list[dict], dict[str, str]]:
     targets = {
         normalized_identifier(_inventory_model_target(row.model, config)):
@@ -390,10 +391,10 @@ def prepare_import_device_types(
         if not upstream_index.get(key, [])
     ]
     local_index, local_errors = find_yaml_candidates_for_queries(
-        LOCAL_DEVICE_TYPE_DIR,
+        local_device_type_dir,
         [missing[key] for key in local_needed],
         source="ATLAS_LOCAL",
-    ) if LOCAL_DEVICE_TYPE_DIR.exists() else ({}, [])
+    ) if local_device_type_dir.exists() else ({}, [])
 
     platform_config = load_platform_config()
     selected: list[dict] = []
@@ -433,7 +434,7 @@ def prepare_import_device_types(
             errors[key] = "device_type_not_found_upload_yaml_to_runtime_catalog"
             print(
                 f"[DEVICE TYPE] {display_model}: NOT_FOUND; "
-                f"upload YAML to {LOCAL_DEVICE_TYPE_DIR}"
+                f"upload YAML to {local_device_type_dir}"
             )
             continue
         if len(candidates) != 1:

@@ -3,7 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from atlas.inventory.parser import parse_inventory
+from atlas.inventory.parser import parse_inventory, parse_inventory_table
 
 
 class InventoryParserTests(unittest.TestCase):
@@ -58,6 +58,28 @@ class InventoryParserTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "csv or .xlsx"):
             parse_inventory(path)
+
+    def test_parse_excel_paste_as_tab_separated_table(self):
+        rows = parse_inventory_table(
+            "Hostname\tHardware model\tManagement IP\tSite\n"
+            "BR-SW01\tC9500-48Y4C\t10.0.0.10\tBratislava DC\n"
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].hostname, "BR-SW01")
+        self.assertEqual(rows[0].site, "Bratislava DC")
+
+    def test_parse_semicolon_separated_table(self):
+        rows = parse_inventory_table(
+            "Hostname;Hardware model;Management IP\n"
+            "BR-SW02;C9300L-24P-4G;10.0.0.11\n"
+        )
+
+        self.assertEqual(rows[0].model, "C9300L-24P-4G")
+
+    def test_parse_pasted_table_requires_headers(self):
+        with self.assertRaisesRegex(ValueError, "management_ip"):
+            parse_inventory_table("Hostname,Hardware model\nSW01,C9500-48Y4C\n")
 
 
 if __name__ == "__main__":

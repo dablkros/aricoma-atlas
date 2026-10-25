@@ -5,15 +5,15 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261018-1">
-    <script src="/static/app.js?v=20261020-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261025-2">
+    <script src="/static/app.js?v=20261025-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
 
     <header class="topbar">
       <div class="brand" aria-label="Aricoma Atlas">
-        <span class="brand-mark" aria-hidden="true">A</span>
+        <span class="brand-mark" aria-hidden="true"><span></span></span>
         <div>
           <p class="brand-name">ARICOMA ATLAS</p>
           <p class="brand-subtitle">Network Infrastructure Orchestrator</p>
@@ -101,6 +101,27 @@
             </a>
           </article>
         </div>
+      </section>
+
+      <section class="panel operator-panel" aria-labelledby="operator-heading">
+        <div class="panel-heading">
+          <div>
+            <p class="section-kicker">Authorized operations</p>
+            <h2 id="operator-heading">Operator tools</h2>
+          </div>
+          <span id="operator-status" class="status-pill status-pill-neutral">Token required</span>
+        </div>
+        <p class="panel-description">One runtime token authorizes explicit Atlas operations. It stays only in this browser tab.</p>
+        <div class="operator-toolbar">
+          <div class="field-group operator-token-field">
+            <label for="operator-token">Operator token</label>
+            <input id="operator-token" type="password" autocomplete="off" placeholder="Runtime operator token">
+          </div>
+          <button id="cisco-test" class="button button-secondary" type="button">Test Cisco APIs</button>
+          <button id="zabbix-sync" class="button button-primary" type="button" data-requires-component="zabbix">Sync Zabbix</button>
+          <button id="inventory-import-open" class="button button-primary" type="button">Import devices</button>
+        </div>
+        <p id="operator-result" class="operator-result" aria-live="polite">No operator action has been run.</p>
       </section>
 
       <div class="two-column-layout">
@@ -313,6 +334,107 @@
         </div>
       </section>
     </main>
+
+    <dialog id="inventory-import-dialog" class="inventory-dialog" aria-labelledby="inventory-import-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">NetBox inventory</p>
+            <h2 id="inventory-import-title">Import devices</h2>
+            <p>Paste a table copied from Excel or CSV, review the plan, resolve every warning, then explicitly apply it.</p>
+          </div>
+          <button id="inventory-import-close" class="dialog-close" type="button" aria-label="Close import window">×</button>
+        </header>
+
+        <div class="inventory-fields">
+          <div class="field-group">
+            <label for="inventory-tenant">Tenant override <span class="field-optional">optional</span></label>
+            <input id="inventory-tenant" type="text" maxlength="200" placeholder="Use table or configured default">
+          </div>
+          <div class="field-group">
+            <label for="inventory-site">Site override <span class="field-optional">optional</span></label>
+            <input id="inventory-site" type="text" maxlength="200" placeholder="Use table or configured default">
+          </div>
+        </div>
+
+        <div class="field-group inventory-paste-field">
+          <div class="field-label-row">
+            <label for="inventory-table">Device table</label>
+            <button id="inventory-example" class="text-button" type="button">Insert example</button>
+          </div>
+          <textarea id="inventory-table" rows="10" spellcheck="false" placeholder="Hostname&#9;Hardware model&#9;Management IP&#9;Site&#10;BR-SW01&#9;C9500-48Y4C&#9;10.0.0.10&#9;Bratislava DC"></textarea>
+          <p class="field-help">Required columns: Hostname, Hardware model, Management IP. Tab-, comma- and semicolon-separated data are accepted.</p>
+        </div>
+
+        <div class="dialog-actions dialog-actions-plan">
+          <button id="inventory-clear" class="button button-secondary" type="button">Clear</button>
+          <button id="inventory-plan" class="button button-primary" type="button">Create dry-run plan</button>
+        </div>
+
+        <section id="inventory-plan-result" class="inventory-plan-result" aria-live="polite" hidden>
+          <div class="inventory-summary-heading">
+            <div>
+              <p class="section-kicker">Dry-run result</p>
+              <h3>Review planned changes</h3>
+            </div>
+            <span id="inventory-plan-status" class="status-pill status-pill-neutral">Not planned</span>
+          </div>
+          <dl class="result-summary inventory-summary">
+            <div><dt>Create</dt><dd id="inventory-create-count">0</dd></div>
+            <div><dt>Unchanged</dt><dd id="inventory-unchanged-count">0</dd></div>
+            <div><dt>Invalid</dt><dd id="inventory-invalid-count">0</dd></div>
+            <div><dt>Conflict</dt><dd id="inventory-conflict-count">0</dd></div>
+            <div><dt>Error</dt><dd id="inventory-error-count">0</dd></div>
+          </dl>
+          <p id="inventory-plan-message" class="inventory-plan-message"></p>
+
+          <section id="inventory-device-type-resolution" class="device-type-resolution" hidden>
+            <div>
+              <p class="section-kicker">Action required</p>
+              <h3>Resolve missing Device Types</h3>
+              <p id="inventory-device-type-message">Upload a validated NetBox Device Type YAML, then retry the dry-run.</p>
+            </div>
+            <div class="inventory-fields">
+              <div class="field-group">
+                <label for="inventory-device-type-model">Affected model</label>
+                <select id="inventory-device-type-model"></select>
+              </div>
+              <div class="field-group">
+                <label for="inventory-device-type-filename">YAML filename</label>
+                <input id="inventory-device-type-filename" type="text" maxlength="125" placeholder="device-model.yaml">
+              </div>
+            </div>
+            <div class="field-group inventory-paste-field">
+              <label for="inventory-device-type-yaml">Device Type YAML</label>
+              <textarea id="inventory-device-type-yaml" rows="9" spellcheck="false" placeholder="manufacturer: Cisco&#10;model: ...&#10;slug: ..."></textarea>
+            </div>
+            <label class="confirmation-row">
+              <input id="inventory-device-type-replace" type="checkbox">
+              Replace an existing runtime YAML with the same filename
+            </label>
+            <div class="dialog-actions">
+              <button id="inventory-device-type-upload" class="button button-secondary" type="button">Upload YAML and retry plan</button>
+              <button id="inventory-retry" class="button button-primary" type="button">Retry plan</button>
+            </div>
+          </section>
+
+          <div class="table-wrap inventory-results-table">
+            <table aria-label="Inventory import plan">
+              <thead><tr><th>Row</th><th>Device</th><th>Model</th><th>Management IP</th><th>Operation</th><th>Status</th><th>Reason</th></tr></thead>
+              <tbody id="inventory-plan-rows"></tbody>
+            </table>
+          </div>
+
+          <label class="confirmation-row inventory-apply-confirmation">
+            <input id="inventory-apply-confirm" type="checkbox" disabled>
+            I reviewed this exact dry-run plan and authorize the NetBox changes.
+          </label>
+          <div class="dialog-actions">
+            <button id="inventory-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
+          </div>
+        </section>
+      </div>
+    </dialog>
 
     <footer class="footer">
       <p>Atlas Operations UI · loopback-only beta</p>

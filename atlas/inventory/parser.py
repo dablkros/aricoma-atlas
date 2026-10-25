@@ -1,6 +1,7 @@
 """CSV and XLSX parsing without NetBox side effects."""
 
 import csv
+import io
 from pathlib import Path
 import re
 
@@ -30,6 +31,47 @@ def _rows_csv(path: Path):
         yield from csv.reader(handle)
 
 
+def _parse_rows(rows) -> list[InventoryRow]:
+    try:
+        raw_headers = next(rows)
+    except StopIteration:
+        raise ValueError("Inventory table is empty") from None
+    columns: dict[int, str] = {}
+    seen = set()
+    for index, raw in enumerate(raw_headers):
+        name = HEADER_ALIASES.get(_header(raw))
+        if name is None:
+            continue
+        if name in seen:
+            raise ValueError(f"Duplicate inventory column: {name}")
+        seen.add(name)
+        columns[index] = name
+    missing = sorted(REQUIRED - seen)
+    if missing:
+        raise ValueError("Missing required inventory columns: " + ", ".join(missing))
+    parsed = []
+    for number, values in enumerate(rows, start=2):
+        data = {name: str(values[index]).strip() for index, name in columns.items()
+                if index < len(values) and values[index] is not None and str(values[index]).strip()}
+        if data:
+            parsed.append(InventoryRow(number=number, hostname=data.get("hostname", ""),
+                model=data.get("model", ""), management_ip=data.get("management_ip", ""),
+                tenant=data.get("tenant"), site=data.get("site"), device_role=data.get("device_role"),
+                platform=data.get("platform"), vrf=data.get("vrf")))
+    return parsed
+
+
+def parse_inventory_table(value: str) -> list[InventoryRow]:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("Inventory table is empty")
+    sample = value[:4096]
+    try:
+        dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
+    except csv.Error:
+        dialect = csv.excel_tab if "\t" in sample else csv.excel
+    return _parse_rows(iter(csv.reader(io.StringIO(value), dialect)))
+
+
 def _rows_xlsx(path: Path):
     try:
         from openpyxl import load_workbook
@@ -54,42 +96,4 @@ def parse_inventory(path: Path) -> list[InventoryRow]:
         rows = iter(_rows_xlsx(path))
     else:
         raise ValueError("Inventory file must use .csv or .xlsx")
-    try:
-        raw_headers = next(rows)
-    except StopIteration:
-        raise ValueError("Inventory file is empty") from None
-    columns: dict[int, str] = {}
-    seen = set()
-    for index, raw in enumerate(raw_headers):
-        name = HEADER_ALIASES.get(_header(raw))
-        if name is None:
-            continue
-        if name in seen:
-            raise ValueError(f"Duplicate inventory column: {name}")
-        seen.add(name)
-        columns[index] = name
-    missing = sorted(REQUIRED - seen)
-    if missing:
-        raise ValueError("Missing required inventory columns: " + ", ".join(missing))
-
-    parsed = []
-    for number, values in enumerate(rows, start=2):
-        data = {
-            name: str(values[index]).strip()
-            for index, name in columns.items()
-            if index < len(values) and values[index] is not None and str(values[index]).strip()
-        }
-        if not data:
-            continue
-        parsed.append(InventoryRow(
-            number=number,
-            hostname=data.get("hostname", ""),
-            model=data.get("model", ""),
-            management_ip=data.get("management_ip", ""),
-            tenant=data.get("tenant"),
-            site=data.get("site"),
-            device_role=data.get("device_role"),
-            platform=data.get("platform"),
-            vrf=data.get("vrf"),
-        ))
-    return parsed
+    return _parse_rows(rows)

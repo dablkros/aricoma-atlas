@@ -124,6 +124,28 @@ class NetBoxService:
             raise DependencyError("invalid_response")
         return data
 
+    def _post_json(self, url: str, token: str, payload: Dict[str, Any]) -> Dict[str, Any]:
+        try:
+            response = self.requester.post(
+                url,
+                headers={**self.authorization_headers(token), "Content-Type": "application/json"},
+                json=payload,
+                timeout=self.timeout,
+            )
+        except requests.RequestException:
+            raise DependencyError("connection_failed") from None
+        if response.status_code in {401, 403}:
+            raise DependencyError("authentication_failed")
+        if response.status_code < 200 or response.status_code >= 300:
+            raise DependencyError("unavailable")
+        try:
+            data = response.json()
+        except ValueError:
+            raise DependencyError("invalid_response") from None
+        if not isinstance(data, dict):
+            raise DependencyError("invalid_response")
+        return data
+
     @staticmethod
     def _validate_page(data: Dict[str, Any]) -> None:
         if not isinstance(data.get("results"), list):
@@ -187,6 +209,54 @@ class NetBoxService:
     def patch(self, endpoint: str, payload: Dict[str, Any]) -> dict:
         token = self.openbao.get_netbox_api_token()
         return self._patch_json(self._endpoint_url(endpoint), token, payload)
+
+    def post(self, endpoint: str, payload: Dict[str, Any]) -> dict:
+        token = self.openbao.get_netbox_api_token()
+        return self._post_json(self._endpoint_url(endpoint), token, payload)
+
+    def bulk_post(
+        self,
+        endpoint: str,
+        payloads: List[Dict[str, Any]],
+        batch_size: int,
+        metadata=None,
+    ) -> List[dict]:
+        """Create validated NetBox objects in bounded atomic request batches."""
+        if isinstance(batch_size, bool) or not isinstance(batch_size, int) or batch_size < 1:
+            raise ValueError("batch_size must be a positive integer")
+        token = self.openbao.get_netbox_api_token()
+        url = self._endpoint_url(endpoint)
+        created: List[dict] = []
+        for offset in range(0, len(payloads), batch_size):
+            batch = payloads[offset:offset + batch_size]
+            try:
+                response = self.requester.post(
+                    url,
+                    headers={
+                        **self.authorization_headers(token),
+                        "Content-Type": "application/json",
+                    },
+                    json=batch,
+                    timeout=self.timeout,
+                )
+            except requests.RequestException:
+                raise DependencyError("connection_failed") from None
+            if response.status_code in {401, 403}:
+                raise DependencyError("authentication_failed")
+            if response.status_code < 200 or response.status_code >= 300:
+                raise DependencyError("unavailable")
+            try:
+                values = response.json()
+            except ValueError:
+                raise DependencyError("invalid_response") from None
+            if not isinstance(values, list) or any(not isinstance(item, dict) for item in values):
+                raise DependencyError("invalid_response")
+            created.extend(values)
+        return created
+
+    def status(self) -> dict:
+        token = self.openbao.get_netbox_api_token()
+        return self._request_json(self._endpoint_url("/api/status/"), token)
 
     def get_all(
         self,

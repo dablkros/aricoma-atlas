@@ -13,6 +13,9 @@ const state = {
   monitoringPolling: new Set(),
   monitoringBulkPlans: [],
   monitoringBulkActive: false,
+  operatorToken: "",
+  inventoryPlan: null,
+  inventoryBusy: false,
 };
 
 const elements = {
@@ -67,6 +70,39 @@ const elements = {
   monitoringActivityTitle: document.querySelector("#monitoring-activity-title"),
   monitoringActivityDetail: document.querySelector("#monitoring-activity-detail"),
   monitoringTableBody: document.querySelector("#monitoring-table-body"),
+  operatorToken: document.querySelector("#operator-token"),
+  operatorStatus: document.querySelector("#operator-status"),
+  operatorResult: document.querySelector("#operator-result"),
+  ciscoTest: document.querySelector("#cisco-test"),
+  zabbixSync: document.querySelector("#zabbix-sync"),
+  inventoryImportOpen: document.querySelector("#inventory-import-open"),
+  inventoryImportDialog: document.querySelector("#inventory-import-dialog"),
+  inventoryImportClose: document.querySelector("#inventory-import-close"),
+  inventoryTenant: document.querySelector("#inventory-tenant"),
+  inventorySite: document.querySelector("#inventory-site"),
+  inventoryTable: document.querySelector("#inventory-table"),
+  inventoryExample: document.querySelector("#inventory-example"),
+  inventoryClear: document.querySelector("#inventory-clear"),
+  inventoryPlanButton: document.querySelector("#inventory-plan"),
+  inventoryPlanResult: document.querySelector("#inventory-plan-result"),
+  inventoryPlanStatus: document.querySelector("#inventory-plan-status"),
+  inventoryCreateCount: document.querySelector("#inventory-create-count"),
+  inventoryUnchangedCount: document.querySelector("#inventory-unchanged-count"),
+  inventoryInvalidCount: document.querySelector("#inventory-invalid-count"),
+  inventoryConflictCount: document.querySelector("#inventory-conflict-count"),
+  inventoryErrorCount: document.querySelector("#inventory-error-count"),
+  inventoryPlanMessage: document.querySelector("#inventory-plan-message"),
+  inventoryPlanRows: document.querySelector("#inventory-plan-rows"),
+  inventoryDeviceTypeResolution: document.querySelector("#inventory-device-type-resolution"),
+  inventoryDeviceTypeMessage: document.querySelector("#inventory-device-type-message"),
+  inventoryDeviceTypeModel: document.querySelector("#inventory-device-type-model"),
+  inventoryDeviceTypeFilename: document.querySelector("#inventory-device-type-filename"),
+  inventoryDeviceTypeYaml: document.querySelector("#inventory-device-type-yaml"),
+  inventoryDeviceTypeReplace: document.querySelector("#inventory-device-type-replace"),
+  inventoryDeviceTypeUpload: document.querySelector("#inventory-device-type-upload"),
+  inventoryRetry: document.querySelector("#inventory-retry"),
+  inventoryApplyConfirm: document.querySelector("#inventory-apply-confirm"),
+  inventoryApply: document.querySelector("#inventory-apply"),
 };
 
 const MONITORING_TERMINAL = new Set(["COMPLETED", "FAILED", "PARTIAL"]);
@@ -120,6 +156,272 @@ async function apiRequest(path, options = {}) {
 
 function monitoringHeaders() {
   return { Authorization: `Bearer ${state.monitoringToken}` };
+}
+
+function operatorHeaders() {
+  return { Authorization: `Bearer ${state.operatorToken}` };
+}
+
+function requireOperatorToken() {
+  const token = elements.operatorToken.value.trim();
+  if (!token) {
+    toast("Enter the operator token.", "warning");
+    return false;
+  }
+  state.operatorToken = token;
+  state.prophylaxisToken = token;
+  state.monitoringToken = token;
+  elements.prophylaxisToken.value = token;
+  elements.monitoringToken.value = token;
+  setPill(elements.operatorStatus, "healthy", "Ready");
+  return true;
+}
+
+async function testCiscoIntegration() {
+  if (!requireOperatorToken()) return;
+  elements.ciscoTest.disabled = true;
+  try {
+    const result = await apiRequest("/api/integrations/cisco/test", {
+      method: "POST",
+      headers: operatorHeaders(),
+    });
+    elements.operatorResult.textContent = `Cisco APIs: ${titleCase(result.overall)} · OAuth ${titleCase(result.oauth)} · Software ${titleCase(result.software_suggestion)} · EoX ${titleCase(result.eox)}`;
+    toast("Cisco integration test completed.", result.overall === "READY" ? "success" : "warning");
+  } catch (error) {
+    elements.operatorResult.textContent = error.safeMessage || "Cisco integration test failed.";
+    toast(elements.operatorResult.textContent, "error");
+  } finally {
+    elements.ciscoTest.disabled = false;
+  }
+}
+
+async function synchronizeZabbix() {
+  if (!requireOperatorToken()) return;
+  elements.zabbixSync.disabled = true;
+  try {
+    const result = await apiRequest("/api/zabbix/sync", {
+      method: "POST",
+      headers: operatorHeaders(),
+    });
+    const summary = result.summary || {};
+    elements.operatorResult.textContent = `Zabbix sync: ${titleCase(result.status)} · created ${summary.created ?? 0}, updated ${summary.updated ?? 0}, disabled ${summary.disabled ?? 0}`;
+    toast("Zabbix synchronization completed.", "success");
+  } catch (error) {
+    elements.operatorResult.textContent = error.safeMessage || "Zabbix synchronization failed.";
+    toast(elements.operatorResult.textContent, "error");
+  } finally {
+    elements.zabbixSync.disabled = false;
+  }
+}
+
+function inventoryPayload() {
+  const tenant = elements.inventoryTenant.value.trim();
+  const site = elements.inventorySite.value.trim();
+  return {
+    table: elements.inventoryTable.value,
+    ...(tenant ? { tenant } : {}),
+    ...(site ? { site } : {}),
+  };
+}
+
+function resetInventoryPlan() {
+  state.inventoryPlan = null;
+  elements.inventoryPlanResult.hidden = true;
+  elements.inventoryApplyConfirm.checked = false;
+  elements.inventoryApplyConfirm.disabled = true;
+  elements.inventoryApply.disabled = true;
+}
+
+function inventoryFilename(model) {
+  const slug = String(model || "device-type")
+    .normalize("NFKD")
+    .replace(/[\u0300-\u036f]/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 100);
+  return `${slug || "device-type"}.yaml`;
+}
+
+function updateInventoryDeviceTypeFilename() {
+  elements.inventoryDeviceTypeFilename.value = inventoryFilename(
+    elements.inventoryDeviceTypeModel.value,
+  );
+}
+
+function inventoryStatusTone(status) {
+  if (["CREATE", "UNCHANGED"].includes(status)) return "healthy";
+  if (status === "INVALID") return "degraded";
+  return "unhealthy";
+}
+
+function renderInventoryPlan(result) {
+  state.inventoryPlan = result;
+  const report = result.report || {};
+  const summary = report.summary || {};
+  const issues = result.device_type_issues || [];
+  const uploadable = issues.filter((issue) => issue.yaml_upload_allowed);
+  const blocked = (summary.INVALID || 0) + (summary.CONFLICT || 0) + (summary.ERROR || 0);
+
+  elements.inventoryPlanResult.hidden = false;
+  elements.inventoryCreateCount.textContent = String(summary.CREATE || 0);
+  elements.inventoryUnchangedCount.textContent = String(summary.UNCHANGED || 0);
+  elements.inventoryInvalidCount.textContent = String(summary.INVALID || 0);
+  elements.inventoryConflictCount.textContent = String(summary.CONFLICT || 0);
+  elements.inventoryErrorCount.textContent = String(summary.ERROR || 0);
+  setPill(
+    elements.inventoryPlanStatus,
+    result.apply_allowed ? "healthy" : "degraded",
+    result.apply_allowed ? "Ready to apply" : "Action required",
+  );
+  elements.inventoryPlanMessage.textContent = result.apply_allowed
+    ? `${summary.total_rows || 0} rows were checked. The exact plan can now be approved.`
+    : `${blocked} rows require attention. Apply remains locked until the plan has no invalid, conflicting, or failed rows.`;
+
+  elements.inventoryPlanRows.replaceChildren(...(report.rows || []).map((entry) => {
+    const row = document.createElement("tr");
+    for (const value of [
+      entry.row,
+      entry.hostname || "—",
+      entry.model || "—",
+      entry.management_ip || "—",
+      titleCase(entry.operation || "none"),
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = String(value);
+      row.append(cell);
+    }
+    const status = document.createElement("td");
+    const pill = document.createElement("span");
+    pill.className = `status-pill status-pill-${inventoryStatusTone(entry.status)}`;
+    pill.textContent = titleCase(entry.status);
+    status.append(pill);
+    row.append(status);
+    const reason = document.createElement("td");
+    reason.textContent = entry.reason ? titleCase(entry.reason) : "—";
+    row.append(reason);
+    return row;
+  }));
+
+  elements.inventoryDeviceTypeResolution.hidden = issues.length === 0;
+  elements.inventoryDeviceTypeUpload.hidden = uploadable.length === 0;
+  elements.inventoryDeviceTypeModel.replaceChildren(...issues.map((issue) => {
+    const option = document.createElement("option");
+    option.value = issue.model;
+    option.textContent = `${issue.model} — ${titleCase(issue.reason)}`;
+    option.disabled = !issue.yaml_upload_allowed;
+    return option;
+  }));
+  if (uploadable.length) {
+    elements.inventoryDeviceTypeModel.value = uploadable[0].model;
+    updateInventoryDeviceTypeFilename();
+    elements.inventoryDeviceTypeMessage.textContent = `${uploadable.length} Device Type definition${uploadable.length === 1 ? " is" : "s are"} missing. Upload one YAML at a time; Atlas validates it and automatically retries the plan.`;
+  } else if (issues.length) {
+    elements.inventoryDeviceTypeMessage.textContent = "The Device Type issue cannot be fixed by upload. Review the reported catalog or ambiguity error, then retry the plan.";
+  }
+
+  elements.inventoryApplyConfirm.checked = false;
+  elements.inventoryApplyConfirm.disabled = !result.apply_allowed;
+  elements.inventoryApply.disabled = true;
+}
+
+function setInventoryBusy(busy) {
+  state.inventoryBusy = busy;
+  for (const button of [
+    elements.inventoryPlanButton,
+    elements.inventoryRetry,
+    elements.inventoryDeviceTypeUpload,
+    elements.inventoryApply,
+  ]) button.disabled = busy || (button === elements.inventoryApply && !elements.inventoryApplyConfirm.checked);
+}
+
+async function planInventory() {
+  if (!requireOperatorToken()) return;
+  if (!elements.inventoryTable.value.trim()) {
+    toast("Paste the device table first.", "warning");
+    return;
+  }
+  setInventoryBusy(true);
+  try {
+    const result = await apiRequest("/api/inventory/import/plan", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: inventoryPayload(),
+    });
+    renderInventoryPlan(result);
+    toast(
+      result.apply_allowed ? "Inventory dry-run is ready for review." : "Inventory plan contains issues that must be resolved.",
+      result.apply_allowed ? "success" : "warning",
+    );
+  } catch (error) {
+    resetInventoryPlan();
+    toast(error.safeMessage || "Inventory planning failed.", "error");
+  } finally {
+    setInventoryBusy(false);
+  }
+}
+
+async function uploadInventoryDeviceType() {
+  if (!requireOperatorToken()) return;
+  const filename = elements.inventoryDeviceTypeFilename.value.trim();
+  const yamlContent = elements.inventoryDeviceTypeYaml.value;
+  if (!filename || !yamlContent.trim()) {
+    toast("Enter the YAML filename and content.", "warning");
+    return;
+  }
+  setInventoryBusy(true);
+  try {
+    const result = await apiRequest("/api/inventory/device-types/upload", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: {
+        filename,
+        yaml_content: yamlContent,
+        replace: elements.inventoryDeviceTypeReplace.checked,
+      },
+    });
+    toast(`${result.model} YAML was validated and stored. Retrying the plan.`, "success");
+    elements.inventoryDeviceTypeYaml.value = "";
+    elements.inventoryDeviceTypeReplace.checked = false;
+  } catch (error) {
+    toast(error.safeMessage || "Device Type YAML upload failed.", "error");
+    setInventoryBusy(false);
+    return;
+  }
+  setInventoryBusy(false);
+  await planInventory();
+}
+
+async function applyInventory() {
+  if (!requireOperatorToken()) return;
+  if (!state.inventoryPlan?.apply_allowed || !elements.inventoryApplyConfirm.checked) {
+    toast("Review and confirm a valid dry-run plan first.", "warning");
+    return;
+  }
+  setInventoryBusy(true);
+  try {
+    const result = await apiRequest("/api/inventory/import/apply", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: { ...inventoryPayload(), plan_hash: state.inventoryPlan.plan_hash },
+    });
+    renderInventoryPlan(result);
+    setPill(elements.inventoryPlanStatus, "healthy", "Applied");
+    elements.inventoryPlanMessage.textContent = `${result.report?.summary?.total_rows || 0} rows were processed. The result below reflects the completed NetBox operation.`;
+    state.inventoryPlan = null;
+    elements.inventoryApplyConfirm.checked = false;
+    elements.inventoryApplyConfirm.disabled = true;
+    elements.inventoryApply.disabled = true;
+    toast("Approved inventory plan was applied to NetBox.", "success");
+    await loadDashboard();
+  } catch (error) {
+    if (error.code === "inventory_plan_stale" || error.code === "inventory_plan_blocked") {
+      resetInventoryPlan();
+    }
+    toast(error.safeMessage || "Inventory apply failed.", "error");
+  } finally {
+    setInventoryBusy(false);
+  }
 }
 
 function monitoringMessage(message) {
@@ -1044,7 +1346,11 @@ async function synchronizeInventory() {
   setSyncBusy(true);
   setPageMessage();
   try {
-    const result = await apiRequest("/api/oxidized/sync", { method: "POST" });
+    if (!requireOperatorToken()) return;
+    const result = await apiRequest("/api/oxidized/sync", {
+      method: "POST",
+      headers: operatorHeaders(),
+    });
     renderSyncResult(result);
     toast(
       result.status === "partial_success"
@@ -1069,13 +1375,14 @@ async function synchronizeInventory() {
 }
 
 async function queueBackup(device) {
+  if (!requireOperatorToken()) return;
   if (state.backupsInProgress.has(device)) return;
   state.backupsInProgress.add(device);
   renderDevices();
   try {
     const result = await apiRequest(
       `/api/oxidized/devices/${encodeURIComponent(device)}/backup`,
-      { method: "POST" },
+      { method: "POST", headers: operatorHeaders() },
     );
     toast(`${result.device} was queued for Oxidized processing.`, "success");
   } catch (error) {
@@ -1099,5 +1406,48 @@ elements.monitoringMode.addEventListener("change", () => {
   clearMonitoringBulkPreview();
   elements.monitoringPlan.hidden = true;
 });
+elements.operatorToken.addEventListener("input", () => {
+  state.operatorToken = "";
+  setPill(elements.operatorStatus, "neutral", "Token required");
+});
+elements.ciscoTest.addEventListener("click", testCiscoIntegration);
+elements.zabbixSync.addEventListener("click", synchronizeZabbix);
+elements.inventoryImportOpen.addEventListener("click", () => {
+  elements.inventoryImportDialog.showModal();
+  elements.inventoryTable.focus();
+});
+elements.inventoryImportClose.addEventListener("click", () => {
+  elements.inventoryImportDialog.close();
+});
+elements.inventoryExample.addEventListener("click", () => {
+  elements.inventoryTable.value = [
+    "Hostname\tHardware model\tManagement IP\tTenant\tSite",
+    "BR-SW01\tC9500-48Y4C\t10.0.0.10\tacme-slovakia\tBratislava DC",
+  ].join("\n");
+  resetInventoryPlan();
+  elements.inventoryTable.focus();
+});
+elements.inventoryClear.addEventListener("click", () => {
+  elements.inventoryTable.value = "";
+  elements.inventoryTenant.value = "";
+  elements.inventorySite.value = "";
+  elements.inventoryDeviceTypeYaml.value = "";
+  elements.inventoryDeviceTypeReplace.checked = false;
+  resetInventoryPlan();
+  elements.inventoryTable.focus();
+});
+elements.inventoryPlanButton.addEventListener("click", planInventory);
+elements.inventoryRetry.addEventListener("click", planInventory);
+elements.inventoryDeviceTypeUpload.addEventListener("click", uploadInventoryDeviceType);
+elements.inventoryDeviceTypeModel.addEventListener("change", updateInventoryDeviceTypeFilename);
+elements.inventoryApplyConfirm.addEventListener("change", () => {
+  elements.inventoryApply.disabled = state.inventoryBusy
+    || !state.inventoryPlan?.apply_allowed
+    || !elements.inventoryApplyConfirm.checked;
+});
+elements.inventoryApply.addEventListener("click", applyInventory);
+for (const input of [elements.inventoryTable, elements.inventoryTenant, elements.inventorySite]) {
+  input.addEventListener("input", resetInventoryPlan);
+}
 
 loadDashboard();

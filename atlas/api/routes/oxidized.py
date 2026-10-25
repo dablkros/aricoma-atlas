@@ -1,7 +1,8 @@
 """HTTP boundary for Atlas-owned Oxidized orchestration."""
 
-from fastapi import APIRouter, Request, Response, status
+from fastapi import APIRouter, Depends, Request, Response, status
 
+from atlas.api.operator_auth import require_operator
 from atlas.api.errors import AtlasError
 from atlas.api.schemas.oxidized import (
     OxidizedBackupResponse,
@@ -13,6 +14,10 @@ from atlas.services.oxidized_operations import OxidizedOperationFailure
 from atlas.services.oxidized_sync import OxidizedSyncFailure
 
 router = APIRouter(prefix="/oxidized", tags=["oxidized"])
+
+
+def oxidized_write_authorized(request: Request) -> None:
+    require_operator(request, scope="oxidized")
 
 
 _FAILURE_MESSAGES = {
@@ -79,6 +84,7 @@ def oxidized_devices(request: Request) -> list[OxidizedDeviceResponse]:
     response_model=OxidizedBackupResponse,
     status_code=status.HTTP_202_ACCEPTED,
     summary="Queue an Oxidized backup for one runtime device",
+    dependencies=[Depends(oxidized_write_authorized)],
 )
 def queue_device_backup(device: str, request: Request) -> OxidizedBackupResponse:
     try:
@@ -95,6 +101,7 @@ def queue_device_backup(device: str, request: Request) -> OxidizedBackupResponse
     response_model=OxidizedSyncResponse,
     status_code=status.HTTP_200_OK,
     summary="Synchronize the Oxidized runtime inventory",
+    dependencies=[Depends(oxidized_write_authorized)],
 )
 def sync_oxidized(request: Request, response: Response) -> OxidizedSyncResponse:
     try:

@@ -63,6 +63,9 @@ diagnostiku.
 Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
 `--dry-run`/`--apply` postup sú popísané v
 [dokumentácii Inventory Importera](docs/inventory-import.md).
+Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
+Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
+chýbajúci validný Device Type YAML, zopakuje plán a explicitne potvrdí Apply.
 Importer pri chýbajúcom Device Type najskôr preverí Atlas katalóg a Device Type
 Library checkout na commite pripnutom v manifeste. Až keď verejný repozitár
 model neobsahuje, preverí ručne dodané YAML v
@@ -658,6 +661,8 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
   `profylaxia_enabled=true` asynchrónne rozbalí skupiny vybrané v
   `profylaxia_checks` a spustí podporované platformové collectory,
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
+- riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
+  riadkové chyby, validovaný runtime Device Type YAML, retry a explicitný Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -675,6 +680,9 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/status` | Používateľský aggregate stav `healthy`, `degraded` alebo `unhealthy`. |
 | `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
+| `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
+| `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
+| `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
 | `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
 | `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |

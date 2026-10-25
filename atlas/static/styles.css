@@ -1,14 +1,16 @@
 :root {
-  --ink: #17243b;
-  --ink-soft: #536179;
-  --line: #dce3ed;
-  --line-strong: #c8d2e0;
+  --ink: #17194c;
+  --ink-soft: #555a78;
+  --line: #dedeea;
+  --line-strong: #c9c9dc;
   --surface: #ffffff;
   --surface-muted: #f5f7fb;
-  --canvas: #edf1f7;
-  --navy: #163a64;
-  --navy-hover: #0f2f54;
-  --blue-soft: #e8f1fb;
+  --canvas: #f1f1f6;
+  --navy: #1d1d66;
+  --navy-hover: #151551;
+  --blue-soft: #ececf7;
+  --gold: #a5985c;
+  --gold-soft: #f4f1e3;
   --healthy: #14805e;
   --healthy-soft: #e6f6f0;
   --warning: #a7630b;
@@ -36,13 +38,14 @@ body {
   min-height: 100vh;
   margin: 0;
   background:
-    radial-gradient(circle at 85% -10%, rgba(56, 115, 174, 0.13), transparent 30rem),
+    radial-gradient(circle at 85% -10%, rgba(165, 152, 92, 0.16), transparent 30rem),
     var(--canvas);
 }
 
 button,
 input,
-select {
+select,
+textarea {
   font: inherit;
 }
 
@@ -54,6 +57,7 @@ select {
 button:focus-visible,
 input:focus-visible,
 select:focus-visible,
+textarea:focus-visible,
 a:focus-visible {
   outline: 3px solid rgba(40, 111, 181, 0.35);
   outline-offset: 2px;
@@ -83,8 +87,8 @@ a:focus-visible {
   gap: 1.5rem;
   padding: 0 3rem;
   color: white;
-  background: linear-gradient(118deg, #112f51, #1a4a79 72%, #20598f);
-  box-shadow: 0 6px 18px rgba(17, 47, 81, 0.18);
+  background: linear-gradient(118deg, #151550, #20206d 72%, #292978);
+  box-shadow: 0 6px 18px rgba(23, 23, 76, 0.2);
 }
 
 .brand,
@@ -106,17 +110,34 @@ a:focus-visible {
 }
 
 .brand-mark {
-  display: grid;
+  position: relative;
+  display: block;
   width: 40px;
   height: 40px;
   place-items: center;
-  border: 1px solid rgba(255, 255, 255, 0.48);
-  border-radius: 11px;
-  font-size: 1.1rem;
-  font-weight: 800;
-  letter-spacing: -0.04em;
-  background: rgba(255, 255, 255, 0.1);
+  border: 0;
+  background: transparent;
 }
+
+.brand-mark::before,
+.brand-mark::after,
+.brand-mark span::before {
+  position: absolute;
+  content: "";
+  background: var(--gold);
+  border-radius: 2px;
+}
+
+.brand-mark::before,
+.brand-mark::after {
+  width: 9px;
+  height: 38px;
+  top: 1px;
+}
+
+.brand-mark::before { left: 11px; transform: rotate(24deg); }
+.brand-mark::after { right: 11px; transform: rotate(-24deg); }
+.brand-mark span::before { width: 19px; height: 7px; left: 10px; top: 23px; }
 
 .brand-name,
 .brand-subtitle,
@@ -231,6 +252,210 @@ h2 {
   color: white;
   background: var(--navy);
   box-shadow: 0 7px 18px rgba(22, 58, 100, 0.2);
+}
+
+.operator-panel {
+  border-top: 3px solid var(--gold);
+}
+
+.operator-toolbar {
+  display: grid;
+  grid-template-columns: minmax(260px, 1fr) auto auto auto;
+  gap: 0.8rem;
+  align-items: end;
+}
+
+.operator-result {
+  margin: 0.9rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+}
+
+.operator-token-field { min-width: 0; }
+
+.inventory-dialog {
+  width: min(1180px, calc(100% - 2rem));
+  max-height: calc(100vh - 2rem);
+  padding: 0;
+  color: var(--ink);
+  background: var(--surface);
+  border: 1px solid var(--line-strong);
+  border-radius: 18px;
+  box-shadow: 0 28px 90px rgba(17, 28, 55, 0.3);
+}
+
+.inventory-dialog::backdrop {
+  background: rgba(17, 20, 56, 0.58);
+  backdrop-filter: blur(3px);
+}
+
+.dialog-shell {
+  padding: 1.5rem;
+}
+
+.dialog-heading,
+.inventory-summary-heading,
+.field-label-row,
+.dialog-actions,
+.confirmation-row {
+  display: flex;
+  align-items: center;
+}
+
+.dialog-heading,
+.inventory-summary-heading,
+.field-label-row {
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.dialog-heading {
+  margin-bottom: 1.25rem;
+}
+
+.dialog-heading h2 {
+  font-size: 1.35rem;
+}
+
+.dialog-heading p:not(.section-kicker) {
+  max-width: 760px;
+  margin: 0.45rem 0 0;
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.5;
+}
+
+.dialog-close {
+  width: 40px;
+  height: 40px;
+  flex: 0 0 auto;
+  padding: 0;
+  color: var(--ink-soft);
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 50%;
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.inventory-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.field-optional,
+.field-help {
+  color: var(--ink-soft);
+  font-weight: 500;
+}
+
+.inventory-paste-field {
+  margin-top: 1rem;
+}
+
+.inventory-paste-field textarea {
+  width: 100%;
+  resize: vertical;
+  padding: 0.8rem;
+  color: var(--ink);
+  background: #fbfcfe;
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  font: 0.78rem/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.field-help {
+  margin: 0.45rem 0 0;
+  font-size: 0.74rem;
+  line-height: 1.45;
+}
+
+.text-button {
+  padding: 0;
+  color: var(--navy);
+  background: transparent;
+  border: 0;
+  font-size: 0.76rem;
+  font-weight: 750;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+.dialog-actions-plan {
+  margin-top: 1rem;
+}
+
+.inventory-plan-result {
+  margin-top: 1.25rem;
+  padding-top: 1.25rem;
+  border-top: 1px solid var(--line);
+}
+
+.inventory-summary-heading h3,
+.device-type-resolution h3 {
+  margin: 0.2rem 0 0;
+  font-size: 1rem;
+}
+
+.inventory-summary {
+  margin-top: 1rem;
+}
+
+.inventory-plan-message {
+  margin: 0.85rem 0;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.device-type-resolution {
+  margin: 1rem 0;
+  padding: 1rem;
+  background: var(--warning-soft);
+  border: 1px solid #ebcc92;
+  border-radius: 12px;
+}
+
+.device-type-resolution > div > p:not(.section-kicker) {
+  margin: 0.4rem 0 1rem;
+  color: #704b17;
+  font-size: 0.8rem;
+  line-height: 1.45;
+}
+
+.inventory-results-table {
+  max-height: 22rem;
+  margin: 1rem 0;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.inventory-results-table th {
+  position: sticky;
+  z-index: 1;
+  top: 0;
+  background: var(--surface-muted);
+}
+
+.confirmation-row {
+  gap: 0.55rem;
+  color: var(--ink-soft);
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.inventory-apply-confirmation {
+  justify-content: flex-end;
+  margin: 1rem 0;
+}
+
+@media (max-width: 760px) {
+  .operator-toolbar { grid-template-columns: 1fr; }
+  .inventory-fields { grid-template-columns: 1fr; }
 }
 
 .button-primary:hover:not(:disabled) {
@@ -947,14 +1172,22 @@ tbody tr:hover td {
   .table-toolbar,
   .monitoring-plan-preview-heading,
   .monitoring-plan-preview-actions,
+  .dialog-heading,
+  .inventory-summary-heading,
   .footer {
     align-items: stretch;
     flex-direction: column;
   }
 
   .intro .button,
-  .operation-callout .button {
+  .operation-callout .button,
+  .dialog-actions .button {
     width: 100%;
+  }
+
+  .dialog-actions {
+    align-items: stretch;
+    flex-direction: column;
   }
 
   .component-grid,
