@@ -44,6 +44,8 @@ sudo atlasctl zabbix logs -f
 sudo atlasctl integrations cisco test
 sudo atlasctl inventory tenant add --name "ACME Slovakia"
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
+sudo atlasctl inventory device-type search "CBS350-16T-2G"
+sudo atlasctl inventory device-type add "CBS350-16T-2G" --dry-run
 sudo atlasctl inventory import /secure/devices.xlsx --tenant acme-slovakia --dry-run
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f

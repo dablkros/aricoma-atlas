@@ -58,6 +58,27 @@ alebo nakonfigurovaného aliasu. Platforma sa prevezme z overeného
 Device Role sa vyberá v poradí: riadok, mapovanie modelu/platformy, predvolená
 rola. Importer žiadne z týchto objektov automaticky nevytvára.
 
+## Dohľadanie a pridanie Device Type
+
+Pred importom možno model explicitne vyhľadať v troch lokálnych zdrojoch:
+v aktuálnom NetBoxe, v zostavenom Atlas katalógu a v checkout-e oficiálnej
+Device Type Library na commite pripnutom v `catalog/manifest.yaml`.
+
+```bash
+sudo atlasctl inventory device-type search "CBS350-16T-2G"
+sudo atlasctl inventory device-type search "CBS350-16T-2G" --json
+sudo atlasctl inventory device-type add "CBS350-16T-2G" --dry-run
+sudo atlasctl inventory device-type add "CBS350-16T-2G" --apply
+```
+
+`search` nič nemení. Výsledok rozlišuje `NETBOX`, `ATLAS_CATALOG` a
+`PINNED_UPSTREAM`. `add` predvolene iba pripraví dry-run a môže zosúladiť iba
+definíciu, ktorá už je v aktuálnom zostavenom Atlas katalógu. Ak sa model nájde
+iba v upstream knižnici, Atlas vráti `CATALOG_REVIEW_REQUIRED`: definíciu treba
+najskôr zaradiť do manifestu alebo reviewed lokálneho katalógu a katalóg
+zostaviť štandardným bootstrap flowom. Príkaz úmyselne nesťahuje najnovší
+upstream ani nepridáva neoverenú definíciu priamo do NetBoxu.
+
 Nový Device má stav `active`, Tenant aj Site a tieto bezpečné hodnoty:
 
 ```text

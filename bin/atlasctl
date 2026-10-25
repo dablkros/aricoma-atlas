@@ -38,6 +38,8 @@ Usage:
   sudo atlasctl integrations cisco test
   sudo atlasctl inventory tenant add --name NAME [--dry-run]
   sudo atlasctl inventory site add --tenant TENANT --name NAME [--dry-run]
+  sudo atlasctl inventory device-type search MODEL [--json]
+  sudo atlasctl inventory device-type add MODEL [--dry-run|--apply]
   sudo atlasctl inventory import FILE [--tenant TENANT] [--site SITE] [--dry-run|--apply]
   sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
@@ -58,7 +60,7 @@ Commands:
   zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
   integrations cisco    Test Cisco OAuth and Support API entitlements.
-  inventory             Manage tenants/sites and import CSV/XLSX device inventory.
+  inventory             Manage tenants, sites, Device Types and device imports.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
   proxy logs            Show Nginx ingress container logs.
@@ -351,7 +353,7 @@ main() {
         inventory)
             shift
             case "${1:-}" in
-                tenant|site|import)
+                tenant|site|device-type|import)
                     run_python_as_atlas \
                         "${ATLAS_ROOT}/scripts/import_netbox_inventory.py" "$@"
                     ;;
