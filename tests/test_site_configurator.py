@@ -72,6 +72,7 @@ class SiteConfiguratorTests(unittest.TestCase):
         self.assertEqual(monitoring["monitoring"]["source_ip"], "10.20.30.40")
         self.assertTrue(monitoring["fortios"]["tls_verify"])
         self.assertIsNone(site["inventory"]["default_tenant"])
+        self.assertIsNone(site["inventory"]["default_site"])
 
     def test_site_input_normalizes_default_inventory_tenant(self):
         raw = self.site()
@@ -80,12 +81,18 @@ class SiteConfiguratorTests(unittest.TestCase):
                 "name": "ACME Slovakia",
                 "slug": "acme-slovakia",
                 "provision": True,
-            }
+            },
+            "default_site": {
+                "name": "Bratislava DC",
+                "slug": "bratislava-dc",
+                "provision": True,
+            },
         }
 
         site = self.module.normalize_site(raw, self.directory)
 
         self.assertEqual(site["inventory"]["default_tenant"]["slug"], "acme-slovakia")
+        self.assertEqual(site["inventory"]["default_site"]["slug"], "bratislava-dc")
         self.assertEqual(site["inventory"]["management_interface"], "mgmt0")
 
     def test_site_input_supports_network_specific_egress_profiles(self):

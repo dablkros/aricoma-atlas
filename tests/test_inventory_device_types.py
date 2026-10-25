@@ -90,6 +90,26 @@ class DeviceTypeDiscoveryTests(unittest.TestCase):
         self.assertEqual(1, len(errors))
         self.assertIn("invalid.yaml", errors[0])
 
+    def test_yaml_search_matches_part_number_when_model_is_marketing_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "device.yaml").write_text(
+                "manufacturer: Cisco\n"
+                "model: Catalyst 9500-48Y4C\n"
+                "slug: cisco-c9500-48y4c\n"
+                "part_number: C9500-48Y4C\n",
+                encoding="utf-8",
+            )
+
+            matches, errors = find_yaml_candidates(
+                root,
+                "C9500-48Y4C",
+                source="PINNED_UPSTREAM",
+            )
+
+        self.assertEqual([], errors)
+        self.assertEqual("Catalyst 9500-48Y4C", matches[0].model)
+
     def test_multiple_yaml_queries_are_resolved_in_one_scan(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

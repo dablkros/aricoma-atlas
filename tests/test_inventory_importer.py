@@ -156,6 +156,32 @@ class InventoryImporterTests(unittest.TestCase):
         report = self.importer.import_rows([self.row(site=None)], site_override="bratislava-dc")
         self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
 
+    def test_configured_default_site_is_used_when_row_site_is_empty(self):
+        config = normalize_inventory_config({
+            "default_tenant": {
+                "name": "ACME Slovakia", "slug": "acme-slovakia", "provision": True,
+            },
+            "default_site": {
+                "name": "Bratislava DC", "slug": "bratislava-dc", "provision": True,
+            },
+        })
+        importer = InventoryImporter(self.client, config)
+
+        report = importer.import_rows([self.row(site=None)])
+
+        self.assertEqual(report.rows[0].site, "bratislava-dc")
+        self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+
+    def test_default_site_requires_default_tenant(self):
+        with self.assertRaisesRegex(ValueError, "requires default_tenant"):
+            normalize_inventory_config({
+                "default_site": {
+                    "name": "Bratislava DC",
+                    "slug": "bratislava-dc",
+                    "provision": True,
+                }
+            })
+
     def test_07_row_site_is_used(self):
         report = self.importer.import_rows([self.row(site="zilina-office")])
         self.assertEqual(report.rows[0].site, "zilina-office")

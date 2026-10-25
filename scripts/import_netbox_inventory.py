@@ -14,7 +14,7 @@ ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from atlas.inventory.config import load_inventory_config  # noqa: E402
+from atlas.inventory.config import load_inventory_config, save_inventory_config  # noqa: E402
 from atlas.inventory.device_types import (  # noqa: E402
     find_local_candidates,
     find_netbox_candidates,
@@ -27,6 +27,7 @@ from atlas.inventory.importer import (  # noqa: E402
     InventoryConflict,
     InventoryImporter,
     InventoryInvalid,
+    slugify,
 )
 from atlas.inventory.parser import parse_inventory  # noqa: E402
 from atlas.inventory.report import render_text, write_json  # noqa: E402
@@ -86,6 +87,13 @@ def parse_args() -> argparse.Namespace:
     site_add.add_argument("--tenant", required=True)
     site_add.add_argument("--name", required=True)
     mode_arguments(site_add, default_apply=True)
+    site_default = site_commands.add_parser(
+        "set-default",
+        help="Create or reuse a site and save it as the inventory default",
+    )
+    site_default.add_argument("--tenant", required=True)
+    site_default.add_argument("--name", required=True)
+    mode_arguments(site_default, default_apply=True)
 
     inventory_import = commands.add_parser("import", help="Import CSV or XLSX devices")
     inventory_import.add_argument("file")
@@ -136,13 +144,30 @@ def apply_selected(args: argparse.Namespace) -> bool:
 
 def provision_defaults(importer: InventoryImporter, config: dict, *, apply: bool) -> int:
     tenant = config.get("default_tenant")
-    if not tenant or tenant.get("provision") is not True:
+    if not tenant:
         print("[INFO] Default tenant was not configured; tenant provisioning skipped")
         return 0
-    resolved, operation = importer.ensure_tenant(
-        tenant["name"], apply=apply, slug=tenant["slug"]
-    )
+    if tenant.get("provision") is True:
+        resolved, operation = importer.ensure_tenant(
+            tenant["name"], apply=apply, slug=tenant["slug"]
+        )
+    else:
+        resolved = importer.resolve_tenant(tenant["slug"])
+        operation = "UNCHANGED"
     print(f"[{operation}] Tenant {tenant['name']} ({tenant['slug']})")
+    site = config.get("default_site")
+    if site and site.get("provision") is True:
+        resolved_tenant = resolved or {
+            "id": -1,
+            "name": tenant["name"],
+            "slug": tenant["slug"],
+        }
+        _resolved_site, site_operation = importer.ensure_site(
+            resolved_tenant,
+            site["name"],
+            apply=apply,
+        )
+        print(f"[{site_operation}] Site {site['name']} ({site['slug']})")
     return 0
 
 
@@ -301,9 +326,15 @@ def prepare_import_device_types(
     }
     existing = client.get_all("/api/dcim/device-types/")
     existing_models = {
-        normalized_identifier(item.get("model"))
+        normalized_identifier(identifier)
         for item in existing
         if isinstance(item, dict)
+        for identifier in (
+            item.get("model"),
+            item.get("slug"),
+            item.get("part_number"),
+        )
+        if normalized_identifier(identifier)
     }
     missing = {
         key: value for key, value in targets.items()
@@ -315,8 +346,13 @@ def prepare_import_device_types(
     items, parse_errors = provision_netbox.load_catalog()
     catalog_index: dict[str, list[dict]] = {key: [] for key in missing}
     for item in items:
-        key = normalized_identifier(item["model"])
-        if key in missing:
+        identifiers = {
+            normalized_identifier(item.get("model")),
+            normalized_identifier(item.get("slug")),
+            normalized_identifier(item.get("filename")),
+            normalized_identifier(item.get("data", {}).get("part_number")),
+        }
+        for key in set(missing) & identifiers:
             catalog_index[key].append(item)
 
     errors: dict[str, str] = {}
@@ -351,10 +387,7 @@ def prepare_import_device_types(
 
     local_needed = [
         key for key in upstream_needed
-        if not any(
-            normalized_identifier(candidate.model) == key
-            for candidate in upstream_index.get(key, [])
-        )
+        if not upstream_index.get(key, [])
     ]
     local_index, local_errors = find_yaml_candidates_for_queries(
         LOCAL_DEVICE_TYPE_DIR,
@@ -372,19 +405,13 @@ def prepare_import_device_types(
             errors[key] = "device_type_catalog_stale"
             continue
         if not candidates:
-            candidates = [
-                candidate for candidate in upstream_index.get(key, [])
-                if normalized_identifier(candidate.model) == key
-            ]
+            candidates = list(upstream_index.get(key, []))
             source = "PINNED_UPSTREAM"
             if upstream_errors or not upstream_pinned:
                 errors[key] = "device_type_upstream_unavailable"
                 continue
         if not candidates:
-            local_candidates = [
-                candidate for candidate in local_index.get(key, [])
-                if normalized_identifier(candidate.model) == key
-            ]
+            local_candidates = list(local_index.get(key, []))
             if len(local_candidates) > 1:
                 errors[key] = "device_type_ambiguous"
                 continue
@@ -451,6 +478,8 @@ def prepare_import_device_types(
         planned.append({
             "id": -offset,
             "model": item["model"],
+            "slug": item["slug"],
+            "part_number": item["data"].get("part_number", ""),
             "manufacturer": {"name": item["manufacturer"]},
             "default_platform": platforms.get(slug) if slug else None,
             "atlas_source": selected_sources[str(item["file"])],
@@ -550,8 +579,25 @@ def main() -> int:
         importer = InventoryImporter(client, config)
         tenant = importer.resolve_tenant(args.tenant)
         site, operation = importer.ensure_site(tenant, args.name, apply=apply)
-        slug = site.get("slug") if site else "planned"
+        slug = site.get("slug") if site else slugify(args.name)
         print(f"[{operation}] Site {args.name} ({slug}); tenant={tenant['slug']}")
+        if args.site_command == "set-default":
+            updated = dict(config)
+            updated["default_tenant"] = {
+                "name": tenant["name"],
+                "slug": tenant["slug"],
+                "provision": True,
+            }
+            updated["default_site"] = {
+                "name": " ".join(args.name.split()),
+                "slug": slug,
+                "provision": True,
+            }
+            if apply:
+                save_inventory_config(RUNTIME_CONFIG, updated)
+                print(f"[OK] Default inventory Site saved: {slug}")
+            else:
+                print(f"[PLAN] Default inventory Site: {slug}")
         return 0
 
     if args.command == "provision-defaults":

@@ -509,6 +509,13 @@ def interactive_site(service_names=SERVICES):
             "slug": tenant_slug,
             "provision": str(create_tenant).strip().casefold() in {"y", "yes"},
         }
+        site_name = _prompt("Default inventory Site name (optional)", "")
+        if site_name:
+            inventory["default_site"] = {
+                "name": site_name,
+                "slug": slugify(site_name),
+                "provision": True,
+            }
     monitoring_source = (
         _prompt("Zabbix SNMP source IP", listen)
         if "zabbix" in service_names

@@ -21,17 +21,37 @@ flow zostáva zachovaný.
 sudo atlasctl inventory tenant add --name "ACME Slovakia"
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Zilina Office"
+sudo atlasctl inventory site set-default \
+  --tenant acme-slovakia \
+  --name "Bratislava DC"
 ```
 
 Tieto príkazy vykonajú zmenu predvolene; `--dry-run` iba zobrazí plán. Slug je
 deterministický. Existujúci rovnaký slug s iným názvom alebo Site priradený
 inému Tenantovi je konflikt a Atlas objekt neprepíše.
 
+`site set-default` Site idempotentne vytvorí alebo znovu použije a uloží ju do
+chránenej runtime konfigurácie. Import ju použije, ak riadok CSV/XLSX ani
+parameter `--site` neurčujú inú Site. Pri prvom `atlasctl configure` sa názov
+predvolenej Site zadáva hneď po Tenantovi a deployment pripraví oba objekty.
+
 ## CSV a XLSX
 
-Povinné stĺpce sú `Hostname`, `Hardware model` a `Management IP`. Voliteľné sú
+Povinné stĺpce sú `Hostname`, `Hardware model` a `Management IP`. Hodnota
+`Hardware model` môže byť presný model, slug alebo PID/part number z Device Type
+Library. Voliteľné sú
 `Tenant`, `Site`, `Device Role`, `Platform` a `VRF`. Ukážka je v
 `examples/inventory/acme-devices.csv`.
+
+Súbor mimo runtime Atlasu možno bezpečne nahrať jedným príkazom:
+
+```bash
+sudo atlasctl inventory upload ~/customer-devices.csv
+```
+
+Príkaz vytvorí chránený runtime adresár, nastaví vlastníka `atlas` a vypíše
+cieľovú cestu aj nasledujúci dry-run príkaz. Existujúci súbor prepíše iba s
+explicitným `--force`.
 
 ```bash
 sudo atlasctl inventory import /secure/devices.xlsx \
@@ -46,8 +66,8 @@ sudo atlasctl inventory import /secure/devices.xlsx \
 ```
 
 Import je bez `--apply` vždy dry-run a neposiela POST ani PATCH. Tenant z CLI
-platí pre celý súbor. Site z CLI je predvolená pre prázdny stĺpec; explicitne
-odlišná Site v riadku je `CONFLICT`. Bez CLI Tenanta sa použije Tenant uložený
+platí pre celý súbor. Site z CLI alebo uložená predvolená Site sa použije pre
+prázdny stĺpec; explicitne odlišná Site v riadku je `CONFLICT`. Bez CLI Tenanta sa použije Tenant uložený
 v `.runtime/inventory.yaml`.
 
 ## Rozlíšenie objektov

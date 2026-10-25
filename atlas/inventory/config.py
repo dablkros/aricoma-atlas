@@ -1,7 +1,9 @@
 """Inventory importer configuration stored in the protected Atlas runtime."""
 
 from pathlib import Path
+import os
 import re
+import tempfile
 
 import yaml
 
@@ -19,6 +21,7 @@ def normalize_inventory_config(raw: object) -> dict:
     allowed = {
         "version",
         "default_tenant",
+        "default_site",
         "management_interface",
         "default_ipv4_prefix_length",
         "default_device_role",
@@ -47,6 +50,26 @@ def normalize_inventory_config(raw: object) -> dict:
             raise ValueError("inventory.default_tenant.provision must be boolean")
         tenant = {"name": " ".join(name.split()), "slug": slug, "provision": provision}
 
+    site = data.get("default_site")
+    if site is not None:
+        site = _mapping(site, "inventory.default_site")
+        if set(site) - {"name", "slug", "provision"}:
+            raise ValueError("inventory.default_site contains unknown fields")
+        name = site.get("name")
+        slug = site.get("slug")
+        provision = site.get("provision", True)
+        if not isinstance(name, str) or not name.strip():
+            raise ValueError("inventory.default_site.name is required")
+        if not isinstance(slug, str) or not re.fullmatch(
+            r"[a-z0-9]+(?:-[a-z0-9]+)*", slug
+        ):
+            raise ValueError("inventory.default_site.slug is invalid")
+        if type(provision) is not bool:
+            raise ValueError("inventory.default_site.provision must be boolean")
+        site = {"name": " ".join(name.split()), "slug": slug, "provision": provision}
+        if tenant is None:
+            raise ValueError("inventory.default_site requires default_tenant")
+
     interface = data.get("management_interface", "mgmt0")
     if not isinstance(interface, str) or not re.fullmatch(r"[A-Za-z0-9_.:/-]{1,64}", interface):
         raise ValueError("inventory.management_interface is invalid")
@@ -74,6 +97,7 @@ def normalize_inventory_config(raw: object) -> dict:
     return {
         "version": 1,
         "default_tenant": tenant,
+        "default_site": site,
         "management_interface": interface,
         "default_ipv4_prefix_length": prefix,
         "default_device_role": role.strip() if isinstance(role, str) else None,
@@ -86,3 +110,24 @@ def load_inventory_config(path: Path) -> dict:
     if not path.exists():
         return normalize_inventory_config({})
     return normalize_inventory_config(yaml.safe_load(path.read_text(encoding="utf-8")))
+
+
+def save_inventory_config(path: Path, config: dict) -> None:
+    normalized = normalize_inventory_config(config)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = None
+    try:
+        with tempfile.NamedTemporaryFile(
+            "w",
+            encoding="utf-8",
+            dir=path.parent,
+            prefix=f".{path.name}.",
+            delete=False,
+        ) as handle:
+            temporary = Path(handle.name)
+            yaml.safe_dump(normalized, handle, sort_keys=False)
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, path)
+    finally:
+        if temporary is not None:
+            temporary.unlink(missing_ok=True)

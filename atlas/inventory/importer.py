@@ -170,7 +170,11 @@ class InventoryImporter:
             ]
         matches = [
             item for item in self._device_type_cache
-            if normalized_name(str(item.get("model", ""))) == target
+            if target in {
+                normalized_name(str(item.get("model", ""))),
+                normalized_name(str(item.get("slug", ""))),
+                normalized_name(str(item.get("part_number", ""))),
+            }
         ]
         if not matches:
             raise InventoryInvalid(
@@ -393,11 +397,14 @@ class InventoryImporter:
         results: list[RowResult] = []
         seen: set[tuple[str, str, str]] = set()
         default_tenant = self.config.get("default_tenant")
+        default_site = self.config.get("default_site")
         for row in rows:
             tenant_label = tenant_override or row.tenant or (
                 default_tenant.get("slug") if isinstance(default_tenant, dict) else None
             )
-            site_label = row.site or site_override
+            site_label = row.site or site_override or (
+                default_site.get("slug") if isinstance(default_site, dict) else None
+            )
             base = dict(
                 row=row.number, hostname=row.hostname, model=row.model,
                 management_ip=row.management_ip, tenant=tenant_label,

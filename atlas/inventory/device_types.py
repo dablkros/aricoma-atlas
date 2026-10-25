@@ -24,11 +24,19 @@ class DeviceTypeCandidate:
         return asdict(self)
 
 
-def _matches(query: str, *, model: object, slug: object, filename: object = "") -> bool:
+def _matches(
+    query: str,
+    *,
+    model: object,
+    slug: object,
+    part_number: object = "",
+    filename: object = "",
+) -> bool:
     wanted = normalized_identifier(query)
     return wanted in {
         normalized_identifier(model),
         normalized_identifier(slug),
+        normalized_identifier(part_number),
         normalized_identifier(filename),
     }
 
@@ -40,6 +48,7 @@ def find_netbox_candidates(client, query: str) -> list[DeviceTypeCandidate]:
             query,
             model=item.get("model"),
             slug=item.get("slug"),
+            part_number=item.get("part_number"),
         ):
             continue
         manufacturer = item.get("manufacturer")
@@ -96,6 +105,7 @@ def find_yaml_candidates_for_queries(
         identifiers = {
             normalized_identifier(data.get("model")),
             normalized_identifier(data.get("slug")),
+            normalized_identifier(data.get("part_number")),
             normalized_identifier(path.stem),
         }
         candidate = DeviceTypeCandidate(
