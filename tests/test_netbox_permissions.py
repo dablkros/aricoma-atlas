@@ -4,6 +4,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 
 spec = importlib.util.spec_from_file_location(
@@ -53,3 +54,28 @@ class NetBoxPermissionTests(unittest.TestCase):
                 deploy_netbox.prepare_configuration_permissions(runtime)
             self.assertEqual(stat.S_IMODE(secret.stat().st_mode), 0o600)
             self.assertEqual(stat.S_IMODE(directory.stat().st_mode), 0o700)
+
+
+class NetBoxDeviceCatalogPreparationTests(unittest.TestCase):
+    def test_prepare_device_catalog_reuses_bootstrap_contract(self):
+        manifest = {"catalog": {"version": 1}}
+
+        with (
+            patch.object(
+                deploy_netbox.bootstrap_netbox,
+                "load_manifest",
+                return_value=manifest,
+            ),
+            patch.object(
+                deploy_netbox.bootstrap_netbox,
+                "prepare_catalog",
+            ) as prepare_catalog,
+            patch.object(deploy_netbox, "ok"),
+        ):
+            deploy_netbox.prepare_device_catalog()
+
+        prepare_catalog.assert_called_once_with(
+            deploy_netbox.sys.executable,
+            manifest,
+            False,
+        )

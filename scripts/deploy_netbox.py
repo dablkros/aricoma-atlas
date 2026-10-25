@@ -27,6 +27,7 @@ from atlas.openbao_client import (  # noqa: E402
 )
 from atlas.deployment import NETBOX_NETWORK, ensure_network, write_private  # noqa: E402
 from atlas.proxy import load_config as load_proxy_config  # noqa: E402
+from scripts import bootstrap_netbox  # noqa: E402
 
 
 CONFIG_FILE = (
@@ -170,6 +171,21 @@ def command_output(
     )
 
     return result.stdout.strip()
+
+
+def prepare_device_catalog():
+    """Prepare the pinned Device Type catalog needed by NetBox and Atlas."""
+    try:
+        manifest = bootstrap_netbox.load_manifest()
+        bootstrap_netbox.prepare_catalog(
+            sys.executable,
+            manifest,
+            False,
+        )
+    except SystemExit as exc:
+        raise RuntimeError("Unable to prepare Atlas Device Type catalog") from exc
+
+    ok("Atlas Device Type catalog prepared")
 
 
 # ===========================================================================
@@ -2101,6 +2117,11 @@ def main():
                 config
             )
         )
+
+        # Inventory import needs these read-only inputs in the backend even
+        # during a prepare-only deployment. Fresh CI jobs and appliances do
+        # not inherit the generated catalog from a previous validation run.
+        prepare_device_catalog()
 
         (
             openbao_client,
