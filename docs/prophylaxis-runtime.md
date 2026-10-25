@@ -146,6 +146,26 @@ nevyhodnocujú z CLI; pre podporované Cisco platformy ich poskytujú Cisco
 Software Suggestion API a Cisco EoX API. Nové NetBox UI individuálne voľby
 neponúka.
 
+FortiOS `firmware_recommendation` oddeľuje dve rôzne tvrdenia. Pole
+`firmware_update_available` opisuje iba aktuálny katalóg dostupný konkrétnemu
+zariadeniu: cez SSH sa získava príkazom `diagnose fdsm image-list`, cez API
+selectorom `system_firmware`. Hodnota je `true` iba pri explicitnom označení
+`upgrade`. Hodnota `false` sa pri SSH nastaví iba vtedy, keď počet parsovaných
+záznamov zodpovedá deklarovanému `Total` a žiadny záznam nie je `upgrade`;
+neúplný alebo nejednoznačný výstup ostáva `null`/`UNKNOWN`.
+`firmware_recommended_version` ostáva `null`, kým Atlas nemá samostatný
+autoritatívny zdroj odporúčanej FortiOS vetvy. Absencia položky `upgrade`
+preto neznamená, že nainštalovaná verzia je najnovšia alebo odporúčaná. Atlas
+neporovnáva FortiOS verzie lexikograficky a nevyberá najvyššiu verziu zo
+zoznamu downgrade obrazov.
+
+Zdroje kontraktu: FortiOS 8.0 CLI referencia pre
+[`diagnose fdsm`](https://docs.fortinet.com/document/fortigate/8.0.0/cli-reference/293744549/diagnose-fdsm),
+Fortinet príklad významu
+[`upgrade`/`downgrade`](https://docs.fortinet.com/document/fortigate/8.0.0/new-features/153433/enhancements-to-required-upgrade-when-firmware-license-is-invalid-or-device-is-eoes)
+a dokumentácia `fortinet.fortios` 2.6.0 pre API selector
+[`system_firmware`](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html).
+
 `configuration_backup` je vyhodnotenie existujúceho Oxidized flow. Atlas načíta
 `nodes.json`, vyžaduje presnú zhodu názvu zariadenia a kontroluje `last.status`.
 Úspešný posledný job je `PASS`; chýbajúci uzol alebo ešte neukončený backup je

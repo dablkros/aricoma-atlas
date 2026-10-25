@@ -71,6 +71,22 @@ class SiteConfiguratorTests(unittest.TestCase):
         )
         self.assertEqual(monitoring["monitoring"]["source_ip"], "10.20.30.40")
         self.assertTrue(monitoring["fortios"]["tls_verify"])
+        self.assertIsNone(site["inventory"]["default_tenant"])
+
+    def test_site_input_normalizes_default_inventory_tenant(self):
+        raw = self.site()
+        raw["inventory"] = {
+            "default_tenant": {
+                "name": "ACME Slovakia",
+                "slug": "acme-slovakia",
+                "provision": True,
+            }
+        }
+
+        site = self.module.normalize_site(raw, self.directory)
+
+        self.assertEqual(site["inventory"]["default_tenant"]["slug"], "acme-slovakia")
+        self.assertEqual(site["inventory"]["management_interface"], "mgmt0")
 
     def test_site_input_supports_network_specific_egress_profiles(self):
         raw = self.site()
@@ -200,6 +216,10 @@ class SiteConfiguratorTests(unittest.TestCase):
         )
         self.assertTrue((target / ".runtime/tls/ca.crt").is_file())
         self.assertFalse((target / ".runtime/tls/ca.key").exists())
+        self.assertEqual(
+            oct((target / ".runtime/inventory.yaml").stat().st_mode & 0o777),
+            "0o600",
+        )
 
     def test_fortios_ca_is_mapped_to_container_trust_path(self):
         raw = self.site()
@@ -220,6 +240,8 @@ class SiteConfiguratorTests(unittest.TestCase):
         self.assertIn("sudo atlasctl configure", source)
         self.assertIn('configure)', source)
         self.assertIn("scripts/configure_site.py", source)
+        self.assertIn("sudo atlasctl inventory", source)
+        self.assertIn("scripts/import_netbox_inventory.py", source)
 
 
 if __name__ == "__main__":

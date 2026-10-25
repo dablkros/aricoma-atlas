@@ -13,6 +13,7 @@ from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_environment_health,
+    normalize_firmware_recommendation,
     normalize_ha_status,
     normalize_interface_errors,
     normalize_interface_state,
@@ -87,6 +88,101 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.current_percent, 9.0)
         self.assertEqual(values.one_minute_percent, 7.0)
         self.assertIsNone(values.five_minute_percent)
+
+    def test_fortios_complete_catalog_without_upgrade_is_not_a_recommendation(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status=(
+                "Version: FortiGate-VM64-KVM v8.0.2,build0251,260928 (GA.F)"
+            ),
+            diagnose_fdsm_image_list=(
+                "Last update: 895 secs ago. Total: 3\n"
+                "FGT_VM64_KVM-v8.0.1-FORTINET.out v8.0 P1 b0245 (downgrade)\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)\n"
+                "FGT_VM64_KVM-v7.6.8-FORTINET.out v7.6 P8 b3744 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertFalse(values.metrics["firmware_update_available"])
+        self.assertIsNone(values.metrics["firmware_recommended_version"])
+        self.assertTrue(values.metrics["catalog_complete"])
+        self.assertEqual(values.metrics["downgrade_image_count"], 3)
+
+    def test_fortios_catalog_with_upgrade_reports_available_image(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status="Version: FortiGate-VM64-KVM v8.0.1,build0245",
+            diagnose_fdsm_image_list=(
+                "Last update: 10 secs ago. Total: 2\n"
+                "FGT_VM64_KVM-v8.0.2-FORTINET.out v8.0 P2 b0251 (upgrade)\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertTrue(values.metrics["firmware_update_available"])
+        self.assertEqual(values.metrics["upgrade_image_count"], 1)
+        self.assertEqual(values.records[0]["direction"], "upgrade")
+
+    def test_fortios_incomplete_catalog_does_not_claim_no_upgrade(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            diagnose_fdsm_image_list=(
+                "Last update: 10 secs ago. Total: 104\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertIsNone(values.metrics["firmware_update_available"])
+        self.assertFalse(values.metrics["catalog_complete"])
+
+    def test_fortios_api_requires_an_explicit_upgrade_marker(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status='{"version":"v8.0.1","build":245}',
+            system_firmware=(
+                '{"available":[{"id":"08000000FIMG0001",'
+                '"version":"v8.0.2","build":251,"direction":"upgrade"}]}'
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertTrue(values.metrics["firmware_update_available"])
+        self.assertEqual(values.records[0]["image_id"], "08000000FIMG0001")
+
+    def test_fortios_api_does_not_infer_upgrade_from_an_available_list(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status='{"version":"v8.0.2","build":251}',
+            system_firmware=(
+                '{"available":[{"id":"08000000FIMG0001",'
+                '"version":"v8.0.3","build":300}]}'
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertIsNone(values.metrics["firmware_update_available"])
+        self.assertEqual(
+            values.reason_code,
+            "firmware_catalog_semantics_unverified",
+        )
 
     def test_missing_data_is_parse_failed_not_zero(self):
         raw = RawCheckResult(

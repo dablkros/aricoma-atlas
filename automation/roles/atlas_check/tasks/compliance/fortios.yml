@@ -15,6 +15,15 @@
   register: atlas_fortios_system_status
   changed_when: false
 
+- name: Collect FortiGuard firmware catalog through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_firmware
+    vdom: root
+  register: atlas_fortios_firmware
+  changed_when: false
+  failed_when: false
+
 - name: Collect FortiOS certificates through the monitor API
   fortinet.fortios.fortios_monitor_fact:
     access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
@@ -44,6 +53,7 @@
     atlas_transport_result:
       data:
         get_system_status: "{{ atlas_fortios_system_status.meta.results | to_json }}"
+        system_firmware: "{{ atlas_fortios_firmware.get('meta', {}).get('results', {}) | to_json }}"
         license_status: "{{ atlas_fortios_license.meta.results | to_json }}"
         system_available_certificates: "{{ atlas_fortios_certificates.meta.results | to_json }}"
         system_fortiguard_server_info: "{{ atlas_fortios_fortiguard.meta.results | to_json }}"

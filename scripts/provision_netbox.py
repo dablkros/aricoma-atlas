@@ -291,12 +291,10 @@ class NetBoxClient:
 
         return response.json()
 
-    def get_all(self, endpoint):
+    def get_all(self, endpoint, params=None):
         url = self._url(endpoint)
 
-        params = {
-            "limit": 1000,
-        }
+        params = {"limit": 1000, **(params or {})}
 
         objects = []
 

@@ -149,6 +149,8 @@ validate_source_repo() {
         die "Missing scripts/configure_site.py in ${source_dir}"
     [[ -f "${source_dir}/scripts/configure_components.py" ]] || \
         die "Missing scripts/configure_components.py in ${source_dir}"
+    [[ -f "${source_dir}/scripts/import_netbox_inventory.py" ]] || \
+        die "Missing scripts/import_netbox_inventory.py in ${source_dir}"
     [[ -f "${source_dir}/deployment/site.example.yaml" ]] || \
         die "Missing deployment/site.example.yaml in ${source_dir}"
     [[ -f "${source_dir}/deployment/tmpfiles.d/aricoma-atlas.conf" ]] || \

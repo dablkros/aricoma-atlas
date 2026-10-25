@@ -42,6 +42,9 @@ sudo atlasctl zabbix sync
 sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
 sudo atlasctl integrations cisco test
+sudo atlasctl inventory tenant add --name "ACME Slovakia"
+sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
+sudo atlasctl inventory import /secure/devices.xlsx --tenant acme-slovakia --dry-run
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
@@ -52,6 +55,10 @@ vstupu chránené `proxy.yaml`, TLS a monitoring policy súbory. DNS záznamy a
 produkčné certifikáty zostávajú vstupom zákazníckeho prostredia. Priame
 `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a
 diagnostiku.
+
+Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
+`--dry-run`/`--apply` postup sú popísané v
+[dokumentácii Inventory Importera](docs/inventory-import.md).
 
 ---
 

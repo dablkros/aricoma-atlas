@@ -12,6 +12,7 @@ The command writes only these managed runtime targets:
 ```text
 /opt/aricoma-atlas/.runtime/
 ├── components.yaml          # written by install/components add; not replaced here
+├── inventory.yaml           # default customer and inventory import policy
 ├── proxy.yaml
 ├── tls/
 │   ├── ca.crt
@@ -58,7 +59,8 @@ The wizard asks for:
 2. HTTPS port and administrator CIDR networks;
 3. a DNS suffix used to construct unique names for NetBox and selected optional services;
 4. the exact Zabbix SNMP source IPv4 address when Zabbix is selected;
-5. production TLS paths or an explicit LAB-only certificate mode.
+5. production TLS paths or an explicit LAB-only certificate mode;
+6. an optional customer/Tenant name, deterministic slug and provisioning choice.
 
 All values and TLS material are validated before a runtime configuration is
 written. The three RFC1918 ranges are the default device target allowlist; use
@@ -87,6 +89,15 @@ must not contain private-key contents. Protect the file and referenced TLS
 material according to the customer PKI process.
 
 ## Site schema version 1
+
+### `inventory`
+
+The optional `inventory.default_tenant` stores the first customer's name,
+slug and whether deployment should provision it after the NetBox baseline.
+Omitting the section preserves the existing workflow. Import policy also
+defines the management interface name (`mgmt0`), default IPv4 prefix (`/32`),
+default Device Role and explicit model aliases/role mappings. See
+[Inventory import](inventory-import.md) for the complete contract.
 
 ### `proxy`
 

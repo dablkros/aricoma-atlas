@@ -12,6 +12,7 @@
       - get vpn certificate ca details
       - diagnose autoupdate status
       - diagnose autoupdate versions
+      - diagnose fdsm image-list
       - diagnose sys acme list-domains
     connect_timeout: "{{ ansible_connect_timeout | int }}"
     command_timeout: "{{ ansible_command_timeout | int }}"
@@ -30,4 +31,5 @@
         get_vpn_certificate_ca_details: "{{ atlas_fortios_compliance.outputs['get vpn certificate ca details'] }}"
         diagnose_autoupdate_status: "{{ atlas_fortios_compliance.outputs['diagnose autoupdate status'] }}"
         diagnose_autoupdate_versions: "{{ atlas_fortios_compliance.outputs['diagnose autoupdate versions'] }}"
+        diagnose_fdsm_image_list: "{{ atlas_fortios_compliance.outputs['diagnose fdsm image-list'] }}"
         diagnose_sys_acme_list_domains: "{{ atlas_fortios_compliance.outputs['diagnose sys acme list-domains'] }}"

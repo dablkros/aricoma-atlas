@@ -1123,6 +1123,61 @@ def _installed_version(outputs: dict[str, str]) -> str | None:
     return None
 
 
+FORTIOS_FIRMWARE_IMAGE_PATTERN = re.compile(
+    r"(?im)^\s*(?P<image_id>\S+)\s+"
+    r"(?P<release>v\d+(?:\.\d+)+(?:\s+.*?)?\s+b\d+)\s+"
+    r"\((?P<direction>upgrade|downgrade)\)\s*$"
+)
+FORTIOS_FIRMWARE_TOTAL_PATTERN = re.compile(
+    r"(?im)\bTotal\s*:\s*(?P<total>\d+)\b"
+)
+FORTIOS_FIRMWARE_AGE_PATTERN = re.compile(
+    r"(?im)\bLast\s+update\s*:\s*(?P<seconds>\d+)\s+secs?\s+ago\b"
+)
+
+
+def _fortios_firmware_directions(value: object):
+    """Yield only explicit upgrade/downgrade labels from API JSON."""
+    if isinstance(value, dict):
+        direction = next((
+            item.strip().casefold()
+            for key in ("direction", "upgrade_type", "upgrade-type", "action")
+            if isinstance((item := value.get(key)), str)
+            and item.strip().casefold() in {"upgrade", "downgrade"}
+        ), None)
+        if direction is not None:
+            yield direction, value
+        for child in value.values():
+            yield from _fortios_firmware_directions(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from _fortios_firmware_directions(child)
+
+
+def _fortios_firmware_record(
+    direction: str,
+    value: dict,
+) -> dict[str, str | int | float | bool | None]:
+    record: dict[str, str | int | float | bool | None] = {
+        "direction": direction,
+    }
+    for source, target in (
+        ("id", "image_id"),
+        ("image_id", "image_id"),
+        ("version", "version"),
+        ("build", "build"),
+        ("maturity", "maturity"),
+    ):
+        item = value.get(source)
+        if (
+            target not in record
+            and isinstance(item, (str, int, float))
+            and not isinstance(item, bool)
+        ):
+            record[target] = item
+    return record
+
+
 def normalize_firmware_recommendation(raw: RawCollectorResult) -> DiagnosticValues:
     outputs = _usable_outputs(raw)
     version = _installed_version(outputs)
@@ -1134,6 +1189,114 @@ def normalize_firmware_recommendation(raw: RawCollectorResult) -> DiagnosticValu
             for key in ("version", "firmware_version", "build")
             if isinstance(item.get(key), (str, int))
         ), None)
+
+    catalog_output = outputs.get("diagnose_fdsm_image_list")
+    if catalog_output is not None:
+        matches = tuple(FORTIOS_FIRMWARE_IMAGE_PATTERN.finditer(catalog_output))
+        total_match = FORTIOS_FIRMWARE_TOTAL_PATTERN.search(catalog_output)
+        declared_total = int(total_match.group("total")) if total_match else None
+        catalog_complete = (
+            declared_total is not None and len(matches) == declared_total
+        )
+        upgrades = tuple(
+            {
+                "direction": "upgrade",
+                "image_id": match.group("image_id"),
+                "release": " ".join(match.group("release").split()),
+            }
+            for match in matches
+            if match.group("direction").casefold() == "upgrade"
+        )
+        downgrades = sum(
+            match.group("direction").casefold() == "downgrade"
+            for match in matches
+        )
+        age_match = FORTIOS_FIRMWARE_AGE_PATTERN.search(catalog_output)
+        metrics = {
+            "installed_version": version,
+            "firmware_update_available": (
+                True if upgrades else False if catalog_complete else None
+            ),
+            "firmware_recommended_version": None,
+            "recommendation_status": "unverified",
+            "catalog_image_count": len(matches),
+            "catalog_declared_image_count": declared_total,
+            "catalog_complete": catalog_complete,
+            "upgrade_image_count": len(upgrades),
+            "downgrade_image_count": downgrades,
+            "catalog_age_seconds": (
+                int(age_match.group("seconds")) if age_match else None
+            ),
+        }
+        if upgrades:
+            return _diagnostic(
+                EvaluationOutcome.WARNING,
+                f"FortiGuard device catalog offers {len(upgrades)} upgrade image(s); "
+                "the recommended release is not verified",
+                reason_code="fortiguard_upgrade_available",
+                metrics=metrics,
+                records=upgrades,
+                outputs={"diagnose_fdsm_image_list": catalog_output},
+            )
+        if catalog_complete:
+            return _diagnostic(
+                EvaluationOutcome.UNKNOWN,
+                "No upgrade image is offered in the current FortiGuard device "
+                "catalog; the recommended release is not verified",
+                reason_code="firmware_recommendation_unverified",
+                metrics=metrics,
+                outputs={"diagnose_fdsm_image_list": catalog_output},
+            )
+        return _diagnostic(
+            EvaluationOutcome.UNKNOWN,
+            "The FortiGuard device catalog was collected but could not be proven complete",
+            reason_code="firmware_catalog_incomplete",
+            metrics=metrics,
+            outputs={"diagnose_fdsm_image_list": catalog_output},
+        )
+
+    api_catalog = _json_outputs(raw).get("system_firmware")
+    if api_catalog is not None:
+        directions = tuple(_fortios_firmware_directions(api_catalog))
+        upgrades = tuple(
+            _fortios_firmware_record(direction, item)
+            for direction, item in directions
+            if direction == "upgrade"
+        )
+        downgrades = sum(direction == "downgrade" for direction, _ in directions)
+        if upgrades:
+            return _diagnostic(
+                EvaluationOutcome.WARNING,
+                f"FortiGuard device catalog offers {len(upgrades)} upgrade image(s); "
+                "the recommended release is not verified",
+                reason_code="fortiguard_upgrade_available",
+                metrics={
+                    "installed_version": version,
+                    "firmware_update_available": True,
+                    "firmware_recommended_version": None,
+                    "recommendation_status": "unverified",
+                    "upgrade_image_count": len(upgrades),
+                    "downgrade_image_count": downgrades,
+                },
+                records=upgrades,
+                outputs={"system_firmware": outputs["system_firmware"]},
+            )
+        return _diagnostic(
+            EvaluationOutcome.UNKNOWN,
+            "The FortiOS firmware API returned a catalog without an explicit "
+            "upgrade marker; update availability is not inferred",
+            reason_code="firmware_catalog_semantics_unverified",
+            metrics={
+                "installed_version": version,
+                "firmware_update_available": None,
+                "firmware_recommended_version": None,
+                "recommendation_status": "unverified",
+                "explicit_catalog_entries": len(directions),
+                "downgrade_image_count": downgrades,
+            },
+            outputs={"system_firmware": outputs["system_firmware"]},
+        )
+
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Installed firmware collected; no reviewed recommendation catalog is configured",

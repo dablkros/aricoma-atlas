@@ -1958,6 +1958,39 @@ def run_atlas_bootstrap(
     )
 
 
+def provision_inventory_defaults(config, api_token, verbose=False):
+    """Provision the optional first-boot tenant after the NetBox baseline."""
+    script = ROOT / "scripts/import_netbox_inventory.py"
+    inventory_config = ROOT / ".runtime/inventory.yaml"
+    if not inventory_config.exists():
+        info("Inventory configuration is absent; default tenant provisioning skipped")
+        return
+
+    env = os.environ.copy()
+    env["NETBOX_URL"] = get_netbox_url(config)
+    env["NETBOX_TOKEN"] = api_token
+    command = [sys.executable, str(script), "provision-defaults", "--apply"]
+    if verbose:
+        run(command, cwd=ROOT, env=env)
+    else:
+        result = subprocess.run(
+            command,
+            cwd=ROOT,
+            env=env,
+            text=True,
+            capture_output=True,
+        )
+        if result.returncode != 0:
+            if result.stdout:
+                print(result.stdout)
+            if result.stderr:
+                print(result.stderr, file=sys.stderr)
+            raise RuntimeError("Default inventory tenant provisioning failed")
+        if result.stdout.strip():
+            print(result.stdout.rstrip())
+    ok("Default inventory tenant state is current")
+
+
 # ===========================================================================
 # Final output
 # ===========================================================================
@@ -2161,6 +2194,12 @@ def main():
         )
 
         run_atlas_bootstrap(
+            config,
+            api_token,
+            verbose=args.verbose,
+        )
+
+        provision_inventory_defaults(
             config,
             api_token,
             verbose=args.verbose,

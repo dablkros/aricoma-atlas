@@ -54,6 +54,7 @@ ALLOWED_COMMANDS = {
     "diagnose autoupdate versions",
     "diagnose debug config-error-log read",
     "diagnose debug crashlog read",
+    "diagnose fdsm image-list",
     "diagnose hardware deviceinfo disk",
     "diagnose hardware deviceinfo psu",
     "diagnose hardware deviceinfo tpm",
