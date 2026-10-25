@@ -2,6 +2,8 @@
 !requirements.txt
 !atlas/
 !atlas/**
+!scripts/
+!scripts/**
 !catalog/
 !catalog/**
 !automation/
@@ -13,3 +15,7 @@
 atlas/**/__pycache__/
 atlas/**/*.pyc
 atlas/**/*.pyo
+scripts/.DS_Store
+scripts/**/__pycache__/
+scripts/**/*.pyc
+scripts/**/*.pyo

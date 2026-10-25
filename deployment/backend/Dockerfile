@@ -31,6 +31,7 @@ RUN for attempt in 1 2 3; do \
         sleep "$((attempt * 10))"; \
     done
 COPY --chown=atlas:atlas atlas /app/atlas
+COPY --chown=atlas:atlas scripts /app/scripts
 COPY --chown=atlas:atlas catalog /app/catalog
 COPY --chown=atlas:atlas automation /app/automation
 

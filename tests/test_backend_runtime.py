@@ -738,6 +738,7 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("HEALTHCHECK", dockerfile)
         self.assertIn("ansible-galaxy collection install", dockerfile)
         self.assertIn("COPY --chown=atlas:atlas automation", dockerfile)
+        self.assertIn("COPY --chown=atlas:atlas scripts /app/scripts", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
 
 
