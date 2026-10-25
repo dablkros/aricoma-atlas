@@ -460,6 +460,8 @@ def get_upstream_origin():
 
 def catalog_status(
     manifest,
+    *,
+    require_upstream_repository=True,
 ):
     """
     Determine whether build/device-types was
@@ -565,41 +567,42 @@ def catalog_status(
     # upstream checkout origin with the manifest.
     # -----------------------------------------------------------------------
 
-    expected_repository = (
-        normalize_repository_url(
-            manifest[
-                "upstream"
-            ][
-                "repository"
-            ]
-        )
-    )
-
-    actual_origin = (
-        get_upstream_origin()
-    )
-
-    if actual_origin is None:
-        reasons.append(
-            "upstream repository checkout "
-            "is missing or invalid"
-        )
-
-    else:
-        actual_repository = (
+    if require_upstream_repository:
+        expected_repository = (
             normalize_repository_url(
-                actual_origin
+                manifest[
+                    "upstream"
+                ][
+                    "repository"
+                ]
             )
         )
 
-        if (
-            actual_repository
-            != expected_repository
-        ):
+        actual_origin = (
+            get_upstream_origin()
+        )
+
+        if actual_origin is None:
             reasons.append(
-                "upstream repository differs "
-                "from manifest"
+                "upstream repository checkout "
+                "is missing or invalid"
             )
+
+        else:
+            actual_repository = (
+                normalize_repository_url(
+                    actual_origin
+                )
+            )
+
+            if (
+                actual_repository
+                != expected_repository
+            ):
+                reasons.append(
+                    "upstream repository differs "
+                    "from manifest"
+                )
 
     # -----------------------------------------------------------------------
     # Vendor selection patterns

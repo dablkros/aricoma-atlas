@@ -483,6 +483,21 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     inventory_device_types.mkdir(parents=True, exist_ok=True)
     os.chmod(inventory_device_types, 0o750)
 
+    built_catalog = root / "build"
+    built_device_types = built_catalog / "device-types"
+    catalog_report = built_catalog / "catalog-report.json"
+    upstream_device_types = root / "devicetype-library/device-types"
+    if (
+        built_catalog.is_symlink()
+        or built_device_types.is_symlink()
+        or not built_device_types.is_dir()
+    ):
+        raise RuntimeError("Built Device Type catalog is missing or invalid")
+    if catalog_report.is_symlink() or not catalog_report.is_file():
+        raise RuntimeError("Device Type catalog report is missing")
+    if upstream_device_types.is_symlink() or not upstream_device_types.is_dir():
+        raise RuntimeError("Pinned upstream Device Type catalog is missing or invalid")
+
     runtime_user = os.geteuid()
     runtime_group = os.getegid()
     if runtime_user == 0:
@@ -506,6 +521,8 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
         f"{inventory_device_types}:/run/atlas/inventory/device-types:rw",
+        f"{built_catalog}:/app/build:ro",
+        f"{upstream_device_types}:/app/devicetype-library/device-types:ro",
     ]
     if inventory_config.is_file():
         volumes.append(f"{inventory_config}:/run/atlas/inventory/config.yaml:ro")

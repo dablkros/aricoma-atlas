@@ -364,8 +364,14 @@ def prepare_import_device_types(
         return [], errors
 
     manifest = bootstrap_netbox.load_manifest()
+    repository_metadata_available = (
+        bootstrap_netbox.UPSTREAM_DIR / ".git"
+    ).exists()
     try:
-        catalog_current, _reasons = bootstrap_netbox.catalog_status(manifest)
+        catalog_current, _reasons = bootstrap_netbox.catalog_status(
+            manifest,
+            require_upstream_repository=repository_metadata_available,
+        )
     except (OSError, RuntimeError, ValueError):
         catalog_current = False
     upstream_needed = [
@@ -380,13 +386,19 @@ def prepare_import_device_types(
 
     upstream_pinned = False
     if upstream_needed and not upstream_errors:
-        try:
+        if repository_metadata_available:
+            try:
+                upstream_pinned = (
+                    bootstrap_netbox.upstream_git_output("rev-parse", "HEAD")
+                    == manifest["upstream"]["commit"]
+                )
+            except RuntimeError:
+                upstream_pinned = False
+        else:
+            report = bootstrap_netbox.load_catalog_report() or {}
             upstream_pinned = (
-                bootstrap_netbox.upstream_git_output("rev-parse", "HEAD")
-                == manifest["upstream"]["commit"]
+                report.get("upstream_commit") == manifest["upstream"]["commit"]
             )
-        except RuntimeError:
-            upstream_pinned = False
 
     local_needed = [
         key for key in upstream_needed

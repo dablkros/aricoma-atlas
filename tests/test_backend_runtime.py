@@ -346,6 +346,12 @@ class BackendRuntimeTests(unittest.TestCase):
             "[]\n",
             encoding="utf-8",
         )
+        (self.root / "build/device-types").mkdir(parents=True)
+        (self.root / "build/catalog-report.json").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        (self.root / "devicetype-library/device-types").mkdir(parents=True)
         self.environment = patch.dict(
             os.environ,
             {"ATLAS_OXIDIZED_RUN_DIR": str(self.inventory_directory)},
@@ -474,6 +480,15 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertIn(
             f"{(self.root / '.runtime/inventory/device-types').resolve()}:"
             "/run/atlas/inventory/device-types:rw",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / 'build').resolve()}:/app/build:ro",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / 'devicetype-library/device-types').resolve()}:"
+            "/app/devicetype-library/device-types:ro",
             service["volumes"],
         )
         self.assertEqual(
