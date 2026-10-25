@@ -295,12 +295,20 @@ class InventoryDeviceTypePreflightTests(unittest.TestCase):
     @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
     @patch.object(inventory_cli.provision_netbox, "load_catalog", return_value=([], []))
     @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli.bootstrap_netbox, "upstream_git_output", return_value="abc123")
+    @patch.object(
+        inventory_cli.bootstrap_netbox,
+        "load_manifest",
+        return_value={"upstream": {"commit": "abc123"}},
+    )
     @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
     @patch.object(inventory_cli, "load_platform_config", return_value={})
     def test_manual_runtime_yaml_is_used_after_upstream_miss(
         self,
         _load_platform,
         _default_platform,
+        _manifest,
+        _git_commit,
         _catalog_status,
         _load_catalog,
         _validate,
@@ -308,7 +316,11 @@ class InventoryDeviceTypePreflightTests(unittest.TestCase):
     ):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
-            (root / "LOCAL-ONLY-1000.yaml").write_text(
+            upstream_root = root / "upstream"
+            (upstream_root / "device-types").mkdir(parents=True)
+            local_root = root / "local"
+            local_root.mkdir()
+            (local_root / "LOCAL-ONLY-1000.yaml").write_text(
                 "manufacturer: Cisco\n"
                 "model: LOCAL-ONLY-1000\n"
                 "slug: local-only-1000\n",
@@ -321,7 +333,14 @@ class InventoryDeviceTypePreflightTests(unittest.TestCase):
                 management_ip="192.0.2.10",
                 site="lab",
             )
-            with patch.object(inventory_cli, "LOCAL_DEVICE_TYPE_DIR", root):
+            with (
+                patch.object(inventory_cli, "LOCAL_DEVICE_TYPE_DIR", local_root),
+                patch.object(
+                    inventory_cli.bootstrap_netbox,
+                    "UPSTREAM_DIR",
+                    upstream_root,
+                ),
+            ):
                 planned, errors = inventory_cli.prepare_import_device_types(
                     self.client,
                     [local_row],
