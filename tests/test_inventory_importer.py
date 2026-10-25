@@ -185,6 +185,44 @@ class InventoryImporterTests(unittest.TestCase):
         report = self.importer.import_rows([self.row(model="UNKNOWN")])
         self.assertEqual(report.rows[0].reason, "device_type_not_found")
 
+    def test_planned_device_type_allows_integrated_dry_run(self):
+        planned = {
+            "id": -1,
+            "model": "CBS350-16T-2G",
+            "default_platform": self.platform,
+        }
+        importer = InventoryImporter(
+            self.client,
+            self.config,
+            planned_device_types=[planned],
+        )
+
+        report = importer.import_rows([
+            self.row(model="CBS350-16T-2G"),
+        ])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+        self.assertEqual(
+            report.rows[0].operation,
+            "CREATE_DEVICE_TYPE_DEVICE_AND_MANAGEMENT",
+        )
+        self.assertEqual(self.client.writes, [])
+
+    def test_device_type_preflight_error_is_reported_per_row(self):
+        importer = InventoryImporter(
+            self.client,
+            self.config,
+            device_type_errors={"unknown": "device_type_not_found_in_pinned_upstream"},
+        )
+
+        report = importer.import_rows([self.row(model="UNKNOWN")])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.INVALID)
+        self.assertEqual(
+            report.rows[0].reason,
+            "device_type_not_found_in_pinned_upstream",
+        )
+
     def test_12_apply_creates_device_with_tenant_site_and_safe_defaults(self):
         report = self.importer.import_rows([self.row()], apply=True)
         device = self.client.objects["/api/dcim/devices/"][0]

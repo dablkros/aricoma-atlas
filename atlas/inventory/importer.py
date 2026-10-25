@@ -42,10 +42,19 @@ class InventoryInvalid(ValueError):
 
 
 class InventoryImporter:
-    def __init__(self, client, config: dict):
+    def __init__(
+        self,
+        client,
+        config: dict,
+        *,
+        planned_device_types: list[dict] | None = None,
+        device_type_errors: dict[str, str] | None = None,
+    ):
         self.client = client
         self.config = config
         self._device_type_cache: list[dict] | None = None
+        self._planned_device_types = planned_device_types or []
+        self._device_type_errors = device_type_errors or {}
 
     def _all(self, endpoint: str, params: dict | None = None) -> list[dict]:
         values = self.client.get_all(endpoint, params=params)
@@ -155,13 +164,18 @@ class InventoryImporter:
             ), None)
         target = normalized_name(alias or model)
         if self._device_type_cache is None:
-            self._device_type_cache = self._all("/api/dcim/device-types/")
+            self._device_type_cache = [
+                *self._all("/api/dcim/device-types/"),
+                *self._planned_device_types,
+            ]
         matches = [
             item for item in self._device_type_cache
             if normalized_name(str(item.get("model", ""))) == target
         ]
         if not matches:
-            raise InventoryInvalid("device_type_not_found")
+            raise InventoryInvalid(
+                self._device_type_errors.get(target, "device_type_not_found")
+            )
         if len(matches) != 1:
             raise InventoryConflict("device_type_ambiguous")
         return matches[0]
@@ -414,6 +428,12 @@ class InventoryImporter:
                     raise InventoryInvalid("duplicate_input_row")
                 seen.add(duplicate_key)
                 device_type = self._resolve_device_type(row.model)
+                device_type_id = device_type.get("id")
+                device_type_planned = (
+                    isinstance(device_type_id, int)
+                    and not isinstance(device_type_id, bool)
+                    and device_type_id < 0
+                )
                 platform = self._resolve_platform(row, device_type)
                 role = self._resolve_role(row, device_type, platform)
                 vrf = self._resolve_vrf(row.vrf or vrf_override)
@@ -428,7 +448,16 @@ class InventoryImporter:
                     device = self.client.post("/api/dcim/devices/", payload)
                 if device is None:
                     self._validate_planned_management(address, vrf)
-                    results.append(RowResult(**base, operation="CREATE_DEVICE_AND_MANAGEMENT", status=ImportStatus.CREATE))
+                    operation = (
+                        "CREATE_DEVICE_TYPE_DEVICE_AND_MANAGEMENT"
+                        if device_type_planned
+                        else "CREATE_DEVICE_AND_MANAGEMENT"
+                    )
+                    results.append(RowResult(
+                        **base,
+                        operation=operation,
+                        status=ImportStatus.CREATE,
+                    ))
                     continue
                 changed, ids = self._management_state(device, address, vrf, apply=apply)
                 status = ImportStatus.CREATE if created or changed else ImportStatus.UNCHANGED

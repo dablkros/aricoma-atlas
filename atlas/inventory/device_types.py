@@ -63,9 +63,26 @@ def find_yaml_candidates(
     *,
     source: str,
 ) -> tuple[list[DeviceTypeCandidate], list[str]]:
+    matches, errors = find_yaml_candidates_for_queries(
+        root,
+        [query],
+        source=source,
+    )
+    return matches.get(normalized_identifier(query), []), errors
+
+
+def find_yaml_candidates_for_queries(
+    root: Path,
+    queries: list[str],
+    *,
+    source: str,
+) -> tuple[dict[str, list[DeviceTypeCandidate]], list[str]]:
+    wanted = {normalized_identifier(query) for query in queries}
+    matches = {query: [] for query in wanted}
+    if not wanted:
+        return matches, []
     if not root.is_dir():
-        return [], [f"source_directory_missing:{root}"]
-    matches = []
+        return matches, [f"source_directory_missing:{root}"]
     errors = []
     paths = sorted({*root.rglob("*.yaml"), *root.rglob("*.yml")})
     for path in paths:
@@ -76,20 +93,20 @@ def find_yaml_candidates(
             continue
         if not isinstance(data, dict):
             continue
-        if not _matches(
-            query,
-            model=data.get("model"),
-            slug=data.get("slug"),
-            filename=path.stem,
-        ):
-            continue
-        matches.append(DeviceTypeCandidate(
+        identifiers = {
+            normalized_identifier(data.get("model")),
+            normalized_identifier(data.get("slug")),
+            normalized_identifier(path.stem),
+        }
+        candidate = DeviceTypeCandidate(
             source=source,
             manufacturer=str(data.get("manufacturer", "")),
             model=str(data.get("model", "")),
             slug=str(data.get("slug", "")),
             path=str(path),
-        ))
+        )
+        for query in wanted & identifiers:
+            matches[query].append(candidate)
     return matches, errors
 
 
@@ -113,6 +130,7 @@ __all__ = [
     "DeviceTypeCandidate",
     "find_netbox_candidates",
     "find_yaml_candidates",
+    "find_yaml_candidates_for_queries",
     "normalized_identifier",
     "recommended_action",
 ]

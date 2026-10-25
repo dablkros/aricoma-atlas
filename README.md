@@ -61,6 +61,9 @@ diagnostiku.
 Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
 `--dry-run`/`--apply` postup sú popísané v
 [dokumentácii Inventory Importera](docs/inventory-import.md).
+Importer pri chýbajúcom Device Type najskôr preverí Atlas katalóg a potom
+lokálny Device Type Library checkout na commite pripnutom v manifeste. Dry-run
+iba zobrazí spoločný plán; apply vytvorí validovaný typ pred zariadením.
 
 ---
 

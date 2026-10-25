@@ -52,11 +52,11 @@ v `.runtime/inventory.yaml`.
 
 ## Rozlíšenie objektov
 
-Device Type musí existovať v Atlas katalógu ako jednoznačná presná zhoda modelu
-alebo nakonfigurovaného aliasu. Platforma sa prevezme z overeného
+Device Type sa rozlišuje ako jednoznačná presná zhoda modelu alebo
+nakonfigurovaného aliasu. Platforma sa prevezme z overeného
 `DeviceType.default_platform`; explicitná odlišná platforma je konflikt.
 Device Role sa vyberá v poradí: riadok, mapovanie modelu/platformy, predvolená
-rola. Importer žiadne z týchto objektov automaticky nevytvára.
+rola. Importer automaticky nevytvára neznáme Platformy, Roles ani VRF.
 
 ## Dohľadanie a pridanie Device Type
 
@@ -72,12 +72,23 @@ sudo atlasctl inventory device-type add "CBS350-16T-2G" --apply
 ```
 
 `search` nič nemení. Výsledok rozlišuje `NETBOX`, `ATLAS_CATALOG` a
-`PINNED_UPSTREAM`. `add` predvolene iba pripraví dry-run a môže zosúladiť iba
-definíciu, ktorá už je v aktuálnom zostavenom Atlas katalógu. Ak sa model nájde
-iba v upstream knižnici, Atlas vráti `CATALOG_REVIEW_REQUIRED`: definíciu treba
-najskôr zaradiť do manifestu alebo reviewed lokálneho katalógu a katalóg
-zostaviť štandardným bootstrap flowom. Príkaz úmyselne nesťahuje najnovší
-upstream ani nepridáva neoverenú definíciu priamo do NetBoxu.
+`PINNED_UPSTREAM`. Samostatný príkaz `add` predvolene iba pripraví dry-run a
+môže zosúladiť iba definíciu, ktorá už je v aktuálnom zostavenom Atlas
+katalógu. Príkaz úmyselne nesťahuje najnovší upstream.
+
+CSV/XLSX import má integrovaný preflight. Pre každý chýbajúci model postupuje:
+
+1. existujúci Device Type v NetBoxe;
+2. jednoznačná zhoda v aktuálnom zostavenom Atlas katalógu;
+3. jednoznačná zhoda v Device Type Library na commite pripnutom v manifeste.
+
+V dry-run režime sa upstream definícia iba validuje a vo výsledku sa zariadenie
+označí operáciou `CREATE_DEVICE_TYPE_DEVICE_AND_MANAGEMENT`; NetBox sa nemení.
+V apply režime Atlas najskôr cez existujúci provisioner vytvorí Manufacturer,
+potrebnú Platformu, Device Type a jeho component templates a až potom pokračuje
+v importe zariadení. Nepripnutý checkout, zastaraný Atlas katalóg, nejednoznačná
+zhoda alebo nevalidná YAML definícia sa pre príslušné riadky skončí explicitným
+`INVALID` dôvodom a Atlas typ neuhádne.
 
 Nový Device má stav `active`, Tenant aj Site a tieto bezpečné hodnoty:
 
@@ -104,7 +115,8 @@ zápis; po čiastočnom zlyhaní je preto bezpečné import zopakovať.
 
 ## Obmedzenia prvej verzie
 
-- neznáme Sites, Device Types, Roles, Platformy a VRF sa nevytvárajú;
+- neznáme Sites, Roles, Platformy a VRF sa nevytvárajú; Device Type sa môže
+  doplniť iba z aktuálneho Atlas katalógu alebo pripnutého upstream checkout-u;
 - existujúce konfliktné Devices ani IP adresy sa automaticky neopravujú;
 - podporované sú CSV a XLSX, nie starý binárny formát XLS;
 - vstup musí byť dostupný servisnému účtu `atlas`; odporúčaný je absolútny

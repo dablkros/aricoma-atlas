@@ -1,14 +1,19 @@
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
+from atlas.inventory.config import normalize_inventory_config
 from atlas.inventory.device_types import (
     DeviceTypeCandidate,
     find_netbox_candidates,
     find_yaml_candidates,
+    find_yaml_candidates_for_queries,
     normalized_identifier,
     recommended_action,
 )
+from atlas.inventory.models import InventoryRow
+from scripts import import_netbox_inventory as inventory_cli
 
 
 class FakeNetBoxClient:
@@ -85,6 +90,30 @@ class DeviceTypeDiscoveryTests(unittest.TestCase):
         self.assertEqual(1, len(errors))
         self.assertIn("invalid.yaml", errors[0])
 
+    def test_multiple_yaml_queries_are_resolved_in_one_scan(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            vendor = root / "Cisco"
+            vendor.mkdir()
+            (vendor / "MODEL-A.yaml").write_text(
+                "manufacturer: Cisco\nmodel: Model A\nslug: model-a\n",
+                encoding="utf-8",
+            )
+            (vendor / "MODEL-B.yaml").write_text(
+                "manufacturer: Cisco\nmodel: Model B\nslug: model-b\n",
+                encoding="utf-8",
+            )
+
+            matches, errors = find_yaml_candidates_for_queries(
+                root,
+                ["MODEL-A", "model-b"],
+                source="PINNED_UPSTREAM",
+            )
+
+        self.assertEqual([], errors)
+        self.assertEqual("Model A", matches["model-a"][0].model)
+        self.assertEqual("Model B", matches["model-b"][0].model)
+
     def test_recommended_actions_cover_safe_flow(self):
         netbox = candidate("NETBOX")
         catalog = candidate("ATLAS_CATALOG")
@@ -101,6 +130,151 @@ class DeviceTypeDiscoveryTests(unittest.TestCase):
         for arguments, expected in cases:
             with self.subTest(expected=expected):
                 self.assertEqual(expected, recommended_action(*arguments))
+
+
+class InventoryDeviceTypePreflightTests(unittest.TestCase):
+    def setUp(self):
+        self.client = FakeNetBoxClient([])
+        self.client.get_all = self.get_all
+        self.config = normalize_inventory_config({})
+        self.row = InventoryRow(
+            number=2,
+            hostname="SW01",
+            model="CBS350-16T-2G",
+            management_ip="192.0.2.10",
+            site="lab",
+        )
+        self.item = {
+            "file": Path("/catalog/Cisco/CBS350-16T-2G.yaml"),
+            "filename": "CBS350-16T-2G",
+            "manufacturer": "Cisco",
+            "model": "CBS350-16T-2G",
+            "slug": "cbs350-16t-2g",
+            "data": {
+                "manufacturer": "Cisco",
+                "model": "CBS350-16T-2G",
+                "slug": "cbs350-16t-2g",
+            },
+        }
+
+    def get_all(self, endpoint, params=None):
+        if endpoint == "/api/dcim/device-types/":
+            return []
+        if endpoint == "/api/dcim/platforms/":
+            return [{"id": 30, "slug": "cisco-cbs"}]
+        raise AssertionError(endpoint)
+
+    @patch.object(inventory_cli.provision_netbox, "provision")
+    @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
+    @patch.object(inventory_cli.provision_netbox, "load_catalog")
+    @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
+    @patch.object(inventory_cli, "load_platform_config", return_value={})
+    def test_catalog_type_is_planned_before_csv_dry_run(
+        self,
+        _load_platform,
+        _default_platform,
+        _catalog_status,
+        load_catalog,
+        _validate,
+        provision,
+    ):
+        load_catalog.return_value = ([self.item], [])
+
+        planned, errors = inventory_cli.prepare_import_device_types(
+            self.client,
+            [self.row],
+            self.config,
+            apply=False,
+        )
+
+        self.assertEqual({}, errors)
+        self.assertEqual("CBS350-16T-2G", planned[0]["model"])
+        self.assertEqual(-1, planned[0]["id"])
+        provision.assert_called_once()
+        self.assertFalse(provision.call_args.args[2])
+
+    @patch.object(inventory_cli.provision_netbox, "provision")
+    @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
+    @patch.object(inventory_cli.provision_netbox, "load_catalog")
+    @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
+    @patch.object(inventory_cli, "load_platform_config", return_value={})
+    def test_apply_provisions_type_without_synthetic_object(
+        self,
+        _load_platform,
+        _default_platform,
+        _catalog_status,
+        load_catalog,
+        _validate,
+        provision,
+    ):
+        load_catalog.return_value = ([self.item], [])
+
+        planned, errors = inventory_cli.prepare_import_device_types(
+            self.client,
+            [self.row],
+            self.config,
+            apply=True,
+        )
+
+        self.assertEqual(([], {}), (planned, errors))
+        provision.assert_called_once()
+        self.assertTrue(provision.call_args.args[2])
+
+    @patch.object(inventory_cli.provision_netbox, "provision")
+    @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
+    @patch.object(inventory_cli.provision_netbox, "load_catalog", return_value=([], []))
+    @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli.bootstrap_netbox, "upstream_git_output", return_value="abc123")
+    @patch.object(
+        inventory_cli.bootstrap_netbox,
+        "load_manifest",
+        return_value={"upstream": {"commit": "abc123"}},
+    )
+    @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
+    @patch.object(inventory_cli, "load_platform_config", return_value={})
+    def test_missing_catalog_type_falls_back_to_pinned_upstream(
+        self,
+        _load_platform,
+        _default_platform,
+        _manifest,
+        _git_commit,
+        _catalog_status,
+        _load_catalog,
+        _validate,
+        provision,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "CBS350-16T-2G.yaml"
+            path.write_text(
+                "manufacturer: Cisco\n"
+                "model: CBS350-16T-2G\n"
+                "slug: cbs350-16t-2g\n",
+                encoding="utf-8",
+            )
+            upstream = DeviceTypeCandidate(
+                source="PINNED_UPSTREAM",
+                manufacturer="Cisco",
+                model="CBS350-16T-2G",
+                slug="cbs350-16t-2g",
+                path=str(path),
+            )
+            with patch.object(
+                inventory_cli,
+                "find_yaml_candidates_for_queries",
+                return_value=({"cbs350-16t-2g": [upstream]}, []),
+            ):
+                planned, errors = inventory_cli.prepare_import_device_types(
+                    self.client,
+                    [self.row],
+                    self.config,
+                    apply=False,
+                )
+
+        self.assertEqual({}, errors)
+        self.assertEqual("PINNED_UPSTREAM", planned[0]["atlas_source"])
+        provision.assert_called_once()
 
 
 if __name__ == "__main__":

@@ -7,6 +7,8 @@ import os
 from pathlib import Path
 import sys
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parent.parent
 if str(ROOT) not in sys.path:
@@ -16,6 +18,7 @@ from atlas.inventory.config import load_inventory_config  # noqa: E402
 from atlas.inventory.device_types import (  # noqa: E402
     find_netbox_candidates,
     find_yaml_candidates,
+    find_yaml_candidates_for_queries,
     normalized_identifier,
     recommended_action,
 )
@@ -27,6 +30,7 @@ from atlas.inventory.importer import (  # noqa: E402
 from atlas.inventory.parser import parse_inventory  # noqa: E402
 from atlas.inventory.report import render_text, write_json  # noqa: E402
 from atlas.openbao_client import OpenBaoClient  # noqa: E402
+from atlas.platforms import default_platform, load_platform_config  # noqa: E402
 from atlas.services.openbao import OpenBaoService  # noqa: E402
 from scripts import bootstrap_netbox, provision_netbox  # noqa: E402
 from scripts.provision_netbox import NetBoxClient  # noqa: E402
@@ -243,6 +247,163 @@ def catalog_items_matching(query: str) -> tuple[list[dict], list[str]]:
     return matches, parse_errors
 
 
+def _inventory_model_target(model: str, config: dict) -> str:
+    requested = normalized_identifier(model)
+    aliases = config["device_type_aliases"]
+    alias = aliases.get(model)
+    if alias is None:
+        alias = next((
+            value for key, value in aliases.items()
+            if normalized_identifier(key) == requested
+        ), None)
+    return str(alias or model).strip()
+
+
+def _upstream_item(path: Path, platform_config: dict) -> dict:
+    data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    if not isinstance(data, dict):
+        raise InventoryInvalid("device_type_upstream_invalid")
+    data["default_platform"] = default_platform(data, platform_config)
+    return {
+        "file": path,
+        "filename": path.stem,
+        "manufacturer": str(data.get("manufacturer", "")),
+        "model": str(data.get("model", "")),
+        "slug": str(data.get("slug", "")),
+        "data": data,
+    }
+
+
+def prepare_import_device_types(
+    client: NetBoxClient,
+    rows: list,
+    config: dict,
+    *,
+    apply: bool,
+) -> tuple[list[dict], dict[str, str]]:
+    targets = {
+        normalized_identifier(_inventory_model_target(row.model, config)):
+        _inventory_model_target(row.model, config)
+        for row in rows
+        if normalized_identifier(row.model)
+    }
+    existing = client.get_all("/api/dcim/device-types/")
+    existing_models = {
+        normalized_identifier(item.get("model"))
+        for item in existing
+        if isinstance(item, dict)
+    }
+    missing = {
+        key: value for key, value in targets.items()
+        if key not in existing_models
+    }
+    if not missing:
+        return [], {}
+
+    items, parse_errors = provision_netbox.load_catalog()
+    catalog_index: dict[str, list[dict]] = {key: [] for key in missing}
+    for item in items:
+        key = normalized_identifier(item["model"])
+        if key in missing:
+            catalog_index[key].append(item)
+
+    errors: dict[str, str] = {}
+    if parse_errors:
+        errors.update({key: "device_type_catalog_invalid" for key in missing})
+        return [], errors
+
+    manifest = bootstrap_netbox.load_manifest()
+    try:
+        catalog_current, _reasons = bootstrap_netbox.catalog_status(manifest)
+    except (OSError, RuntimeError, ValueError):
+        catalog_current = False
+    upstream_needed = [key for key in missing if not catalog_index[key]]
+    upstream_index, upstream_errors = find_yaml_candidates_for_queries(
+        bootstrap_netbox.UPSTREAM_DIR / "device-types",
+        [missing[key] for key in upstream_needed],
+        source="PINNED_UPSTREAM",
+    )
+
+    upstream_pinned = False
+    if upstream_needed and not upstream_errors:
+        try:
+            upstream_pinned = (
+                bootstrap_netbox.upstream_git_output("rev-parse", "HEAD")
+                == manifest["upstream"]["commit"]
+            )
+        except RuntimeError:
+            upstream_pinned = False
+
+    platform_config = load_platform_config()
+    selected: list[dict] = []
+    selected_sources: dict[str, str] = {}
+    for key, display_model in missing.items():
+        candidates = catalog_index[key]
+        source = "ATLAS_CATALOG"
+        if candidates and not catalog_current:
+            errors[key] = "device_type_catalog_stale"
+            continue
+        if not candidates:
+            candidates = [
+                candidate for candidate in upstream_index.get(key, [])
+                if normalized_identifier(candidate.model) == key
+            ]
+            source = "PINNED_UPSTREAM"
+            if upstream_errors or not upstream_pinned:
+                errors[key] = "device_type_upstream_unavailable"
+                continue
+        if not candidates:
+            errors[key] = "device_type_not_found"
+            continue
+        if len(candidates) != 1:
+            errors[key] = "device_type_ambiguous"
+            continue
+        try:
+            item = candidates[0]
+            if source == "PINNED_UPSTREAM":
+                item = _upstream_item(Path(item.path), platform_config)
+            validation_errors = provision_netbox.validate_item(item)
+        except (OSError, ValueError, yaml.YAMLError):
+            errors[key] = "device_type_upstream_invalid"
+            continue
+        if validation_errors:
+            errors[key] = "device_type_validation_failed"
+            continue
+        selected.append(item)
+        selected_sources[str(item["file"])] = source
+        print(f"[DEVICE TYPE] {display_model}: {source} -> PLAN_CREATE")
+
+    if not selected:
+        return [], errors
+
+    provision_netbox.provision(
+        client,
+        selected,
+        apply,
+        provision_netbox.DEFAULT_BATCH_SIZE,
+        False,
+    )
+    if apply:
+        return [], errors
+
+    platforms = {
+        str(item.get("slug", "")): item
+        for item in client.get_all("/api/dcim/platforms/")
+        if isinstance(item, dict)
+    }
+    planned = []
+    for offset, item in enumerate(selected, start=1):
+        slug = default_platform(item["data"], platform_config)
+        planned.append({
+            "id": -offset,
+            "model": item["model"],
+            "manufacturer": {"name": item["manufacturer"]},
+            "default_platform": platforms.get(slug) if slug else None,
+            "atlas_source": selected_sources[str(item["file"])],
+        })
+    return planned, errors
+
+
 def manage_device_type(args: argparse.Namespace, client: NetBoxClient) -> int:
     state = device_type_state(client, args.model)
     if args.device_type_command == "search":
@@ -311,16 +472,17 @@ def main() -> int:
         return manage_device_type(args, client)
 
     config = load_inventory_config(RUNTIME_CONFIG)
-    importer = InventoryImporter(client, config)
     apply = apply_selected(args)
 
     if args.command == "tenant":
+        importer = InventoryImporter(client, config)
         tenant, operation = importer.ensure_tenant(args.name, apply=apply)
         slug = tenant.get("slug") if tenant else "planned"
         print(f"[{operation}] Tenant {args.name} ({slug})")
         return 0
 
     if args.command == "site":
+        importer = InventoryImporter(client, config)
         tenant = importer.resolve_tenant(args.tenant)
         site, operation = importer.ensure_site(tenant, args.name, apply=apply)
         slug = site.get("slug") if site else "planned"
@@ -328,9 +490,22 @@ def main() -> int:
         return 0
 
     if args.command == "provision-defaults":
+        importer = InventoryImporter(client, config)
         return provision_defaults(importer, config, apply=apply)
 
     rows = parse_inventory(caller_path(args.file))
+    planned_types, device_type_errors = prepare_import_device_types(
+        client,
+        rows,
+        config,
+        apply=apply,
+    )
+    importer = InventoryImporter(
+        client,
+        config,
+        planned_device_types=planned_types,
+        device_type_errors=device_type_errors,
+    )
     report = importer.import_rows(
         rows,
         tenant_override=args.tenant,
