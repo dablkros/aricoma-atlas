@@ -71,16 +71,43 @@ sudo atlasctl inventory device-type add "CBS350-16T-2G" --dry-run
 sudo atlasctl inventory device-type add "CBS350-16T-2G" --apply
 ```
 
-`search` nič nemení. Výsledok rozlišuje `NETBOX`, `ATLAS_CATALOG` a
-`PINNED_UPSTREAM`. Samostatný príkaz `add` predvolene iba pripraví dry-run a
-môže zosúladiť iba definíciu, ktorá už je v aktuálnom zostavenom Atlas
-katalógu. Príkaz úmyselne nesťahuje najnovší upstream.
+`search` nič nemení. Výsledok rozlišuje `NETBOX`, `ATLAS_CATALOG`,
+`PINNED_UPSTREAM` a `ATLAS_LOCAL`. Samostatný príkaz `add` predvolene iba
+pripraví dry-run a môže zosúladiť definíciu z aktuálneho zostaveného Atlas
+katalógu alebo z ručne dodanej lokálnej definície. Atlas nesťahuje Device Type
+YAML z externých URL.
+
+Ak `search` nenájde model v NetBoxe, Atlas katalógu ani pripnutom verejnom Git
+repozitári, vypíše adresár pre manuálne dodanie definície:
+
+```text
+/opt/aricoma-atlas/.runtime/inventory/device-types/
+```
+
+Súbor treba nahrať ako YAML čitateľný servisným účtom `atlas`, napríklad:
+
+```bash
+sudo install -o atlas -g atlas -m 0640 \
+  ./check-point-smart-1-600-m.yaml \
+  /opt/aricoma-atlas/.runtime/inventory/device-types/check-point-smart-1-600-m.yaml
+
+sudo atlasctl inventory device-type search "Smart-1 600-M"
+sudo atlasctl inventory device-type add "Smart-1 600-M" --dry-run
+sudo atlasctl inventory device-type add "Smart-1 600-M" --apply
+```
+
+Lokálny YAML zostáva mimo Git a Atlas ho neprepisuje. Pred provisioningom musí
+prejsť rovnakou schémovou a komponentovou validáciou ako zostavený katalóg.
+Za pôvod a oprávnenie na použitie ručne dodaného súboru zodpovedá operátor;
+Atlas externý obsah automaticky nezískava ani nedistribuuje.
 
 CSV/XLSX import má integrovaný preflight. Pre každý chýbajúci model postupuje:
 
 1. existujúci Device Type v NetBoxe;
 2. jednoznačná zhoda v aktuálnom zostavenom Atlas katalógu;
-3. jednoznačná zhoda v Device Type Library na commite pripnutom v manifeste.
+3. jednoznačná zhoda v Device Type Library na commite pripnutom v manifeste;
+4. ručne dodaná definícia v `ATLAS_LOCAL`, iba ak verejný repozitár model
+   neobsahuje.
 
 V dry-run režime sa upstream definícia iba validuje a vo výsledku sa zariadenie
 označí operáciou `CREATE_DEVICE_TYPE_DEVICE_AND_MANAGEMENT`; NetBox sa nemení.
@@ -116,7 +143,10 @@ zápis; po čiastočnom zlyhaní je preto bezpečné import zopakovať.
 ## Obmedzenia prvej verzie
 
 - neznáme Sites, Roles, Platformy a VRF sa nevytvárajú; Device Type sa môže
-  doplniť iba z aktuálneho Atlas katalógu alebo pripnutého upstream checkout-u;
+  doplniť iba z aktuálneho Atlas katalógu, oprávneného `ATLAS_LOCAL` alebo
+  pripnutého upstream checkout-u;
+- externé URL sa automaticky nesťahujú; YAML musí operátor vložiť do určeného
+  runtime adresára;
 - existujúce konfliktné Devices ani IP adresy sa automaticky neopravujú;
 - podporované sú CSV a XLSX, nie starý binárny formát XLS;
 - vstup musí byť dostupný servisnému účtu `atlas`; odporúčaný je absolútny

@@ -367,6 +367,8 @@ install_repository() {
     chmod 0750 "$ATLAS_ROOT"
 
     install -d -m 0700 -o "$ATLAS_USER" -g "$ATLAS_GROUP" "$RUNTIME_DIR"
+    install -d -m 0750 -o "$ATLAS_USER" -g "$ATLAS_GROUP" \
+        "$RUNTIME_DIR/inventory/device-types"
 
     local installed_commit
     installed_commit="$(target_git rev-parse HEAD)"

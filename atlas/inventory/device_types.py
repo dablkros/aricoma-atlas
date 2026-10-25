@@ -110,15 +110,30 @@ def find_yaml_candidates_for_queries(
     return matches, errors
 
 
+def find_local_candidates(
+    root: Path,
+    query: str,
+) -> tuple[list[DeviceTypeCandidate], list[str]]:
+    if not root.exists():
+        return [], []
+    return find_yaml_candidates(root, query, source="ATLAS_LOCAL")
+
+
 def recommended_action(
     netbox: list[DeviceTypeCandidate],
     catalog: list[DeviceTypeCandidate],
     upstream: list[DeviceTypeCandidate],
+    local: list[DeviceTypeCandidate] | None = None,
 ) -> str:
-    if any(len(values) > 1 for values in (netbox, catalog, upstream)):
+    local = local or []
+    if any(len(values) > 1 for values in (netbox, catalog, local, upstream)):
+        return "CONFLICT"
+    if local and (catalog or upstream):
         return "CONFLICT"
     if catalog:
         return "RECONCILE" if netbox else "ADD_FROM_ATLAS_CATALOG"
+    if local:
+        return "RECONCILE" if netbox else "ADD_FROM_ATLAS_LOCAL"
     if netbox:
         return "ALREADY_IN_NETBOX"
     if upstream:
@@ -129,6 +144,7 @@ def recommended_action(
 __all__ = [
     "DeviceTypeCandidate",
     "find_netbox_candidates",
+    "find_local_candidates",
     "find_yaml_candidates",
     "find_yaml_candidates_for_queries",
     "normalized_identifier",

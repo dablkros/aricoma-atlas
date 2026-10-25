@@ -16,6 +16,7 @@ if str(ROOT) not in sys.path:
 
 from atlas.inventory.config import load_inventory_config  # noqa: E402
 from atlas.inventory.device_types import (  # noqa: E402
+    find_local_candidates,
     find_netbox_candidates,
     find_yaml_candidates,
     find_yaml_candidates_for_queries,
@@ -38,6 +39,7 @@ from scripts.provision_netbox import NetBoxClient  # noqa: E402
 
 RUNTIME_CONFIG = ROOT / ".runtime/inventory.yaml"
 OPENBAO_IDENTITY = ROOT / ".runtime/openbao-backend.json"
+LOCAL_DEVICE_TYPE_DIR = ROOT / ".runtime/inventory/device-types"
 
 
 def caller_path(value: str) -> Path:
@@ -162,6 +164,7 @@ def device_type_state(client: NetBoxClient, query: str) -> dict:
         query,
         source="PINNED_UPSTREAM",
     )
+    local, local_errors = find_local_candidates(LOCAL_DEVICE_TYPE_DIR, query)
 
     expected_commit = manifest["upstream"]["commit"]
     actual_commit = None
@@ -179,10 +182,11 @@ def device_type_state(client: NetBoxClient, query: str) -> dict:
     return {
         "schema_version": 1,
         "query": query,
-        "action": recommended_action(netbox, catalog, upstream),
+        "action": recommended_action(netbox, catalog, upstream, local),
         "sources": {
             "netbox": [candidate.as_dict() for candidate in netbox],
             "atlas_catalog": [candidate.as_dict() for candidate in catalog],
+            "atlas_local": [candidate.as_dict() for candidate in local],
             "pinned_upstream": [candidate.as_dict() for candidate in upstream],
         },
         "catalog": {
@@ -195,7 +199,7 @@ def device_type_state(client: NetBoxClient, query: str) -> dict:
             "actual_commit": actual_commit,
             "pinned_commit_active": actual_commit == expected_commit,
         },
-        "warnings": (catalog_errors + upstream_errors)[:20],
+        "warnings": (catalog_errors + local_errors + upstream_errors)[:20],
     }
 
 
@@ -209,6 +213,7 @@ def render_device_type_state(state: dict) -> str:
         ("NETBOX", "netbox"),
         ("ATLAS_CATALOG", "atlas_catalog"),
         ("PINNED_UPSTREAM", "pinned_upstream"),
+        ("ATLAS_LOCAL", "atlas_local"),
     )
     for label, key in labels:
         matches = state["sources"][key]
@@ -230,6 +235,8 @@ def render_device_type_state(state: dict) -> str:
         lines.append(f"  [CATALOG] {reason}")
     for warning in state["warnings"]:
         lines.append(f"  [WARNING] {warning}")
+    if state["action"] == "NOT_FOUND":
+        lines.append(f"Upload Device Type YAML to: {LOCAL_DEVICE_TYPE_DIR}")
     return "\n".join(lines)
 
 
@@ -263,6 +270,11 @@ def _upstream_item(path: Path, platform_config: dict) -> dict:
     data = yaml.safe_load(path.read_text(encoding="utf-8"))
     if not isinstance(data, dict):
         raise InventoryInvalid("device_type_upstream_invalid")
+    return _device_type_item(data, path, platform_config)
+
+
+def _device_type_item(data: dict, path: Path, platform_config: dict) -> dict:
+    data = dict(data)
     data["default_platform"] = default_platform(data, platform_config)
     return {
         "file": path,
@@ -317,7 +329,10 @@ def prepare_import_device_types(
         catalog_current, _reasons = bootstrap_netbox.catalog_status(manifest)
     except (OSError, RuntimeError, ValueError):
         catalog_current = False
-    upstream_needed = [key for key in missing if not catalog_index[key]]
+    upstream_needed = [
+        key for key in missing
+        if not catalog_index[key]
+    ]
     upstream_index, upstream_errors = find_yaml_candidates_for_queries(
         bootstrap_netbox.UPSTREAM_DIR / "device-types",
         [missing[key] for key in upstream_needed],
@@ -333,6 +348,19 @@ def prepare_import_device_types(
             )
         except RuntimeError:
             upstream_pinned = False
+
+    local_needed = [
+        key for key in upstream_needed
+        if not any(
+            normalized_identifier(candidate.model) == key
+            for candidate in upstream_index.get(key, [])
+        )
+    ]
+    local_index, local_errors = find_yaml_candidates_for_queries(
+        LOCAL_DEVICE_TYPE_DIR,
+        [missing[key] for key in local_needed],
+        source="ATLAS_LOCAL",
+    ) if LOCAL_DEVICE_TYPE_DIR.exists() else ({}, [])
 
     platform_config = load_platform_config()
     selected: list[dict] = []
@@ -353,7 +381,33 @@ def prepare_import_device_types(
                 errors[key] = "device_type_upstream_unavailable"
                 continue
         if not candidates:
-            errors[key] = "device_type_not_found"
+            local_candidates = [
+                candidate for candidate in local_index.get(key, [])
+                if normalized_identifier(candidate.model) == key
+            ]
+            if len(local_candidates) > 1:
+                errors[key] = "device_type_ambiguous"
+                continue
+            if local_candidates:
+                try:
+                    path = Path(local_candidates[0].path)
+                    local_data = yaml.safe_load(path.read_text(encoding="utf-8"))
+                    if not isinstance(local_data, dict):
+                        raise ValueError("local YAML root is not an object")
+                    candidates = [_device_type_item(local_data, path, platform_config)]
+                    source = "ATLAS_LOCAL"
+                except (OSError, ValueError, yaml.YAMLError):
+                    errors[key] = "device_type_local_invalid"
+                    continue
+            if local_errors:
+                errors[key] = "device_type_local_invalid"
+                continue
+        if not candidates:
+            errors[key] = "device_type_not_found_upload_yaml_to_runtime_catalog"
+            print(
+                f"[DEVICE TYPE] {display_model}: NOT_FOUND; "
+                f"upload YAML to {LOCAL_DEVICE_TYPE_DIR}"
+            )
             continue
         if len(candidates) != 1:
             errors[key] = "device_type_ambiguous"
@@ -424,18 +478,29 @@ def manage_device_type(args: argparse.Namespace, client: NetBoxClient) -> int:
         )
     if len(matches) > 1:
         raise InventoryConflict("Atlas catalog returned multiple exact matches")
+    source = "ATLAS_CATALOG"
     if not matches:
-        if state["sources"]["netbox"]:
+        local = state["sources"]["atlas_local"]
+        if state["sources"]["netbox"] and not local:
             print("[UNCHANGED] Device Type already exists in NetBox")
             return 0
+        if local:
+            path = Path(local[0]["path"])
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+            if not isinstance(data, dict):
+                raise InventoryInvalid("device_type_local_invalid")
+            matches = [_device_type_item(data, path, load_platform_config())]
+            source = "ATLAS_LOCAL"
         if state["sources"]["pinned_upstream"]:
-            raise InventoryInvalid(
-                "Device Type exists only in pinned upstream; add it to the Atlas "
-                "manifest or reviewed local catalog and rebuild before provisioning"
-            )
-        raise InventoryInvalid("Device Type was not found")
+            if not matches:
+                raise InventoryInvalid(
+                    "Device Type exists only in pinned upstream; add it to the Atlas "
+                    "manifest or reviewed local catalog and rebuild before provisioning"
+                )
+        if not matches:
+            raise InventoryInvalid("Device Type was not found")
 
-    if not state["catalog"]["current"]:
+    if source == "ATLAS_CATALOG" and not state["catalog"]["current"]:
         raise InventoryInvalid(
             "Atlas Device Catalog is stale; rebuild it with the pinned bootstrap flow"
         )
@@ -528,5 +593,11 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
-    except (InventoryConflict, InventoryInvalid, OSError, RuntimeError, ValueError) as exc:
+    except (
+        InventoryConflict,
+        InventoryInvalid,
+        OSError,
+        RuntimeError,
+        ValueError,
+    ) as exc:
         raise SystemExit(f"[ERROR] {exc}")

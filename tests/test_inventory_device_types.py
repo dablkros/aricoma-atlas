@@ -131,6 +131,21 @@ class DeviceTypeDiscoveryTests(unittest.TestCase):
             with self.subTest(expected=expected):
                 self.assertEqual(expected, recommended_action(*arguments))
 
+        local = DeviceTypeCandidate(
+            source="ATLAS_LOCAL",
+            manufacturer="Cisco",
+            model="CBS350-16T-2G",
+            slug="cbs350-16t-2g",
+        )
+        self.assertEqual(
+            "ADD_FROM_ATLAS_LOCAL",
+            recommended_action([], [], [], [local]),
+        )
+        self.assertEqual(
+            "CONFLICT",
+            recommended_action([], [], [upstream], [local]),
+        )
+
 
 class InventoryDeviceTypePreflightTests(unittest.TestCase):
     def setUp(self):
@@ -276,6 +291,115 @@ class InventoryDeviceTypePreflightTests(unittest.TestCase):
         self.assertEqual("PINNED_UPSTREAM", planned[0]["atlas_source"])
         provision.assert_called_once()
 
+    @patch.object(inventory_cli.provision_netbox, "provision")
+    @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
+    @patch.object(inventory_cli.provision_netbox, "load_catalog", return_value=([], []))
+    @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
+    @patch.object(inventory_cli, "load_platform_config", return_value={})
+    def test_manual_runtime_yaml_is_used_after_upstream_miss(
+        self,
+        _load_platform,
+        _default_platform,
+        _catalog_status,
+        _load_catalog,
+        _validate,
+        provision,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "LOCAL-ONLY-1000.yaml").write_text(
+                "manufacturer: Cisco\n"
+                "model: LOCAL-ONLY-1000\n"
+                "slug: local-only-1000\n",
+                encoding="utf-8",
+            )
+            local_row = InventoryRow(
+                number=2,
+                hostname="SW01",
+                model="LOCAL-ONLY-1000",
+                management_ip="192.0.2.10",
+                site="lab",
+            )
+            with patch.object(inventory_cli, "LOCAL_DEVICE_TYPE_DIR", root):
+                planned, errors = inventory_cli.prepare_import_device_types(
+                    self.client,
+                    [local_row],
+                    self.config,
+                    apply=False,
+                )
+
+        self.assertEqual({}, errors)
+        self.assertEqual("ATLAS_LOCAL", planned[0]["atlas_source"])
+        provision.assert_called_once()
+
+    @patch.object(inventory_cli.provision_netbox, "provision")
+    @patch.object(inventory_cli.provision_netbox, "validate_item", return_value=[])
+    @patch.object(inventory_cli.provision_netbox, "load_catalog", return_value=([], []))
+    @patch.object(inventory_cli.bootstrap_netbox, "catalog_status", return_value=(True, []))
+    @patch.object(inventory_cli.bootstrap_netbox, "upstream_git_output", return_value="abc123")
+    @patch.object(
+        inventory_cli.bootstrap_netbox,
+        "load_manifest",
+        return_value={"upstream": {"commit": "abc123"}},
+    )
+    @patch.object(inventory_cli, "default_platform", return_value="cisco-cbs")
+    @patch.object(inventory_cli, "load_platform_config", return_value={})
+    def test_pinned_upstream_takes_priority_over_manual_runtime_yaml(
+        self,
+        _load_platform,
+        _default_platform,
+        _manifest,
+        _git_commit,
+        _catalog_status,
+        _load_catalog,
+        _validate,
+        provision,
+    ):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            local_path = root / "local" / "CBS350-16T-2G.yaml"
+            local_path.parent.mkdir()
+            local_path.write_text(
+                "manufacturer: Local override\n"
+                "model: CBS350-16T-2G\n"
+                "slug: local-cbs350-16t-2g\n",
+                encoding="utf-8",
+            )
+            upstream_path = root / "upstream" / "CBS350-16T-2G.yaml"
+            upstream_path.parent.mkdir()
+            upstream_path.write_text(
+                "manufacturer: Cisco\n"
+                "model: CBS350-16T-2G\n"
+                "slug: cbs350-16t-2g\n",
+                encoding="utf-8",
+            )
+            upstream = DeviceTypeCandidate(
+                source="PINNED_UPSTREAM",
+                manufacturer="Cisco",
+                model="CBS350-16T-2G",
+                slug="cbs350-16t-2g",
+                path=str(upstream_path),
+            )
+            with (
+                patch.object(inventory_cli, "LOCAL_DEVICE_TYPE_DIR", local_path.parent),
+                patch.object(
+                    inventory_cli,
+                    "find_yaml_candidates_for_queries",
+                    return_value=({"cbs350-16t-2g": [upstream]}, []),
+                ),
+            ):
+                planned, errors = inventory_cli.prepare_import_device_types(
+                    self.client,
+                    [self.row],
+                    self.config,
+                    apply=False,
+                )
+
+        self.assertEqual({}, errors)
+        self.assertEqual("PINNED_UPSTREAM", planned[0]["atlas_source"])
+        self.assertEqual("Cisco", planned[0]["manufacturer"]["name"])
+        provision.assert_called_once()
 
 if __name__ == "__main__":
     unittest.main()
