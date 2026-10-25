@@ -425,6 +425,10 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/atlas/inventory/device-types",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG"],
+            "true",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
             "10000",
         )

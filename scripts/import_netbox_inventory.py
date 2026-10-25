@@ -318,6 +318,7 @@ def prepare_import_device_types(
     *,
     apply: bool,
     local_device_type_dir: Path | None = None,
+    trusted_catalog_report: bool = False,
 ) -> tuple[list[dict], dict[str, str]]:
     if local_device_type_dir is None:
         local_device_type_dir = LOCAL_DEVICE_TYPE_DIR
@@ -364,13 +365,10 @@ def prepare_import_device_types(
         return [], errors
 
     manifest = bootstrap_netbox.load_manifest()
-    repository_metadata_available = (
-        bootstrap_netbox.UPSTREAM_DIR / ".git"
-    ).exists()
     try:
         catalog_current, _reasons = bootstrap_netbox.catalog_status(
             manifest,
-            require_upstream_repository=repository_metadata_available,
+            require_upstream_repository=not trusted_catalog_report,
         )
     except (OSError, RuntimeError, ValueError):
         catalog_current = False
@@ -386,7 +384,12 @@ def prepare_import_device_types(
 
     upstream_pinned = False
     if upstream_needed and not upstream_errors:
-        if repository_metadata_available:
+        if trusted_catalog_report:
+            report = bootstrap_netbox.load_catalog_report() or {}
+            upstream_pinned = (
+                report.get("upstream_commit") == manifest["upstream"]["commit"]
+            )
+        else:
             try:
                 upstream_pinned = (
                     bootstrap_netbox.upstream_git_output("rev-parse", "HEAD")
@@ -394,11 +397,6 @@ def prepare_import_device_types(
                 )
             except RuntimeError:
                 upstream_pinned = False
-        else:
-            report = bootstrap_netbox.load_catalog_report() or {}
-            upstream_pinned = (
-                report.get("upstream_commit") == manifest["upstream"]["commit"]
-            )
 
     local_needed = [
         key for key in upstream_needed

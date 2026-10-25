@@ -24,6 +24,7 @@ from scripts.import_netbox_inventory import _device_type_item, prepare_import_de
 router = APIRouter(prefix="/inventory", tags=["inventory"])
 CONFIG = Path(os.environ.get("ATLAS_INVENTORY_CONFIG", "/run/atlas/inventory/config.yaml"))
 DEVICE_TYPES = Path(os.environ.get("ATLAS_INVENTORY_DEVICE_TYPES", "/run/atlas/inventory/device-types"))
+TRUST_MOUNTED_CATALOG = os.environ.get("ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG") == "true"
 
 
 def authorized(request: Request) -> None:
@@ -46,7 +47,12 @@ def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> d
         config = load_inventory_config(CONFIG)
         client = request.app.state.dependencies.netbox
         planned, errors = prepare_import_device_types(
-            client, rows, config, apply=apply, local_device_type_dir=DEVICE_TYPES,
+            client,
+            rows,
+            config,
+            apply=apply,
+            local_device_type_dir=DEVICE_TYPES,
+            trusted_catalog_report=TRUST_MOUNTED_CATALOG,
         )
         importer = InventoryImporter(
             client, config, planned_device_types=planned, device_type_errors=errors,

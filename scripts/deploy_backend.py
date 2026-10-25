@@ -547,6 +547,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
         "ATLAS_INVENTORY_CONFIG": "/run/atlas/inventory/config.yaml",
         "ATLAS_INVENTORY_DEVICE_TYPES": "/run/atlas/inventory/device-types",
+        "ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG": "true",
         "ATLAS_OXIDIZED_ENABLED": str(selection.enabled("oxidized")).lower(),
         "ATLAS_ZABBIX_ENABLED": str(selection.enabled("zabbix")).lower(),
         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
