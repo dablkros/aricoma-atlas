@@ -317,8 +317,10 @@ def prepare_import_device_types(
     config: dict,
     *,
     apply: bool,
-    local_device_type_dir: Path = LOCAL_DEVICE_TYPE_DIR,
+    local_device_type_dir: Path | None = None,
 ) -> tuple[list[dict], dict[str, str]]:
+    if local_device_type_dir is None:
+        local_device_type_dir = LOCAL_DEVICE_TYPE_DIR
     targets = {
         normalized_identifier(_inventory_model_target(row.model, config)):
         _inventory_model_target(row.model, config)
