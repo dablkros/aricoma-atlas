@@ -187,6 +187,7 @@ devices/credentials/cisco/cisco-default/admin
 devices/credentials/cisco/cisco-default/oxidized
 devices/credentials/cisco/cisco-default/snmp
 devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/fortinet/fortinet-default/prophylaxis
 devices/credentials/fortinet/fortinet-default/oxidized
 devices/credentials/sophos/sophos-default/snmp
 devices/credentials/check-point/GW-CP-01/oxidized
@@ -207,7 +208,7 @@ Keep interactive/automation access and configuration backup access in separate
 purpose leaves even when they use the same explicit `credential_profile`:
 
 ```text
-devices/credentials/fortinet/fortinet-default/admin
+devices/credentials/fortinet/fortinet-default/prophylaxis
 {"api_token": "<fortigate-api-token>"}
 
 devices/credentials/fortinet/fortinet-default/oxidized
@@ -215,8 +216,8 @@ devices/credentials/fortinet/fortinet-default/oxidized
 ```
 
 Oxidized consumes only the `oxidized` SSH leaf. The Ansible-backed FortiOS
-Profylaxia collector continues to consume `api_token` from `admin`. Atlas does
-not create, copy or rotate either device credential.
+Profylaxia collector consumes `api_token` or SSH credentials exclusively from
+`prophylaxis`. Atlas does not copy credentials between purpose leaves.
 
 Optional `enable_password` is a string and is not required. `oxidized` is the
 only purpose used by Oxidized; `admin` and `snmp` remain separate. The

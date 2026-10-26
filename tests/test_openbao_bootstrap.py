@@ -106,6 +106,18 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         for forbidden in ("delete", "sudo", "root"):
             self.assertNotIn(forbidden, policy.lower())
 
+    def test_credential_writer_policy_has_only_exact_purpose_leaves(self):
+        spec = deploy_openbao.RUNTIME_ROLES["atlas-credential-writer"]
+        policy = spec["policy_file"].read_text(encoding="utf-8")
+        for purpose in ("prophylaxis", "oxidized", "snmp"):
+            self.assertIn(
+                f'path "atlas/data/devices/credentials/+/+/{purpose}"',
+                policy,
+            )
+        self.assertEqual(policy.count('capabilities = ["create", "read", "update"]'), 3)
+        for forbidden in ("delete", "list", "sudo", "root", 'credentials/*'):
+            self.assertNotIn(forbidden, policy.lower())
+
     def test_backend_approle_has_only_its_policy_and_short_lived_tokens(self):
         with patch.object(deploy_openbao, "api_request") as api_request:
             deploy_openbao.ensure_runtime_role(
@@ -163,6 +175,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         self.assertEqual(
             set(deploy_openbao.RUNTIME_ROLES),
             {
+                "atlas-credential-writer",
                 "atlas-monitoring-provisioner",
                 "atlas-backend",
                 "netbox-runtime",
@@ -224,6 +237,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             [
                 call("temporary-root", "atlas-backend"),
                 call("temporary-root", "atlas-monitoring-provisioner"),
+                call("temporary-root", "atlas-credential-writer"),
             ],
         )
 
@@ -290,6 +304,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
     def test_existing_install_may_lack_only_the_new_backend_identity(self):
         identities = {
+            "atlas-credential-writer": None,
             "atlas-monitoring-provisioner": None,
             "atlas-backend": None,
             "netbox-runtime": {"role_id": "netbox", "secret_id": "secret"},
@@ -302,7 +317,11 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             side_effect=[identities[name] for name in deploy_openbao.RUNTIME_ROLES],
         ), patch.object(deploy_openbao, "login_approle") as login_approle:
             deploy_openbao.validate_runtime_identities(
-                optional_roles={"atlas-backend", "atlas-monitoring-provisioner"},
+                optional_roles={
+                    "atlas-backend",
+                    "atlas-monitoring-provisioner",
+                    "atlas-credential-writer",
+                },
             )
 
         self.assertEqual(login_approle.call_count, 2)

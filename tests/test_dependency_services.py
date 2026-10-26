@@ -229,7 +229,7 @@ class OpenBaoServiceTests(unittest.TestCase):
                 self.assertEqual(raised.exception.category, "error")
                 self.assertNotIn("sensitive", str(raised.exception))
 
-    def test_fortios_api_token_reuses_admin_credential_namespace(self):
+    def test_fortios_api_token_uses_prophylaxis_credential_namespace(self):
         client = Mock()
         client.login_from_identity.return_value = "runtime-token"
         client.kv_read.return_value = {
@@ -243,12 +243,13 @@ class OpenBaoServiceTests(unittest.TestCase):
             "fortinet",
             "default",
             authentication="api_token",
+            purpose="prophylaxis",
         )
 
         self.assertEqual(credentials, {"api_token": "prophylaxis-token"})
         client.kv_read.assert_called_once_with(
             "runtime-token",
-            "devices/credentials/fortinet/default/admin",
+            "devices/credentials/fortinet/default/prophylaxis",
             mount="atlas",
         )
 

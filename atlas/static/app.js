@@ -19,6 +19,9 @@ const state = {
   inventoryActivityTimer: null,
   inventoryActivityStarted: 0,
   inventoryActivityKind: null,
+  credentialOptions: null,
+  credentialPlan: null,
+  credentialBusy: false,
 };
 
 const elements = {
@@ -111,6 +114,36 @@ const elements = {
   inventoryRetry: document.querySelector("#inventory-retry"),
   inventoryApplyConfirm: document.querySelector("#inventory-apply-confirm"),
   inventoryApply: document.querySelector("#inventory-apply"),
+  credentialOpen: document.querySelector("#credential-onboarding-open"),
+  credentialDialog: document.querySelector("#credential-onboarding-dialog"),
+  credentialClose: document.querySelector("#credential-onboarding-close"),
+  credentialDevice: document.querySelector("#credential-device"),
+  credentialPlatform: document.querySelector("#credential-platform"),
+  credentialProfile: document.querySelector("#credential-profile"),
+  credentialProfileOptions: document.querySelector("#credential-profile-options"),
+  credentialAuth: document.querySelector("#credential-fortios-auth"),
+  credentialProphylaxisEnabled: document.querySelector("#credential-prophylaxis-enabled"),
+  credentialProphylaxisSshFields: document.querySelector("#credential-prophylaxis-ssh-fields"),
+  credentialProphylaxisApiFields: document.querySelector("#credential-prophylaxis-api-fields"),
+  credentialProphylaxisUsername: document.querySelector("#credential-prophylaxis-username"),
+  credentialProphylaxisPassword: document.querySelector("#credential-prophylaxis-password"),
+  credentialProphylaxisEnable: document.querySelector("#credential-prophylaxis-enable"),
+  credentialProphylaxisApiToken: document.querySelector("#credential-prophylaxis-api-token"),
+  credentialFortiosApiPort: document.querySelector("#credential-fortios-api-port"),
+  credentialOxidizedEnabled: document.querySelector("#credential-oxidized-enabled"),
+  credentialOxidizedUsername: document.querySelector("#credential-oxidized-username"),
+  credentialOxidizedPassword: document.querySelector("#credential-oxidized-password"),
+  credentialMonitoringEnabled: document.querySelector("#credential-monitoring-enabled"),
+  credentialSnmpCommunity: document.querySelector("#credential-snmp-community"),
+  credentialReplace: document.querySelector("#credential-replace"),
+  credentialClear: document.querySelector("#credential-clear"),
+  credentialPlanButton: document.querySelector("#credential-plan"),
+  credentialActivity: document.querySelector("#credential-activity"),
+  credentialPlanResult: document.querySelector("#credential-plan-result"),
+  credentialPlanStatus: document.querySelector("#credential-plan-status"),
+  credentialPlanOperations: document.querySelector("#credential-plan-operations"),
+  credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
+  credentialApply: document.querySelector("#credential-apply"),
 };
 
 const MONITORING_TERMINAL = new Set(["COMPLETED", "FAILED", "PARTIAL"]);
@@ -230,6 +263,212 @@ function inventoryPayload() {
     ...(tenant ? { tenant } : {}),
     ...(site ? { site } : {}),
   };
+}
+
+function clearCredentialSecrets() {
+  for (const input of [
+    elements.credentialProphylaxisPassword,
+    elements.credentialProphylaxisEnable,
+    elements.credentialProphylaxisApiToken,
+    elements.credentialOxidizedPassword,
+    elements.credentialSnmpCommunity,
+  ]) input.value = "";
+  resetCredentialPlan();
+}
+
+function resetCredentialPlan() {
+  state.credentialPlan = null;
+  elements.credentialPlanResult.hidden = true;
+  elements.credentialApplyConfirm.checked = false;
+  elements.credentialApplyConfirm.disabled = true;
+  elements.credentialApply.disabled = true;
+}
+
+function selectedCredentialDevice() {
+  const id = Number(elements.credentialDevice.value);
+  return state.credentialOptions?.devices?.find((device) => device.id === id) || null;
+}
+
+function selectedCredentialPlatform() {
+  return state.credentialOptions?.platforms?.find(
+    (platform) => platform.slug === elements.credentialPlatform.value,
+  ) || null;
+}
+
+function renderCredentialPlatformOptions() {
+  const device = selectedCredentialDevice();
+  const previous = elements.credentialPlatform.value;
+  const platforms = (state.credentialOptions?.platforms || []).filter(
+    (platform) => platform.manufacturer === device?.manufacturer?.name,
+  );
+  elements.credentialPlatform.replaceChildren(
+    new Option(device ? "Select platform" : "Select a device first", ""),
+    ...platforms.map((platform) => new Option(platform.name, platform.slug)),
+  );
+  const preferred = device?.platform && platforms.some((item) => item.slug === device.platform)
+    ? device.platform : previous;
+  if (platforms.some((item) => item.slug === preferred)) {
+    elements.credentialPlatform.value = preferred;
+  }
+  if (device?.credential_profile) elements.credentialProfile.value = device.credential_profile;
+  elements.credentialProphylaxisEnabled.checked = device?.prophylaxis_enabled === true;
+  elements.credentialOxidizedEnabled.checked = device?.oxidized_enabled === true;
+  elements.credentialMonitoringEnabled.checked = device?.monitoring_enabled === true;
+  renderCredentialAuthOptions();
+}
+
+function renderCredentialAuthOptions() {
+  const platform = selectedCredentialPlatform();
+  const choices = platform?.prophylaxis_auth || [];
+  elements.credentialAuth.replaceChildren(
+    ...choices.map((value) => new Option(value === "api_token" ? "HTTPS API token" : "SSH", value)),
+  );
+  if (!choices.length) elements.credentialAuth.append(new Option("Unsupported", ""));
+  elements.credentialProphylaxisEnabled.disabled = !choices.length;
+  elements.credentialOxidizedEnabled.disabled = !platform?.oxidized_supported;
+  renderCredentialAuthFields();
+}
+
+function renderCredentialAuthFields() {
+  const api = elements.credentialAuth.value === "api_token";
+  elements.credentialProphylaxisSshFields.hidden = api;
+  elements.credentialProphylaxisApiFields.hidden = !api;
+}
+
+async function openCredentialOnboarding() {
+  if (!requireOperatorToken()) return;
+  elements.credentialOpen.disabled = true;
+  try {
+    state.credentialOptions = await apiRequest("/api/credentials/options", {
+      headers: operatorHeaders(),
+    });
+    elements.credentialDevice.replaceChildren(
+      new Option("Select a device", ""),
+      ...(state.credentialOptions.devices || []).map((device) => new Option(
+        `${device.name} — ${device.manufacturer?.name || "Unknown manufacturer"}`,
+        String(device.id),
+      )),
+    );
+    elements.credentialProfileOptions.replaceChildren(
+      ...(state.credentialOptions.profiles || []).map((profile) => new Option(profile)),
+    );
+    elements.credentialDialog.showModal();
+    elements.credentialDevice.focus();
+  } catch (error) {
+    toast(error.safeMessage || "Could not load credential onboarding options.", "error");
+  } finally {
+    elements.credentialOpen.disabled = false;
+  }
+}
+
+function credentialPayload() {
+  const prophylaxis = elements.credentialProphylaxisEnabled.checked;
+  const oxidized = elements.credentialOxidizedEnabled.checked;
+  const monitoring = elements.credentialMonitoringEnabled.checked;
+  const auth = elements.credentialAuth.value;
+  const enablePassword = elements.credentialProphylaxisEnable.value;
+  const payload = {
+    device_id: Number(elements.credentialDevice.value),
+    platform: elements.credentialPlatform.value,
+    credential_profile: elements.credentialProfile.value.trim(),
+    prophylaxis_enabled: prophylaxis,
+    oxidized_enabled: oxidized,
+    monitoring_enabled: monitoring,
+    replace_existing: elements.credentialReplace.checked,
+  };
+  if (prophylaxis) {
+    payload.prophylaxis_auth = auth;
+    if (auth === "api_token") {
+      payload.prophylaxis_api = { api_token: elements.credentialProphylaxisApiToken.value };
+      payload.fortios_api_port = Number(elements.credentialFortiosApiPort.value);
+    } else {
+      payload.prophylaxis_ssh = {
+        username: elements.credentialProphylaxisUsername.value,
+        password: elements.credentialProphylaxisPassword.value,
+        ...(enablePassword ? { enable_password: enablePassword } : {}),
+      };
+    }
+  }
+  if (oxidized) payload.oxidized = {
+    username: elements.credentialOxidizedUsername.value,
+    password: elements.credentialOxidizedPassword.value,
+  };
+  if (monitoring) payload.snmp = { community: elements.credentialSnmpCommunity.value };
+  return payload;
+}
+
+function renderCredentialPlan(result) {
+  state.credentialPlan = result;
+  elements.credentialPlanResult.hidden = false;
+  setPill(
+    elements.credentialPlanStatus,
+    result.apply_allowed ? "healthy" : "warning",
+    result.apply_allowed ? "Ready to apply" : "Action required",
+  );
+  elements.credentialPlanOperations.replaceChildren(...result.operations.map((operation) => {
+    const row = document.createElement("tr");
+    for (const value of [
+      operation.target,
+      operation.purpose || operation.object || "—",
+      operation.action,
+      operation.reason ? titleCase(operation.reason) : "—",
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  }));
+  elements.credentialApplyConfirm.disabled = !result.apply_allowed;
+  elements.credentialApplyConfirm.checked = false;
+  elements.credentialApply.disabled = true;
+}
+
+function setCredentialBusy(busy) {
+  state.credentialBusy = busy;
+  elements.credentialActivity.hidden = !busy;
+  elements.credentialPlanButton.disabled = busy;
+  elements.credentialApply.disabled = busy || !elements.credentialApplyConfirm.checked;
+  elements.credentialDialog.setAttribute("aria-busy", String(busy));
+}
+
+async function planCredentials() {
+  if (!requireOperatorToken()) return;
+  setCredentialBusy(true);
+  try {
+    const result = await apiRequest("/api/credentials/plan", {
+      method: "POST", headers: operatorHeaders(), body: credentialPayload(),
+    });
+    renderCredentialPlan(result);
+    toast("Credential onboarding plan is ready for review.", result.apply_allowed ? "success" : "warning");
+  } catch (error) {
+    resetCredentialPlan();
+    toast(error.safeMessage || "Credential planning failed.", "error");
+  } finally {
+    setCredentialBusy(false);
+  }
+}
+
+async function applyCredentials() {
+  if (!state.credentialPlan?.apply_allowed || !elements.credentialApplyConfirm.checked) return;
+  setCredentialBusy(true);
+  try {
+    const result = await apiRequest("/api/credentials/apply", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: { ...credentialPayload(), plan_hash: state.credentialPlan.plan_hash },
+    });
+    renderCredentialPlan(result);
+    clearCredentialSecrets();
+    elements.credentialPlanResult.hidden = false;
+    setPill(elements.credentialPlanStatus, "healthy", "Applied");
+    toast("Credentials and NetBox selections were applied.", "success");
+  } catch (error) {
+    if (error.code === "credential_onboarding_plan_stale") resetCredentialPlan();
+    toast(error.safeMessage || "Credential onboarding apply failed.", "error");
+  } finally {
+    setCredentialBusy(false);
+  }
 }
 
 function resetInventoryPlan() {
@@ -1481,6 +1720,46 @@ elements.operatorToken.addEventListener("input", () => {
 });
 elements.ciscoTest.addEventListener("click", testCiscoIntegration);
 elements.zabbixSync.addEventListener("click", synchronizeZabbix);
+elements.credentialOpen.addEventListener("click", openCredentialOnboarding);
+elements.credentialClose.addEventListener("click", () => {
+  clearCredentialSecrets();
+  elements.credentialDialog.close();
+});
+elements.credentialDevice.addEventListener("change", () => {
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
+});
+elements.credentialPlatform.addEventListener("change", () => {
+  renderCredentialAuthOptions();
+  resetCredentialPlan();
+});
+elements.credentialAuth.addEventListener("change", () => {
+  renderCredentialAuthFields();
+  resetCredentialPlan();
+});
+elements.credentialClear.addEventListener("click", clearCredentialSecrets);
+elements.credentialPlanButton.addEventListener("click", planCredentials);
+elements.credentialApply.addEventListener("click", applyCredentials);
+elements.credentialApplyConfirm.addEventListener("change", () => {
+  elements.credentialApply.disabled = state.credentialBusy
+    || !state.credentialPlan?.apply_allowed
+    || !elements.credentialApplyConfirm.checked;
+});
+for (const input of [
+  elements.credentialProfile,
+  elements.credentialProphylaxisEnabled,
+  elements.credentialProphylaxisUsername,
+  elements.credentialProphylaxisPassword,
+  elements.credentialProphylaxisEnable,
+  elements.credentialProphylaxisApiToken,
+  elements.credentialFortiosApiPort,
+  elements.credentialOxidizedEnabled,
+  elements.credentialOxidizedUsername,
+  elements.credentialOxidizedPassword,
+  elements.credentialMonitoringEnabled,
+  elements.credentialSnmpCommunity,
+  elements.credentialReplace,
+]) input.addEventListener("input", resetCredentialPlan);
 elements.inventoryImportOpen.addEventListener("click", () => {
   elements.inventoryImportDialog.showModal();
   elements.inventoryTable.focus();

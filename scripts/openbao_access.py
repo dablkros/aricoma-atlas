@@ -501,6 +501,10 @@ def reconcile_backend_policy(client):
             root_token,
             "atlas-monitoring-provisioner",
         )
+        openbao_deployment.reconcile_runtime_role(
+            root_token,
+            "atlas-credential-writer",
+        )
 
     applied = generate_temporary_root(
         client,
@@ -508,7 +512,7 @@ def reconcile_backend_policy(client):
         requested_ttl="15m",
     )
     if not applied:
-        print("[INFO] Atlas backend role reconcile was cancelled")
+        print("[INFO] Atlas runtime role reconcile was cancelled")
         return False
     ok("Atlas backend policies and AppRoles reconciled")
     return True

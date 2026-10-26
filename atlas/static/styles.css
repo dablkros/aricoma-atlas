@@ -344,6 +344,24 @@ h2 {
   gap: 1rem;
 }
 
+.credential-purpose-grid {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.credential-purpose {
+  align-items: start;
+}
+
+.credential-secret-fields {
+  display: grid;
+  gap: .65rem;
+  min-width: min(30rem, 100%);
+}
+
+.credential-secret-fields[hidden] { display: none; }
+
 .field-optional,
 .field-help {
   color: var(--ink-soft);

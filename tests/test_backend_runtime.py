@@ -327,6 +327,10 @@ class BackendRuntimeTests(unittest.TestCase):
         identity.write_text("{}\n", encoding="utf-8")
         monitoring_identity = self.root / ".runtime/openbao-monitoring.json"
         monitoring_identity.write_text("{}\n", encoding="utf-8")
+        credential_writer_identity = (
+            self.root / ".runtime/openbao-credential-writer.json"
+        )
+        credential_writer_identity.write_text("{}\n", encoding="utf-8")
         operator_token = self.root / ".runtime/monitoring/operator-token"
         operator_token.parent.mkdir(parents=True)
         operator_token.write_text("t" * 40 + "\n", encoding="utf-8")
@@ -464,6 +468,15 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/secrets/atlas-monitoring.json:ro",
             service["volumes"],
         )
+        self.assertIn(
+            f"{(self.root / '.runtime/openbao-credential-writer.json').resolve()}:"
+            "/run/secrets/atlas-credential-writer.json:ro",
+            service["volumes"],
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_CREDENTIAL_WRITER_IDENTITY_FILE"],
+            "/run/secrets/atlas-credential-writer.json",
+        )
         self.assertEqual(
             service["environment"]["ATLAS_MONITORING_JOBS_DIRECTORY"],
             "/run/atlas/monitoring/jobs",
@@ -542,6 +555,7 @@ class BackendRuntimeTests(unittest.TestCase):
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
         (self.root / ".runtime/openbao-monitoring.json").unlink()
+        (self.root / ".runtime/openbao-credential-writer.json").unlink()
         (self.root / ".runtime/monitoring/operator-token").unlink()
         (self.root / ".runtime/monitoring").rmdir()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
@@ -633,9 +647,11 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
             deployer = root / "deployer.json"
             backend = root / "backend.json"
             monitoring = root / "monitoring.json"
+            credential_writer = root / "credential-writer.json"
             deployer.write_text("{}\n", encoding="utf-8")
             backend.write_text("{}\n", encoding="utf-8")
             monitoring.write_text("{}\n", encoding="utf-8")
+            credential_writer.write_text("{}\n", encoding="utf-8")
             client = Mock()
             client.seal_status.return_value = {
                 "initialized": True,
@@ -645,6 +661,7 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                 "deployer-token",
                 "backend-token",
                 "monitoring-token",
+                "credential-writer-token",
             ]
             with (
                 patch.object(deploy_atlas, "OPENBAO_IDENTITY_FILE", deployer),
@@ -658,6 +675,11 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
                     "OPENBAO_MONITORING_IDENTITY_FILE",
                     monitoring,
                 ),
+                patch.object(
+                    deploy_atlas,
+                    "OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE",
+                    credential_writer,
+                ),
                 patch.object(deploy_atlas, "OpenBaoClient", return_value=client),
                 patch.object(deploy_atlas, "header"),
                 patch.object(deploy_atlas, "ok"),
@@ -666,11 +688,21 @@ class AtlasDeploymentOrderTests(unittest.TestCase):
 
             self.assertEqual(
                 client.login_from_identity.call_args_list,
-                [call(deployer), call(backend), call(monitoring)],
+                [
+                    call(deployer),
+                    call(backend),
+                    call(monitoring),
+                    call(credential_writer),
+                ],
             )
             self.assertEqual(
                 client.revoke_self.call_args_list,
-                [call("deployer-token"), call("backend-token"), call("monitoring-token")],
+                [
+                    call("deployer-token"),
+                    call("backend-token"),
+                    call("monitoring-token"),
+                    call("credential-writer-token"),
+                ],
             )
 
     def test_openbao_gate_has_actionable_backend_reconcile_error(self):

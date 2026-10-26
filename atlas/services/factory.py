@@ -14,6 +14,7 @@ from atlas.prophylaxis.service import ProphylaxisService
 from atlas.prophylaxis.store import SQLiteResultStore
 from atlas.services.netbox import NetBoxService
 from atlas.services.cisco_support import CiscoSupportService
+from atlas.services.credential_onboarding import CredentialOnboardingService
 from atlas.services.openbao import OpenBaoService
 from atlas.services.oxidized import OxidizedService
 from atlas.services.oxidized_operations import OxidizedOperationsService
@@ -38,6 +39,7 @@ class DependencyServices:
     zabbix_monitoring: ZabbixMonitoringService
     monitoring: MonitoringService = None
     cisco_support: CiscoSupportService = None
+    credentials: CredentialOnboardingService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -65,6 +67,10 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     )
     provisioner = OpenBaoService(
         OpenBaoClient(str(settings.openbao_url), timeout=timeout), settings.monitoring_identity_file)
+    credential_writer = OpenBaoService(
+        OpenBaoClient(str(settings.openbao_url), timeout=timeout),
+        settings.credential_writer_identity_file,
+    )
     zabbix_sync = ZabbixSyncService(
         netbox,
         openbao,
@@ -102,6 +108,11 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     return DependencyServices(
         monitoring=monitoring,
         cisco_support=cisco_support,
+        credentials=CredentialOnboardingService(
+            netbox,
+            credential_writer,
+            credential_writer,
+        ),
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,
