@@ -110,6 +110,27 @@ class DeviceTypeDiscoveryTests(unittest.TestCase):
         self.assertEqual([], errors)
         self.assertEqual("Catalyst 9500-48Y4C", matches[0].model)
 
+    def test_yaml_search_matches_manufacturer_and_model_display_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            (root / "f5-big-ip-r4800.yaml").write_text(
+                "manufacturer: F5\n"
+                "model: BIG-IP r4800\n"
+                "slug: f5-big-ip-r4800\n"
+                "part_number: r4800\n",
+                encoding="utf-8",
+            )
+
+            matches, errors = find_yaml_candidates(
+                root,
+                "F5 BIG-IP r4800",
+                source="ATLAS_LOCAL",
+            )
+
+        self.assertEqual([], errors)
+        self.assertEqual(1, len(matches))
+        self.assertEqual("BIG-IP r4800", matches[0].model)
+
     def test_multiple_yaml_queries_are_resolved_in_one_scan(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)

@@ -168,14 +168,23 @@ class InventoryImporter:
                 *self._all("/api/dcim/device-types/"),
                 *self._planned_device_types,
             ]
-        matches = [
-            item for item in self._device_type_cache
-            if target in {
-                normalized_name(str(item.get("model", ""))),
+        matches = []
+        for item in self._device_type_cache:
+            manufacturer = item.get("manufacturer")
+            manufacturer_name = (
+                str(manufacturer.get("name", ""))
+                if isinstance(manufacturer, dict)
+                else ""
+            )
+            model_name = str(item.get("model", ""))
+            identifiers = {
+                normalized_name(model_name),
                 normalized_name(str(item.get("slug", ""))),
                 normalized_name(str(item.get("part_number", ""))),
+                normalized_name(f"{manufacturer_name} {model_name}"),
             }
-        ]
+            if target in identifiers:
+                matches.append(item)
         if not matches:
             raise InventoryInvalid(
                 self._device_type_errors.get(target, "device_type_not_found")

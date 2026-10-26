@@ -214,6 +214,21 @@ class InventoryImporterTests(unittest.TestCase):
         )
         self.assertEqual(created_device["role"], switch_role["id"])
 
+    def test_manufacturer_prefixed_csv_model_resolves_existing_device_type(self):
+        self.device_type.update({
+            "manufacturer": {"id": 50, "name": "F5"},
+            "model": "BIG-IP r4800",
+            "slug": "f5-big-ip-r4800",
+            "part_number": "r4800",
+            "default_platform": None,
+        })
+
+        report = self.importer.import_rows([
+            self.row(model="F5 BIG-IP r4800"),
+        ])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+
     def test_07_row_site_is_used(self):
         report = self.importer.import_rows([self.row(site="zilina-office")])
         self.assertEqual(report.rows[0].site, "zilina-office")

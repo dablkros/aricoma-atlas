@@ -329,17 +329,26 @@ def prepare_import_device_types(
         if normalized_identifier(row.model)
     }
     existing = client.get_all("/api/dcim/device-types/")
-    existing_models = {
-        normalized_identifier(identifier)
-        for item in existing
-        if isinstance(item, dict)
+    existing_models = set()
+    for item in existing:
+        if not isinstance(item, dict):
+            continue
+        manufacturer = item.get("manufacturer")
+        manufacturer_name = (
+            manufacturer.get("name", "")
+            if isinstance(manufacturer, dict)
+            else ""
+        )
+        model_name = item.get("model", "")
         for identifier in (
-            item.get("model"),
+            model_name,
             item.get("slug"),
             item.get("part_number"),
-        )
-        if normalized_identifier(identifier)
-    }
+            f"{manufacturer_name} {model_name}",
+        ):
+            normalized = normalized_identifier(identifier)
+            if normalized:
+                existing_models.add(normalized)
     missing = {
         key: value for key, value in targets.items()
         if key not in existing_models
@@ -355,6 +364,10 @@ def prepare_import_device_types(
             normalized_identifier(item.get("slug")),
             normalized_identifier(item.get("filename")),
             normalized_identifier(item.get("data", {}).get("part_number")),
+            normalized_identifier(
+                f"{str(item.get('manufacturer') or '').strip()} "
+                f"{str(item.get('model') or '').strip()}"
+            ),
         }
         for key in set(missing) & identifiers:
             catalog_index[key].append(item)

@@ -27,17 +27,23 @@ class DeviceTypeCandidate:
 def _matches(
     query: str,
     *,
+    manufacturer: object = "",
     model: object,
     slug: object,
     part_number: object = "",
     filename: object = "",
 ) -> bool:
     wanted = normalized_identifier(query)
+    manufacturer_model = " ".join(
+        value for value in (str(manufacturer or "").strip(), str(model or "").strip())
+        if value
+    )
     return wanted in {
         normalized_identifier(model),
         normalized_identifier(slug),
         normalized_identifier(part_number),
         normalized_identifier(filename),
+        normalized_identifier(manufacturer_model),
     }
 
 
@@ -46,6 +52,8 @@ def find_netbox_candidates(client, query: str) -> list[DeviceTypeCandidate]:
     for item in client.get_all("/api/dcim/device-types/"):
         if not isinstance(item, dict) or not _matches(
             query,
+            manufacturer=(item.get("manufacturer") or {}).get("name", "")
+            if isinstance(item.get("manufacturer"), dict) else "",
             model=item.get("model"),
             slug=item.get("slug"),
             part_number=item.get("part_number"),
@@ -107,6 +115,10 @@ def find_yaml_candidates_for_queries(
             normalized_identifier(data.get("slug")),
             normalized_identifier(data.get("part_number")),
             normalized_identifier(path.stem),
+            normalized_identifier(
+                f"{str(data.get('manufacturer') or '').strip()} "
+                f"{str(data.get('model') or '').strip()}"
+            ),
         }
         candidate = DeviceTypeCandidate(
             source=source,
