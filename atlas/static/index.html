@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261025-2">
-    <script src="/static/app.js?v=20261025-2" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261026-1">
+    <script src="/static/app.js?v=20261026-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -368,7 +368,19 @@
 
         <div class="dialog-actions dialog-actions-plan">
           <button id="inventory-clear" class="button button-secondary" type="button">Clear</button>
-          <button id="inventory-plan" class="button button-primary" type="button">Create dry-run plan</button>
+          <button id="inventory-plan" class="button button-primary" type="button">
+            <span class="button-progress" aria-hidden="true"></span>
+            <span id="inventory-plan-label">Create dry-run plan</span>
+          </button>
+        </div>
+
+        <div id="inventory-activity" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span>
+          <div>
+            <strong id="inventory-activity-title">Preparing inventory plan</strong>
+            <p id="inventory-activity-detail">Atlas is validating the supplied device table.</p>
+          </div>
+          <span id="inventory-activity-time" class="inventory-activity-time">0:00</span>
         </div>
 
         <section id="inventory-plan-result" class="inventory-plan-result" aria-live="polite" hidden>

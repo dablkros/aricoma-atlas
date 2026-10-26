@@ -662,7 +662,8 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
   `profylaxia_checks` a spustí podporované platformové collectory,
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
 - riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
-  riadkové chyby, validovaný runtime Device Type YAML, retry a explicitný Apply,
+  viditeľný priebeh s uplynutým časom, riadkové chyby, validovaný runtime
+  Device Type YAML, retry a explicitný Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.

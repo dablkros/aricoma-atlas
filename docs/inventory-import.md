@@ -59,6 +59,11 @@ devices** a vykoná tento kontrolovaný postup:
 6. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
    **Apply approved plan**.
 
+Počas dlhšieho dry-runu UI zobrazuje spinner, aktuálnu fázu a uplynutý čas.
+Nezobrazuje vymyslené percentá: prvá verzia endpointu je synchrónna a backend
+neposkytuje počet dokončených krokov. Začiatok a dokončenie operácie sú zároveň
+zapísané do štruktúrovaného backend logu.
+
 Apply je viazané SHA-256 odtlačkom na presný obsah tabuľky a zadané Tenant/Site
 hodnoty. Zmena ktoréhokoľvek vstupu zneplatní potvrdenie. Backend bezprostredne
 pred zápisom zopakuje dry-run a odmietne operáciu, ak sa objaví neplatný,
@@ -103,7 +108,16 @@ Device Type sa rozlišuje ako jednoznačná presná zhoda modelu alebo
 nakonfigurovaného aliasu. Platforma sa prevezme z overeného
 `DeviceType.default_platform`; explicitná odlišná platforma je konflikt.
 Device Role sa vyberá v poradí: riadok, mapovanie modelu/platformy, predvolená
-rola. Importer automaticky nevytvára neznáme Platformy, Roles ani VRF.
+rola. Atlas baseline pri deploymente idempotentne vytvára štandardné role
+`Network Device`, `Switch`, `Router`, `Firewall`, `Load Balancer` a
+`Management Appliance`. Existujúce role s rovnakým slugom neupravuje.
+
+Základné jednoznačné modelové a platformové mapovania sú súčasťou runtime
+konfigurácie. Hodnota v `inventory.role_mappings` ich môže pre konkrétneho
+zákazníka prepísať. Stĺpec `Device Role` má vždy najvyššiu prioritu. Atlas
+neurčuje rolu z hostname a pri nejednoznačných rodinách, napríklad spoločnej
+platforme pre routery aj switche, použije explicitné modelové pravidlo alebo
+bezpečný fallback `network-device`.
 
 ## Dohľadanie a pridanie Device Type
 
@@ -193,7 +207,8 @@ zápis; po čiastočnom zlyhaní je preto bezpečné import zopakovať.
 
 ## Obmedzenia prvej verzie
 
-- neznáme Sites, Roles, Platformy a VRF sa nevytvárajú; Device Type sa môže
+- neznáme Sites, zákaznícke Roles, Platformy a VRF sa nevytvárajú; štandardné
+  Atlas Device Roles vytvára baseline. Device Type sa môže
   doplniť iba z aktuálneho Atlas katalógu, oprávneného `ATLAS_LOCAL` alebo
   pripnutého upstream checkout-u;
 - externé URL sa automaticky nesťahujú; YAML musí operátor vložiť do určeného

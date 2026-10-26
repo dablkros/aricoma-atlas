@@ -8,6 +8,30 @@ import tempfile
 import yaml
 
 
+DEFAULT_ROLE_MAPPINGS = {
+    "models": {
+        "Nexus 93360YC-FX2": "switch",
+        "Catalyst 9500-48Y4C": "switch",
+        "Catalyst 9300L-24P-4G": "switch",
+        "Catalyst 9200L-24T-4X": "switch",
+        "Smart-1 600-M": "management-appliance",
+        "SN2410": "switch",
+        "SG9700-PLUS": "firewall",
+        "F5 C131": "load-balancer",
+    },
+    "platforms": {
+        "cisco-nxos": "switch",
+        "cisco-cbs": "switch",
+        "cisco-cbs250-350": "switch",
+        "fortios": "firewall",
+        "sophos-sfos": "firewall",
+        "aruba-aos-cx": "switch",
+        "aruba-aos-switch": "switch",
+        "checkpoint-gaia-embedded": "firewall",
+    },
+}
+
+
 def _mapping(value, label):
     if value is None:
         return {}
@@ -76,7 +100,7 @@ def normalize_inventory_config(raw: object) -> dict:
     prefix = data.get("default_ipv4_prefix_length", 32)
     if isinstance(prefix, bool) or not isinstance(prefix, int) or not 0 <= prefix <= 32:
         raise ValueError("inventory.default_ipv4_prefix_length must be 0..32")
-    role = data.get("default_device_role", "Network Device")
+    role = data.get("default_device_role", "network-device")
     if role is not None and (not isinstance(role, str) or not role.strip()):
         raise ValueError("inventory.default_device_role is invalid")
 
@@ -84,10 +108,16 @@ def normalize_inventory_config(raw: object) -> dict:
     role_mappings = _mapping(data.get("role_mappings"), "inventory.role_mappings")
     if set(role_mappings) - {"models", "platforms"}:
         raise ValueError("inventory.role_mappings contains unknown sections")
-    normalized_mappings = {
-        key: _mapping(role_mappings.get(key), f"inventory.role_mappings.{key}")
-        for key in ("models", "platforms")
-    }
+    normalized_mappings = {}
+    for key in ("models", "platforms"):
+        configured = _mapping(
+            role_mappings.get(key),
+            f"inventory.role_mappings.{key}",
+        )
+        normalized_mappings[key] = {
+            **DEFAULT_ROLE_MAPPINGS[key],
+            **configured,
+        }
     if any(
         not isinstance(key, str) or not isinstance(value, str) or not value.strip()
         for mapping in (aliases, *normalized_mappings.values())

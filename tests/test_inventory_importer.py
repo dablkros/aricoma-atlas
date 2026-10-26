@@ -2,7 +2,7 @@ import copy
 import ipaddress
 import unittest
 
-from atlas.inventory.config import normalize_inventory_config
+from atlas.inventory.config import DEFAULT_ROLE_MAPPINGS, normalize_inventory_config
 from atlas.inventory.importer import InventoryConflict, InventoryImporter
 from atlas.inventory.models import ImportStatus, InventoryRow
 
@@ -181,6 +181,38 @@ class InventoryImporterTests(unittest.TestCase):
                     "provision": True,
                 }
             })
+
+    def test_default_role_mappings_are_present_and_operator_overrides_win(self):
+        config = normalize_inventory_config({
+            "role_mappings": {
+                "models": {"SN2410": "router"},
+            },
+        })
+
+        self.assertEqual(config["default_device_role"], "network-device")
+        self.assertEqual(config["role_mappings"]["models"]["SN2410"], "router")
+        self.assertEqual(
+            config["role_mappings"]["models"]["Nexus 93360YC-FX2"],
+            DEFAULT_ROLE_MAPPINGS["models"]["Nexus 93360YC-FX2"],
+        )
+
+    def test_upstream_marketing_model_resolves_to_baseline_switch_role(self):
+        self.device_type.update({
+            "model": "Catalyst 9500-48Y4C",
+            "part_number": "C9500-48Y4C",
+        })
+        switch_role = {"id": 41, "name": "Switch", "slug": "switch"}
+        self.client.objects["/api/dcim/device-roles/"].append(switch_role)
+
+        report = self.importer.import_rows([self.row()], apply=True)
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+        created_device = next(
+            payload
+            for method, endpoint, payload in self.client.writes
+            if method == "POST" and endpoint == "/api/dcim/devices/"
+        )
+        self.assertEqual(created_device["role"], switch_role["id"])
 
     def test_07_row_site_is_used(self):
         report = self.importer.import_rows([self.row(site="zilina-office")])

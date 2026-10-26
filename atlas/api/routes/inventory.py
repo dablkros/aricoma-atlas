@@ -2,6 +2,7 @@
 
 import hashlib
 import json
+import logging
 import os
 from pathlib import Path
 import tempfile
@@ -25,6 +26,7 @@ router = APIRouter(prefix="/inventory", tags=["inventory"])
 CONFIG = Path(os.environ.get("ATLAS_INVENTORY_CONFIG", "/run/atlas/inventory/config.yaml"))
 DEVICE_TYPES = Path(os.environ.get("ATLAS_INVENTORY_DEVICE_TYPES", "/run/atlas/inventory/device-types"))
 TRUST_MOUNTED_CATALOG = os.environ.get("ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG") == "true"
+logger = logging.getLogger("atlas.inventory")
 
 
 def authorized(request: Request) -> None:
@@ -90,18 +92,53 @@ def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> d
 
 @router.post("/import/plan", dependencies=[Depends(authorized)])
 def plan(body: InventoryTableRequest, request: Request) -> dict:
-    return _execute(body, request, apply=False)
+    logger.info(
+        "inventory.operation_started",
+        extra={
+            "event": "inventory.operation_started",
+            "operation": "plan",
+            "input_bytes": len(body.table.encode("utf-8")),
+        },
+    )
+    result = _execute(body, request, apply=False)
+    logger.info(
+        "inventory.operation_completed",
+        extra={
+            "event": "inventory.operation_completed",
+            "operation": "plan",
+            "apply_allowed": result["apply_allowed"],
+            **result["report"]["summary"],
+        },
+    )
+    return result
 
 
 @router.post("/import/apply", dependencies=[Depends(authorized)])
 def apply(body: InventoryTableRequest, request: Request) -> dict:
+    logger.info(
+        "inventory.operation_started",
+        extra={
+            "event": "inventory.operation_started",
+            "operation": "apply",
+            "input_bytes": len(body.table.encode("utf-8")),
+        },
+    )
     expected = _hash(body)
     if body.plan_hash != expected:
         raise AtlasError(409, "inventory_plan_stale", "Inventory input changed; create a new plan")
     preview = _execute(body, request, apply=False)
     if not preview["apply_allowed"]:
         raise AtlasError(409, "inventory_plan_blocked", "Resolve all inventory plan issues before apply")
-    return _execute(body, request, apply=True)
+    result = _execute(body, request, apply=True)
+    logger.info(
+        "inventory.operation_completed",
+        extra={
+            "event": "inventory.operation_completed",
+            "operation": "apply",
+            **result["report"]["summary"],
+        },
+    )
+    return result
 
 
 @router.post("/device-types/upload", dependencies=[Depends(authorized)])

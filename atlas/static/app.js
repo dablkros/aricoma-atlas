@@ -16,6 +16,9 @@ const state = {
   operatorToken: "",
   inventoryPlan: null,
   inventoryBusy: false,
+  inventoryActivityTimer: null,
+  inventoryActivityStarted: 0,
+  inventoryActivityKind: null,
 };
 
 const elements = {
@@ -84,6 +87,11 @@ const elements = {
   inventoryExample: document.querySelector("#inventory-example"),
   inventoryClear: document.querySelector("#inventory-clear"),
   inventoryPlanButton: document.querySelector("#inventory-plan"),
+  inventoryPlanLabel: document.querySelector("#inventory-plan-label"),
+  inventoryActivity: document.querySelector("#inventory-activity"),
+  inventoryActivityTitle: document.querySelector("#inventory-activity-title"),
+  inventoryActivityDetail: document.querySelector("#inventory-activity-detail"),
+  inventoryActivityTime: document.querySelector("#inventory-activity-time"),
   inventoryPlanResult: document.querySelector("#inventory-plan-result"),
   inventoryPlanStatus: document.querySelector("#inventory-plan-status"),
   inventoryCreateCount: document.querySelector("#inventory-create-count"),
@@ -335,6 +343,60 @@ function setInventoryBusy(busy) {
   ]) button.disabled = busy || (button === elements.inventoryApply && !elements.inventoryApplyConfirm.checked);
 }
 
+function inventoryElapsed(seconds) {
+  const minutes = Math.floor(seconds / 60);
+  return `${minutes}:${String(seconds % 60).padStart(2, "0")}`;
+}
+
+function renderInventoryActivity() {
+  if (!state.inventoryActivityKind) {
+    elements.inventoryActivity.hidden = true;
+    return;
+  }
+  const seconds = Math.max(0, Math.floor((Date.now() - state.inventoryActivityStarted) / 1000));
+  let title = "Working with NetBox";
+  let detail = "Atlas is processing the inventory operation.";
+  if (state.inventoryActivityKind === "plan") {
+    title = seconds < 8 ? "Validating device table" : seconds < 25 ? "Resolving Device Types" : "Building dry-run plan";
+    detail = seconds < 8
+      ? "Checking rows, tenant, site and management addresses."
+      : seconds < 25
+        ? "Comparing hardware models with NetBox, the Atlas catalog and the pinned upstream library."
+        : "Reading the current NetBox inventory and calculating changes. Large Device Types can take a few minutes.";
+  } else if (state.inventoryActivityKind === "upload") {
+    title = "Validating Device Type YAML";
+    detail = "Atlas is checking and storing the definition before retrying the plan.";
+  } else if (state.inventoryActivityKind === "apply") {
+    title = "Applying approved inventory plan";
+    detail = "Atlas is validating the plan again and writing the approved changes to NetBox.";
+  }
+  elements.inventoryActivityTitle.textContent = title;
+  elements.inventoryActivityDetail.textContent = detail;
+  elements.inventoryActivityTime.textContent = inventoryElapsed(seconds);
+  elements.inventoryActivity.hidden = false;
+}
+
+function startInventoryActivity(kind) {
+  if (state.inventoryActivityTimer) window.clearInterval(state.inventoryActivityTimer);
+  state.inventoryActivityKind = kind;
+  state.inventoryActivityStarted = Date.now();
+  elements.inventoryPlanButton.classList.toggle("is-busy", kind === "plan");
+  elements.inventoryPlanLabel.textContent = kind === "plan" ? "Creating plan…" : "Create dry-run plan";
+  elements.inventoryImportDialog.setAttribute("aria-busy", "true");
+  renderInventoryActivity();
+  state.inventoryActivityTimer = window.setInterval(renderInventoryActivity, 1000);
+}
+
+function stopInventoryActivity() {
+  if (state.inventoryActivityTimer) window.clearInterval(state.inventoryActivityTimer);
+  state.inventoryActivityTimer = null;
+  state.inventoryActivityKind = null;
+  elements.inventoryPlanButton.classList.remove("is-busy");
+  elements.inventoryPlanLabel.textContent = "Create dry-run plan";
+  elements.inventoryImportDialog.removeAttribute("aria-busy");
+  renderInventoryActivity();
+}
+
 async function planInventory() {
   if (!requireOperatorToken()) return;
   if (!elements.inventoryTable.value.trim()) {
@@ -342,6 +404,7 @@ async function planInventory() {
     return;
   }
   setInventoryBusy(true);
+  startInventoryActivity("plan");
   try {
     const result = await apiRequest("/api/inventory/import/plan", {
       method: "POST",
@@ -357,6 +420,7 @@ async function planInventory() {
     resetInventoryPlan();
     toast(error.safeMessage || "Inventory planning failed.", "error");
   } finally {
+    stopInventoryActivity();
     setInventoryBusy(false);
   }
 }
@@ -370,6 +434,7 @@ async function uploadInventoryDeviceType() {
     return;
   }
   setInventoryBusy(true);
+  startInventoryActivity("upload");
   try {
     const result = await apiRequest("/api/inventory/device-types/upload", {
       method: "POST",
@@ -385,9 +450,11 @@ async function uploadInventoryDeviceType() {
     elements.inventoryDeviceTypeReplace.checked = false;
   } catch (error) {
     toast(error.safeMessage || "Device Type YAML upload failed.", "error");
+    stopInventoryActivity();
     setInventoryBusy(false);
     return;
   }
+  stopInventoryActivity();
   setInventoryBusy(false);
   await planInventory();
 }
@@ -399,6 +466,7 @@ async function applyInventory() {
     return;
   }
   setInventoryBusy(true);
+  startInventoryActivity("apply");
   try {
     const result = await apiRequest("/api/inventory/import/apply", {
       method: "POST",
@@ -420,6 +488,7 @@ async function applyInventory() {
     }
     toast(error.safeMessage || "Inventory apply failed.", "error");
   } finally {
+    stopInventoryActivity();
     setInventoryBusy(false);
   }
 }

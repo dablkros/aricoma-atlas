@@ -71,6 +71,7 @@ jobs:
               Path("catalog/zabbix.yaml"),
               Path("catalog/baseline/custom_field_choice_sets.yaml"),
               Path("catalog/baseline/custom_fields.yaml"),
+              Path("catalog/baseline/device_roles.yaml"),
               Path("deployment/netbox.yaml"),
               Path("deployment/oxidized.yaml"),
               Path("deployment/backend.yaml"),
