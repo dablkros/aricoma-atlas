@@ -4,7 +4,7 @@ from datetime import datetime, timezone
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, model_validator
 
 from atlas.prophylaxis.models import (
     CollectionStatus,
@@ -68,6 +68,19 @@ class ModelInventoryValues(BaseModel):
         return self
 
 
+ProphylaxisValues = (
+    CPUUtilizationValues
+    | OSVersionValues
+    | UptimeValues
+    | SystemMetricValues
+    | DiagnosticValues
+    | FirmwareRecommendationValues
+    | EolStatusValues
+    | SerialInventoryValues
+    | ModelInventoryValues
+)
+
+
 class ProphylaxisCheckResult(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -80,18 +93,7 @@ class ProphylaxisCheckResult(BaseModel):
     collection_status: CollectionStatus
     evaluation: EvaluationOutcome
     facts: DeviceFactsValues | None = None
-    values: (
-        CPUUtilizationValues
-        | OSVersionValues
-        | UptimeValues
-        | SystemMetricValues
-        | DiagnosticValues
-        | FirmwareRecommendationValues
-        | EolStatusValues
-        | SerialInventoryValues
-        | ModelInventoryValues
-        | None
-    ) = None
+    values: ProphylaxisValues | None = None
     error: str | None = Field(default=None, max_length=128)
 
     @model_validator(mode="before")
@@ -154,6 +156,7 @@ class RunSummary(BaseModel):
     total: int = Field(default=0, ge=0)
     success: int = Field(default=0, ge=0)
     warning: int = Field(default=0, ge=0)
+    unknown: int = Field(default=0, ge=0)
     failure: int = Field(default=0, ge=0)
     skipped: int = Field(default=0, ge=0)
 
@@ -187,6 +190,34 @@ class ProphylaxisChart(BaseModel):
         return self
 
 
+class ProphylaxisDeviceCheck(BaseModel):
+    """One check nested under its device in the grouped run representation."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    check: str = Field(min_length=1, max_length=128)
+    status: Literal["success", "failed", "incomplete", "skipped"]
+    collection_status: CollectionStatus
+    evaluation: EvaluationOutcome
+    facts: DeviceFactsValues | None = None
+    values: ProphylaxisValues | None = None
+    error: str | None = Field(default=None, max_length=128)
+
+
+class ProphylaxisDeviceResult(BaseModel):
+    """Checks and charts grouped under one unambiguous device identity."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    device_id: int | None = Field(default=None, gt=0)
+    device_name: str = Field(min_length=1, max_length=255)
+    management_ip: str | None = None
+    platform: str | None = None
+    summary: RunSummary
+    checks: tuple[ProphylaxisDeviceCheck, ...] = ()
+    charts: tuple[ProphylaxisChart, ...] = ()
+
+
 class ProphylaxisRun(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
 
@@ -203,12 +234,95 @@ class ProphylaxisRun(BaseModel):
     report_path: str
     error: str | None = Field(default=None, max_length=128)
 
+    @computed_field(return_type=tuple[ProphylaxisDeviceResult, ...])
+    @property
+    def devices(self) -> tuple[ProphylaxisDeviceResult, ...]:
+        """Return the run data grouped by device without changing results."""
+
+        grouped: dict[tuple[int | None, str], dict] = {}
+        for result in self.results:
+            key = (result.device_id, result.device_name)
+            device = grouped.setdefault(
+                key,
+                {
+                    "device_id": result.device_id,
+                    "device_name": result.device_name,
+                    "management_ip": result.management_ip,
+                    "platform": result.platform,
+                    "checks": [],
+                    "charts": [],
+                },
+            )
+            device["checks"].append(
+                ProphylaxisDeviceCheck.model_validate(
+                    result.model_dump(
+                        exclude={
+                            "device_id",
+                            "device_name",
+                            "management_ip",
+                            "platform",
+                        }
+                    )
+                )
+            )
+        for chart in self.charts:
+            key = (chart.device_id, chart.device_name)
+            device = grouped.setdefault(
+                key,
+                {
+                    "device_id": chart.device_id,
+                    "device_name": chart.device_name,
+                    "management_ip": None,
+                    "platform": None,
+                    "checks": [],
+                    "charts": [],
+                },
+            )
+            device["charts"].append(chart)
+
+        devices = []
+        for device in grouped.values():
+            checks = tuple(device.pop("checks"))
+            summary = RunSummary(
+                total=len(checks),
+                success=sum(
+                    check.evaluation == EvaluationOutcome.PASS
+                    for check in checks
+                ),
+                warning=sum(
+                    check.evaluation == EvaluationOutcome.WARNING
+                    for check in checks
+                ),
+                unknown=sum(
+                    check.evaluation == EvaluationOutcome.UNKNOWN
+                    and check.values is not None
+                    and check.error is None
+                    for check in checks
+                ),
+                failure=sum(
+                    check.status == "failed"
+                    or (check.status == "incomplete" and check.error is not None)
+                    for check in checks
+                ),
+                skipped=sum(check.status == "skipped" for check in checks),
+            )
+            devices.append(
+                ProphylaxisDeviceResult(
+                    **device,
+                    summary=summary,
+                    checks=checks,
+                )
+            )
+        return tuple(devices)
+
 
 __all__ = [
     "DeviceFactsResult",
     "ModelInventoryValues",
     "ProphylaxisChart",
     "ProphylaxisCheckResult",
+    "ProphylaxisDeviceCheck",
+    "ProphylaxisDeviceResult",
     "ProphylaxisRun",
     "RunSummary",
     "SerialInventoryValues",

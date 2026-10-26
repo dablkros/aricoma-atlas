@@ -2,6 +2,8 @@
 
 Cisco IOS tematický collector plán, výsledkové stavy a report kontrakt sú
 zdokumentované v [prophylaxis-cisco-ios.md](prophylaxis-cisco-ios.md).
+FortiOS transporty, očakávania a kontrolná matica sú v
+[prophylaxis-fortios.md](prophylaxis-fortios.md).
 
 Stav dokumentácie: 2026-10-20. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
@@ -22,7 +24,8 @@ Atlas UI/API
   -> RawCollectorResult
   -> platform-specific Python parser
   -> normalizovaný check result
-  -> SQLite história alebo runs/<run_id>/{result.json,report.txt} / API / UI
+  -> SQLite história alebo
+     runs/<run_id>/{result.json,report-data.json,report.txt} / API / UI
 ```
 
 Nevzniká druhý NetBox ani OpenBao klient. Oxidized naďalej používa SSH polia
@@ -38,9 +41,17 @@ Profylaxia používa samostatný účelový secret:
 devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 ```
 
+Pre FortiGate s profilom `forti-mt` je cesta:
+
+```text
+devices/credentials/fortinet/forti-mt/prophylaxis
+```
+
 SSH platformy z neho načítajú
-`username`, `password` a voliteľný `enable_password`; FortiGate z neho načíta
-iba `api_token`. Resolver vráti iba polia požadované konkrétnym transportom.
+`username`, `password` a voliteľný `enable_password`. FortiGate načíta
+`api_token`, ak má zariadenie NetBox službu `fortios-api`; bez tejto služby
+načíta `username` a `password` pre SSH. Resolver vráti iba polia požadované
+zvoleným transportom.
 
 Pri upgrade skopíruj iba potrebné hodnoty z existujúceho `admin` secretu do
 nového `prophylaxis` secretu cez autentifikované OpenBao UI. Atlas nemá fallback
@@ -60,8 +71,10 @@ fortios-api -> TCP/444 -> ["tcp/444"]
 
 Port sa odovzdá do `ansible.netcommon.httpapi` ako `ansible_httpapi_port`.
 Atlas porty aktívne neskenuje. Ak služba `fortios-api` na zariadení neexistuje,
-použije platformový default `443`, aby ostala zachovaná kompatibilita. Viac
-služieb s rovnakým názvom alebo viac port mappings skončí s
+Atlas vyberie SSH na porte 22 a spustí iba allow-listed príkazy
+zoskupené v rovnakých tematických collectoroch ako API. Chyba existujúceho API
+spojenia nespustí SSH fallback. Viac služieb s rovnakým názvom alebo viac port
+mappings skončí s
 `ambiguous_service_port`; iný protokol, neplatný port alebo neplatná odpoveď
 skončí s `invalid_service_port`. Port sa vyhodnotí ešte pred čítaním secretu.
 
@@ -106,6 +119,14 @@ routing_table
 routing_protocol_neighbors
 ha_status
 configuration_backup
+session_health
+stability_events
+storage_health
+fortiguard_status
+acme_status
+sdwan_health
+vpn_tunnels
+log_delivery
 ```
 
 `device_facts` normalizuje hostname, model, nainštalovaný OS identifikátor,
@@ -125,6 +146,26 @@ nevyhodnocujú z CLI; pre podporované Cisco platformy ich poskytujú Cisco
 Software Suggestion API a Cisco EoX API. Nové NetBox UI individuálne voľby
 neponúka.
 
+FortiOS `firmware_recommendation` oddeľuje dve rôzne tvrdenia. Pole
+`firmware_update_available` opisuje iba aktuálny katalóg dostupný konkrétnemu
+zariadeniu: cez SSH sa získava príkazom `diagnose fdsm image-list`, cez API
+selectorom `system_firmware`. Hodnota je `true` iba pri explicitnom označení
+`upgrade`. Hodnota `false` sa pri SSH nastaví iba vtedy, keď počet parsovaných
+záznamov zodpovedá deklarovanému `Total` a žiadny záznam nie je `upgrade`;
+neúplný alebo nejednoznačný výstup ostáva `null`/`UNKNOWN`.
+`firmware_recommended_version` ostáva `null`, kým Atlas nemá samostatný
+autoritatívny zdroj odporúčanej FortiOS vetvy. Absencia položky `upgrade`
+preto neznamená, že nainštalovaná verzia je najnovšia alebo odporúčaná. Atlas
+neporovnáva FortiOS verzie lexikograficky a nevyberá najvyššiu verziu zo
+zoznamu downgrade obrazov.
+
+Zdroje kontraktu: FortiOS 8.0 CLI referencia pre
+[`diagnose fdsm`](https://docs.fortinet.com/document/fortigate/8.0.0/cli-reference/293744549/diagnose-fdsm),
+Fortinet príklad významu
+[`upgrade`/`downgrade`](https://docs.fortinet.com/document/fortigate/8.0.0/new-features/153433/enhancements-to-required-upgrade-when-firmware-license-is-invalid-or-device-is-eoes)
+a dokumentácia `fortinet.fortios` 2.6.0 pre API selector
+[`system_firmware`](https://docs.ansible.com/projects/ansible/latest/collections/fortinet/fortios/fortios_monitor_fact_module.html).
+
 `configuration_backup` je vyhodnotenie existujúceho Oxidized flow. Atlas načíta
 `nodes.json`, vyžaduje presnú zhodu názvu zariadenia a kontroluje `last.status`.
 Úspešný posledný job je `PASS`; chýbajúci uzol alebo ešte neukončený backup je
@@ -137,11 +178,11 @@ Oxidized 0.37.0 serializuje pre uzol `name`, `mtime` a voliteľný posledný job
 poľami `start`, `end`, `status` a `time`:
 [Oxidized 0.37.0 `Node#serialize`](https://github.com/ytti/oxidized/blob/0.37.0/lib/oxidized/node.rb#L86-L105).
 
-PKI parser používa v tomto reze konzervatívne hranice: expirovaný alebo najviac
-30 dní zostávajúci certifikát je `FAIL`, 31 až 60 dní je `WARNING` a viac než
-60 dní je `PASS`. Stav automatickej obnovy zostáva `unverified`; samotná dlhá
-platnosť ho nedokazuje. Prahy sú zatiaľ explicitné konštanty parsera, nie
-zákaznícka konfigurácia.
+FortiOS PKI parser ukladá počet certifikátov, najkratšiu zostávajúcu platnosť a
+počet už expirovaných certifikátov. V tejto fáze nad nimi neuplatňuje Atlas
+warning/critical thresholdy. Stav automatickej obnovy zostáva `unverified`;
+samotná dlhá platnosť ju nedokazuje. Existujúce Cisco parsery si zachovávajú
+svoj doterajší kontrakt.
 
 Profylaxia zároveň vykonáva interné kontroly `serial_inventory` a
 `model_inventory` pre každý aktívny device s `profylaxia_enabled=true`. Ak plán
@@ -152,7 +193,9 @@ uložené hodnoty pre obe porovnania.
 ## Všeobecná uptime politika
 
 Uptime sa vyhodnocuje až nad normalizovanou hodnotou `uptime_seconds`, preto je
-politika spoločná pre všetky platformy a transporty:
+politika spoločná pre platformy s existujúcim hodnotiacim kontraktom. FortiOS
+je v tejto iterácii collection-first: uptime uloží ako `UNKNOWN` a nepoužije
+nasledujúce prahy, kým nebude nakonfigurovaná explicitná politika:
 
 | Hodnota | Evaluation | Reason code |
 | --- | --- | --- |
@@ -213,7 +256,7 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-nxos` | `ansible.netcommon.network_cli` | `cisco.nxos.nxos` | `nxos_command` + NTC `show version`/`show inventory` |
 | `cisco-asa` | `ansible.netcommon.network_cli` | `cisco.asa.asa` | `asa_command` + NTC `show version`/`show inventory` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |
-| `fortios` | `ansible.netcommon.httpapi` | `fortinet.fortios.fortios` | `system_status` + HTTPS `web-ui/state` |
+| `fortios` | `ansible.netcommon.httpapi` pri službe `fortios-api`; inak lokálny Ansible modul cez SSH/Paramiko | `fortinet.fortios.fortios` pre API; bez `network_os` pre SSH | API `system_status` + `web-ui/state`, alebo CLI `get system status` + `get system performance status` |
 | `checkpoint-gaia` | lokálny Ansible modul cez SSH/Paramiko | Gaia Clish | allow-list `show hostname`, `show asset all`, `show version all`, `show uptime` |
 
 `checkpoint-gaia` podporuje v tejto iterácii `device_facts`, `os_version`,
@@ -325,8 +368,8 @@ onboarding, ale neoveruje identitu SSH servera a zvyšuje riziko MITM útoku.
 Ak sa strict režim neskôr zapne, backend skopíruje existujúci Oxidized
 `known_hosts` do dočasného Runner HOME.
 
-Nasadzovaný beta profil má `fortios_validate_certs: false`. FortiOS sa stále
-kontaktuje cez HTTPS, ale Atlas neoveruje CA ani identitu servera. Hodnota sa
+Nasadzovaný beta profil má `fortios_validate_certs: false`. Pri zariadení so
+službou `fortios-api` Atlas neoveruje CA ani identitu HTTPS servera. Hodnota sa
 nastavuje v `deployment/backend.yaml` a aplikuje cez `sudo atlasctl deploy`;
 interný fallback aplikácie je tiež `false`.
 
@@ -334,6 +377,14 @@ FortiGate API token sa v Atlase nevytvára ani mu Atlas nemení oprávnenia.
 Prevádzkovateľ ho musí vopred vytvoriť s read-only API profilom obmedzeným na
 monitorovacie endpointy potrebné pre zvolené checks; full-admin token nie je
 súčasťou podporovaného produkčného nastavenia.
+
+SSH režim používa účelový read-only účet a pevný allow-list zdokumentovaných
+`get`, `diagnose` a obmedzených `execute log` príkazov. Lokálny Ansible modul obsluhuje FortiOS `--More--` stránkovanie
+medzerníkom; nemení tým konfiguráciu zariadenia. Zdrojom významu týchto
+príkazov je dokumentácia FortiOS:
+
+- [FortiOS 7.6.0 CLI troubleshooting cheat sheet](https://docs.fortinet.com/document/fortigate/7.6.0/cli-troubleshooting-cheat-sheet/420966/cli-troubleshooting-cheat-sheet)
+- [FortiOS 7.0.15 Troubleshooting CPU and network resources](https://docs.fortinet.com/document/fortigate/7.0.15/administration-guide/152469/troubleshooting-cpu-and-network-resources)
 
 ## Prevádzková diagnostika
 

@@ -37,6 +37,7 @@ class MemoryNetBox:
     def __init__(self):
         self.tables = {endpoint: [] for endpoint in (
             "/api/dcim/platforms/", "/api/dcim/manufacturers/", "/api/dcim/device-types/",
+            "/api/dcim/device-roles/",
             "/api/dcim/devices/",
             "/api/extras/custom-fields/", "/api/extras/custom-field-choice-sets/",
             *(spec["endpoint"] for spec in provision_netbox.COMPONENT_SPECS.values()))}
@@ -224,6 +225,21 @@ class PlatformTests(unittest.TestCase):
         client.tables["/api/dcim/platforms/"] = [{"id": 1, "slug": "cisco-ios", "manufacturer": {"id": 99}}]
         with self.assertRaisesRegex(ValueError, "manufacturer conflict"), redirect_stdout(io.StringIO()):
             provision_platforms(client, {"Cisco": {"id": 2}}, self.config, True)
+
+    def test_device_role_baseline_is_created_once(self):
+        client = MemoryNetBox()
+        roles = provision_baseline.load_device_roles()
+        provision_baseline.validate_device_roles(roles)
+        with redirect_stdout(io.StringIO()):
+            first = provision_baseline.provision_device_roles(client, roles, True)
+            second = provision_baseline.provision_device_roles(client, roles, True)
+        self.assertEqual(first["created"], len(roles))
+        self.assertEqual(second["created"], 0)
+        self.assertEqual(second["existing"], len(roles))
+        self.assertEqual(
+            {role["slug"] for role in client.tables["/api/dcim/device-roles/"]},
+            {"network-device", "switch", "router", "firewall", "load-balancer", "management-appliance"},
+        )
 
     def test_credential_custom_field_is_idempotent(self):
         client = MemoryNetBox()

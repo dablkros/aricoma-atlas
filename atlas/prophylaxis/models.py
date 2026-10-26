@@ -45,6 +45,14 @@ class CheckId(StrEnum):
     CONFIGURATION_BACKUP = "configuration_backup"
     SERIAL_INVENTORY = "serial_inventory"
     MODEL_INVENTORY = "model_inventory"
+    SESSION_HEALTH = "session_health"
+    STABILITY_EVENTS = "stability_events"
+    STORAGE_HEALTH = "storage_health"
+    FORTIGUARD_STATUS = "fortiguard_status"
+    ACME_STATUS = "acme_status"
+    SDWAN_HEALTH = "sdwan_health"
+    VPN_TUNNELS = "vpn_tunnels"
+    LOG_DELIVERY = "log_delivery"
 
 
 class CheckGroupId(StrEnum):
@@ -90,18 +98,45 @@ CHECK_GROUP_CHECKS = {
 }
 
 
+PLATFORM_CHECK_GROUP_EXTENSIONS = {
+    "fortios": {
+        CheckGroupId.RESOURCES: (
+            CheckId.SESSION_HEALTH,
+            CheckId.STABILITY_EVENTS,
+            CheckId.STORAGE_HEALTH,
+        ),
+        CheckGroupId.COMPLIANCE: (
+            CheckId.FORTIGUARD_STATUS,
+            CheckId.ACME_STATUS,
+        ),
+        CheckGroupId.OPERATIONS: (
+            CheckId.SDWAN_HEALTH,
+            CheckId.VPN_TUNNELS,
+            CheckId.LOG_DELIVERY,
+        ),
+    },
+}
+
+
 def expand_check_selection(
     raw_values: Iterable[str],
+    *,
+    platform: str | None = None,
 ) -> tuple[tuple[CheckId, ...], tuple[str, ...]]:
-    """Expand NetBox groups and compatible legacy check values."""
+    """Expand NetBox groups and platform-specific check extensions."""
     values = set(raw_values)
     checks: list[CheckId] = []
     unknown: list[str] = []
+    platform_extensions = PLATFORM_CHECK_GROUP_EXTENSIONS.get(platform, {})
 
     for group_id in CheckGroupId:
         if group_id.value not in values:
             continue
-        for check_id in CHECK_GROUP_CHECKS[group_id]:
+        group_checks = (
+            *CHECK_GROUP_CHECKS[group_id],
+            *platform_extensions.get(group_id, ()),
+        )
+        for check_id in group_checks:
             if check_id not in checks:
                 checks.append(check_id)
 
@@ -128,6 +163,10 @@ class CollectorId(StrEnum):
     CBS_INTERFACES = "cbs_interfaces"
     CBS_COMPLIANCE = "cbs_compliance"
     CBS_OPERATIONS = "cbs_operations"
+    FORTIOS_RESOURCES = "fortios_resources"
+    FORTIOS_INTERFACES = "fortios_interfaces"
+    FORTIOS_COMPLIANCE = "fortios_compliance"
+    FORTIOS_OPERATIONS = "fortios_operations"
     # Compatibility collector IDs used by other platform profiles and the
     # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
@@ -225,7 +264,17 @@ class DiagnosticValues(BaseModel):
         default_factory=dict
     )
     affected_items: tuple[str, ...] = ()
+    records: tuple[
+        dict[str, str | int | float | bool | None], ...
+    ] = ()
     source_commands: tuple[str, ...] = ()
+    collected_at: datetime | None = None
+    context: dict[str, str | int | float | bool | None] = Field(
+        default_factory=dict
+    )
+    evidence: tuple[str, ...] = ()
+    evaluation_rule: str | None = Field(default=None, max_length=512)
+    recommended_action: str | None = Field(default=None, max_length=512)
 
     @model_validator(mode="after")
     def validate_evaluation(self):
@@ -300,6 +349,7 @@ class RawCollectorResult(BaseModel):
     data: Any | None = None
     raw_output: str | None = None
     error_code: str | None = None
+    context: dict[str, Any] = Field(default_factory=dict)
 
     @model_validator(mode="after")
     def validate_payload(self):
@@ -380,6 +430,7 @@ StoredCPUCheckResult = StoredCheckResult
 __all__ = [
     "CPU_CHECK_NAME",
     "CHECK_GROUP_CHECKS",
+    "PLATFORM_CHECK_GROUP_EXTENSIONS",
     "CHECK_VALUE_ALIASES",
     "CPUCheckResult",
     "CPUUtilizationValues",

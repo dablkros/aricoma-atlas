@@ -1,0 +1,30 @@
+device_roles:
+  - name: Network Device
+    slug: network-device
+    color: "607d8b"
+    vm_role: false
+
+  - name: Switch
+    slug: switch
+    color: "2196f3"
+    vm_role: false
+
+  - name: Router
+    slug: router
+    color: "3f51b5"
+    vm_role: false
+
+  - name: Firewall
+    slug: firewall
+    color: "f44336"
+    vm_role: false
+
+  - name: Load Balancer
+    slug: load-balancer
+    color: "9c27b0"
+    vm_role: false
+
+  - name: Management Appliance
+    slug: management-appliance
+    color: "795548"
+    vm_role: false

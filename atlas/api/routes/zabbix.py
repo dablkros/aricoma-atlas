@@ -1,8 +1,9 @@
 """Atlas-owned HTTP boundary for Zabbix monitoring data and reconciliation."""
 
-from fastapi import APIRouter, Query, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 
 from atlas.api.errors import AtlasError
+from atlas.api.operator_auth import require_operator
 from atlas.api.schemas.zabbix import (
     DeviceMonitoringResponse,
     MetricResponse,
@@ -18,6 +19,10 @@ from atlas.services.zabbix_sync import ZabbixSyncFailure
 
 
 router = APIRouter(tags=["zabbix"])
+
+
+def zabbix_write_authorized(request: Request) -> None:
+    require_operator(request, scope="zabbix")
 
 
 def _failure(exc) -> AtlasError:
@@ -59,7 +64,11 @@ def _host(item: dict, monitoring) -> ZabbixHostResponse:
     )
 
 
-@router.post("/zabbix/sync", response_model=ZabbixSyncResponse)
+@router.post(
+    "/zabbix/sync",
+    response_model=ZabbixSyncResponse,
+    dependencies=[Depends(zabbix_write_authorized)],
+)
 def sync_zabbix(request: Request) -> ZabbixSyncResponse:
     try:
         result = request.app.state.dependencies.zabbix_sync.sync()

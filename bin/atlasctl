@@ -36,6 +36,13 @@ Usage:
   sudo atlasctl zabbix credentials
   sudo atlasctl zabbix logs [docker compose logs options]
   sudo atlasctl integrations cisco test
+  sudo atlasctl inventory tenant add --name NAME [--dry-run]
+  sudo atlasctl inventory site add --tenant TENANT --name NAME [--dry-run]
+  sudo atlasctl inventory site set-default --tenant TENANT --name NAME [--dry-run|--apply]
+  sudo atlasctl inventory upload FILE [--name NAME.csv|NAME.xlsx] [--force]
+  sudo atlasctl inventory device-type search MODEL [--json]
+  sudo atlasctl inventory device-type add MODEL [--dry-run|--apply]
+  sudo atlasctl inventory import FILE [--tenant TENANT] [--site SITE] [--dry-run|--apply]
   sudo atlasctl prophylaxis logs [docker compose logs options]
   sudo atlasctl backend logs [docker compose logs options]
   sudo atlasctl proxy logs [docker compose logs options]
@@ -55,6 +62,7 @@ Commands:
   zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
   integrations cisco    Test Cisco OAuth and Support API entitlements.
+  inventory             Manage tenants, sites, Device Types and device imports.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
   proxy logs            Show Nginx ingress container logs.
@@ -79,6 +87,7 @@ atlas_env() {
         "PYTHONUNBUFFERED=1"
         "PATH=${ATLAS_ROOT}/.venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
         "ATLAS_PROXY_CONFIG=${PROXY_CONFIG}"
+        "ATLAS_CALLER_CWD=${PWD}"
     )
 
     if [[ -n "${OPENBAO_URL:-}" ]]; then
@@ -296,6 +305,49 @@ zabbix_logs() {
         database server web
 }
 
+inventory_upload() {
+    local source=${1:-}
+    [[ -n "$source" ]] || die "inventory upload requires a CSV or XLSX file"
+    shift
+
+    if [[ "$source" != /* ]]; then
+        source="${PWD}/${source}"
+    fi
+    [[ -f "$source" ]] || die "Inventory file does not exist: ${source}"
+
+    local target_name
+    target_name="$(basename -- "$source")"
+    local force=false
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            --name)
+                [[ -n "${2:-}" ]] || die "--name requires a file name"
+                target_name=$2
+                shift 2
+                ;;
+            --force)
+                force=true
+                shift
+                ;;
+            *)
+                die "Unknown inventory upload option: $1"
+                ;;
+        esac
+    done
+    [[ "$target_name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*\.(csv|xlsx)$ ]] || \
+        die "Inventory target name must end in .csv or .xlsx"
+
+    local target_dir="${RUNTIME_DIR}/inventory/imports"
+    local target="${target_dir}/${target_name}"
+    install -d -m 0750 -o "$ATLAS_USER" -g "$ATLAS_GROUP" "$target_dir"
+    if [[ -e "$target" && "$force" != true ]]; then
+        die "Inventory file already exists: ${target}; use --force to replace it"
+    fi
+    install -m 0640 -o "$ATLAS_USER" -g "$ATLAS_GROUP" -- "$source" "$target"
+    log "Inventory file uploaded: ${target}"
+    printf 'Next step:\n  sudo atlasctl inventory import %q --dry-run\n' "$target"
+}
+
 main() {
     require_root
     require_install
@@ -342,6 +394,27 @@ main() {
         openbao)
             shift
             run_python_as_atlas "${ATLAS_ROOT}/scripts/openbao_access.py" "$@"
+            ;;
+        inventory)
+            shift
+            case "${1:-}" in
+                tenant|site|device-type|import)
+                    run_python_as_atlas \
+                        "${ATLAS_ROOT}/scripts/import_netbox_inventory.py" "$@"
+                    ;;
+                upload)
+                    shift
+                    inventory_upload "$@"
+                    ;;
+                -h|--help|help)
+                    run_python_as_atlas \
+                        "${ATLAS_ROOT}/scripts/import_netbox_inventory.py" --help
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
             ;;
         oxidized)
             require_component oxidized

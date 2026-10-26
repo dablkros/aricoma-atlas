@@ -1,6 +1,14 @@
 ---
 atlas_transport_files:
   ssh:
+    fortios_resources:
+      fortios: resources/fortios_ssh.yml
+    fortios_interfaces:
+      fortios: interfaces/fortios_ssh.yml
+    fortios_compliance:
+      fortios: compliance/fortios_ssh.yml
+    fortios_operations:
+      fortios: operations/fortios_ssh.yml
     ios_resources:
       cisco-ios: resources/cisco_ios.yml
       cisco-ios-xe: resources/cisco_ios.yml
@@ -29,11 +37,13 @@ atlas_transport_files:
       cisco-cbs: operations/cisco_cbs.yml
       cisco-cbs250-350: operations/cisco_cbs.yml
     cpu_usage:
+      fortios: cpu/fortios_ssh.yml
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
       cisco-cbs: cpu/cisco_cbs.yml
       cisco-cbs250-350: cpu/cisco_cbs.yml
     device_facts:
+      fortios: device_facts/fortios_ssh.yml
       cisco-ios: device_facts/cisco_ios.yml
       cisco-ios-xe: device_facts/cisco_ios.yml
       cisco-cbs: device_facts/cisco_cbs.yml
@@ -43,6 +53,14 @@ atlas_transport_files:
       aruba-aos-cx: device_facts/aruba_aoscx.yml
       checkpoint-gaia: device_facts/checkpoint_gaia.yml
   https:
+    fortios_resources:
+      fortios: resources/fortios.yml
+    fortios_interfaces:
+      fortios: interfaces/fortios.yml
+    fortios_compliance:
+      fortios: compliance/fortios.yml
+    fortios_operations:
+      fortios: operations/fortios.yml
     cpu_usage:
       fortios: cpu/fortios.yml
     device_facts:

@@ -156,6 +156,21 @@ class ProphylaxisServiceTests(unittest.TestCase):
         )
         self.assertEqual(unknown, ())
 
+        fortios_checks, fortios_unknown = expand_check_selection(
+            {"identity", "resources"},
+            platform="fortios",
+        )
+        self.assertEqual(
+            fortios_checks,
+            checks
+            + (
+                CheckId.SESSION_HEALTH,
+                CheckId.STABILITY_EVENTS,
+                CheckId.STORAGE_HEALTH,
+            ),
+        )
+        self.assertEqual(fortios_unknown, ())
+
     def test_device_becomes_vendor_neutral_target(self):
         target = device_target(netbox_device())
         self.assertEqual(target.id, 10)
@@ -207,16 +222,23 @@ class ProphylaxisServiceTests(unittest.TestCase):
             service.netbox.calls,
         )
 
-    def test_fortios_without_named_service_uses_https_default(self):
+    def test_fortios_without_named_service_uses_ssh_credentials(self):
+        openbao = FakeOpenBao()
         backend = FakeBackend()
 
         result = self.service(
             [netbox_device("fortios")],
+            openbao=openbao,
             backend=backend,
         ).collect_cpu(10)
 
         self.assertEqual(result.status, "ok")
-        self.assertEqual(backend.calls[0]["port"], 443)
+        self.assertEqual(
+            openbao.calls,
+            [("fortinet", "default", "ssh", "prophylaxis")],
+        )
+        self.assertEqual(backend.calls[0]["profile"].transport, "ssh")
+        self.assertEqual(backend.calls[0]["port"], 22)
 
     def test_invalid_or_ambiguous_fortios_service_stops_before_secret_lookup(self):
         cases = (

@@ -1,0 +1,45 @@
+---
+- name: Collect FortiOS operational status through SSH
+  atlas_fortios_cli:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port | int }}"
+    username: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
+    commands:
+      - diagnose sys ntp status
+      - get router info routing-table all
+      - get router info ospf neighbor
+      - get router info bgp summary
+      - get router info bgp network
+      - get system ha status
+      - diagnose sys ha checksum cluster
+      - diagnose sys ha history read
+      - diagnose sys sdwan health-check
+      - diagnose vpn tunnel list
+      - get log fortianalyzer setting
+      - execute log filter category event
+      - execute log filter view-lines 50
+      - execute log display
+    connect_timeout: "{{ ansible_connect_timeout | int }}"
+    command_timeout: "{{ ansible_command_timeout | int }}"
+    host_key_checking: "{{ ansible_host_key_checking | bool }}"
+    known_hosts_path: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/known_hosts"
+  register: atlas_fortios_operations
+  changed_when: false
+
+- name: Prepare FortiOS operational outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        diagnose_sys_ntp_status: "{{ atlas_fortios_operations.outputs['diagnose sys ntp status'] }}"
+        get_router_info_routing_table_all: "{{ atlas_fortios_operations.outputs['get router info routing-table all'] }}"
+        get_router_info_ospf_neighbor: "{{ atlas_fortios_operations.outputs['get router info ospf neighbor'] }}"
+        get_router_info_bgp_summary: "{{ atlas_fortios_operations.outputs['get router info bgp summary'] }}"
+        get_router_info_bgp_network: "{{ atlas_fortios_operations.outputs['get router info bgp network'] }}"
+        get_system_ha_status: "{{ atlas_fortios_operations.outputs['get system ha status'] }}"
+        diagnose_sys_ha_checksum_cluster: "{{ atlas_fortios_operations.outputs['diagnose sys ha checksum cluster'] }}"
+        diagnose_sys_ha_history_read: "{{ atlas_fortios_operations.outputs['diagnose sys ha history read'] }}"
+        diagnose_sys_sdwan_health_check: "{{ atlas_fortios_operations.outputs['diagnose sys sdwan health-check'] }}"
+        diagnose_vpn_tunnel_list: "{{ atlas_fortios_operations.outputs['diagnose vpn tunnel list'] }}"
+        get_log_fortianalyzer_setting: "{{ atlas_fortios_operations.outputs['get log fortianalyzer setting'] }}"
+        execute_log_display: "{{ atlas_fortios_operations.outputs['execute log display'] }}"

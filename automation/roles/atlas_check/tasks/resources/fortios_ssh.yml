@@ -1,0 +1,42 @@
+---
+- name: Collect FortiOS resource and hardware-sensor status through SSH
+  atlas_fortios_cli:
+    host: "{{ ansible_host }}"
+    port: "{{ ansible_port | int }}"
+    username: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
+    password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
+    commands:
+      - get system performance status
+      - get system status
+      - diagnose hardware sysinfo sensor-status
+      - diagnose sys session stat
+      - diagnose hardware sysinfo conserve
+      - diagnose hardware sysinfo memory
+      - diagnose hardware deviceinfo disk
+      - diagnose hardware deviceinfo psu
+      - diagnose hardware deviceinfo tpm
+      - diagnose debug crashlog read
+      - diagnose debug config-error-log read
+    connect_timeout: "{{ ansible_connect_timeout | int }}"
+    command_timeout: "{{ ansible_command_timeout | int }}"
+    host_key_checking: "{{ ansible_host_key_checking | bool }}"
+    known_hosts_path: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/known_hosts"
+  register: atlas_fortios_resources
+  changed_when: false
+
+- name: Prepare FortiOS resource outputs for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        session_banner: "{{ atlas_fortios_resources.banner | default('') }}"
+        get_system_performance_status: "{{ atlas_fortios_resources.outputs['get system performance status'] }}"
+        get_system_status: "{{ atlas_fortios_resources.outputs['get system status'] }}"
+        diagnose_hardware_sysinfo_sensor_status: "{{ atlas_fortios_resources.outputs['diagnose hardware sysinfo sensor-status'] }}"
+        diagnose_sys_session_stat: "{{ atlas_fortios_resources.outputs['diagnose sys session stat'] }}"
+        diagnose_hardware_sysinfo_conserve: "{{ atlas_fortios_resources.outputs['diagnose hardware sysinfo conserve'] }}"
+        diagnose_hardware_sysinfo_memory: "{{ atlas_fortios_resources.outputs['diagnose hardware sysinfo memory'] }}"
+        diagnose_hardware_deviceinfo_disk: "{{ atlas_fortios_resources.outputs['diagnose hardware deviceinfo disk'] }}"
+        diagnose_hardware_deviceinfo_psu: "{{ atlas_fortios_resources.outputs['diagnose hardware deviceinfo psu'] }}"
+        diagnose_hardware_deviceinfo_tpm: "{{ atlas_fortios_resources.outputs['diagnose hardware deviceinfo tpm'] }}"
+        diagnose_debug_crashlog_read: "{{ atlas_fortios_resources.outputs['diagnose debug crashlog read'] }}"
+        diagnose_debug_config_error_log_read: "{{ atlas_fortios_resources.outputs['diagnose debug config-error-log read'] }}"

@@ -1,0 +1,15 @@
+---
+- name: Collect FortiOS interface state through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_interface
+    vdom: root
+  register: atlas_fortios_interfaces
+  changed_when: false
+
+- name: Prepare FortiOS API interface evidence for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        system_interface: "{{ atlas_fortios_interfaces.meta.results | to_json }}"
+        system_traffic_history_interface: "{}"

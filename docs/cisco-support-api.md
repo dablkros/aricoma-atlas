@@ -1,6 +1,6 @@
 # Cisco Support API integration
 
-Stav implementácie: 23. 10. 2026, vetva `feat/cisco-support-api`.
+Stav implementácie: zahrnuté v release `v0.4.3`.
 
 ## Cieľ
 

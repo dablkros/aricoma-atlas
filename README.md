@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - voliteľný **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - voliteľný **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.2** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.4.3** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
   pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -42,6 +42,13 @@ sudo atlasctl zabbix sync
 sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
 sudo atlasctl integrations cisco test
+sudo atlasctl inventory tenant add --name "ACME Slovakia"
+sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
+sudo atlasctl inventory site set-default --tenant acme-slovakia --name "Bratislava DC"
+sudo atlasctl inventory upload ~/customer-devices.csv
+sudo atlasctl inventory device-type search "CBS350-16T-2G"
+sudo atlasctl inventory device-type add "CBS350-16T-2G" --dry-run
+sudo atlasctl inventory import /secure/devices.xlsx --tenant acme-slovakia --dry-run
 sudo atlasctl prophylaxis logs -f
 sudo atlasctl backend logs -f
 sudo atlasctl proxy logs -f
@@ -53,16 +60,37 @@ produkčné certifikáty zostávajú vstupom zákazníckeho prostredia. Priame
 `python3 scripts/*.py` entrypointy zostávajú dostupné najmä pre vývoj a
 diagnostiku.
 
+Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
+`--dry-run`/`--apply` postup sú popísané v
+[dokumentácii Inventory Importera](docs/inventory-import.md).
+Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
+Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
+chýbajúci validný Device Type YAML, zopakuje plán a explicitne potvrdí Apply.
+UI počas prípravy plánu zobrazuje aktuálnu fázu a uplynutý čas. Apply je
+odomknuté iba pre presne skontrolovaný plán bez neplatných alebo konfliktných
+riadkov; zmena vstupu plán zneplatní.
+Importer pri chýbajúcom Device Type najskôr preverí Atlas katalóg a Device Type
+Library checkout na commite pripnutom v manifeste. Až keď verejný repozitár
+model neobsahuje, preverí ručne dodané YAML v
+`.runtime/inventory/device-types/`; ak chýba aj tam, report vypíše tento adresár
+pre manuálne nahratie YAML. Atlas externé URL automaticky nesťahuje. Dry-run iba
+zobrazí spoločný plán; apply vytvorí validovaný typ pred zariadením.
+Štandardné Device Roles (`Network Device`, `Switch`, `Router`, `Firewall`,
+`Load Balancer`, `Management Appliance`) vytvára NetBox baseline automaticky.
+Rolu importéra určuje explicitný stĺpec, presné mapovanie modelu/platformy alebo
+bezpečný fallback `Network Device`; hostname sa na odhad role nepoužíva.
+
 ---
 
 # Aktuálny stav
 
-**Verzia tejto dokumentácie a backendu:** `v0.4.2`
+**Verzia tejto dokumentácie a backendu:** `v0.4.3`
 
-Zmeny oproti `v0.4.1-beta` zahŕňajú kategorizované Cisco IOS/CBS profylaxie,
-Check Point Gaia zber, kontrolu sériového čísla a modelu, grafy zo Zabbixu a
-monotónny výber voliteľných komponentov pri first boot. Podrobný prehľad je v
-[CHANGELOG.md](CHANGELOG.md).
+Zmeny oproti `v0.4.2` zahŕňajú riadený import zariadení z CSV/XLSX alebo
+vloženého obsahu tabuľky, automatický preflight Device Types, runtime YAML
+fallback, štandardné Device Roles, bezpečný dry-run/confirm/apply flow,
+rozšírenú FortiOS profylaxiu cez API aj SSH a Cisco Software Suggestion/EoX
+integráciu. Podrobný prehľad je v [CHANGELOG.md](CHANGELOG.md).
 
 V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
 zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
@@ -110,7 +138,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.2`
+- Atlas backend image `aricoma-atlas-backend:0.4.3`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -521,7 +549,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.2","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.3","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -641,6 +669,9 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
   `profylaxia_enabled=true` asynchrónne rozbalí skupiny vybrané v
   `profylaxia_checks` a spustí podporované platformové collectory,
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
+- riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
+  viditeľný priebeh s uplynutým časom, riadkové chyby, validovaný runtime
+  Device Type YAML, retry a explicitný Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -658,6 +689,9 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/status` | Používateľský aggregate stav `healthy`, `degraded` alebo `unhealthy`. |
 | `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
+| `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
+| `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
+| `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
 | `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
 | `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
@@ -677,8 +711,9 @@ raw príkazový výstup.
 
 Každý hromadný beh vybraných kontrol má samostatný adresár
 `/run/atlas/prophylaxis/runs/<run_id>/` s atomicky aktualizovaným
-`result.json`, čitateľným `report.txt` a voliteľnými Zabbix SVG grafmi v
-`charts/`. CPU graf sa vytvorí iba vtedy, keď Atlas-managed Zabbix host s
+interným `result.json`, kompaktným per-device `report-data.json`, čitateľným
+`report.txt` a voliteľnými Zabbix SVG grafmi v `charts/`. CPU graf sa vytvorí
+iba vtedy, keď Atlas-managed Zabbix host s
 rovnakým `netbox_id` poskytne numerickú CPU históriu. Nedostupný graf nemení
 výsledok profylaxie. Adresáre majú režim `0700` a súbory
 `0600`. Artefakty obsahujú iba identitu zariadenia, management IP, platformu,
@@ -686,6 +721,20 @@ ID kontroly, normalizované hodnoty a bezpečné chybové kódy.
 Credentials ani raw CLI výstup sa do nich neukladajú. Maximálny počet súbežne
 spracovaných zariadení nastavuje `backend.prophylaxis_concurrency` v
 `deployment/backend.yaml` (predvolene `4`).
+
+`result.json` zachováva ploché pole `results` pre existujúcich API klientov a
+zároveň poskytuje odvodené pole `devices`. Každá položka `devices` obsahuje
+jednoznačnú identitu zariadenia, jeho vlastný súhrn, pole `checks` a príslušné
+Zabbix grafy. Hodnoty v oboch pohľadoch pochádzajú z rovnakých normalizovaných
+výsledkov; `devices` sa pri načítaní znovu zostaví z kanonického `results`.
+
+`report-data.json` je stabilný vstup pre externé generovanie dokumentu. Obsahuje
+beh a zariadenia iba raz a pod každým zariadením jeho súhrn a kontroly. Z
+jednotlivých kontrol vynecháva interné `collected_at`, transportný `context`,
+príkazy, interné evaluation pravidlá a duplicitné evidence; zachováva
+evaluation, slovný súhrn, reason code, metriky, štruktúrované `records`, nálezy
+a normalizované dáta. Prenos cez TLS a autentifikácia cieľovej reportovacej
+služby sú samostatný integračný krok; tento súbor sa zatiaľ nikam neposiela.
 
 ### Manuálny test Profylaxia flow
 
@@ -1872,7 +1921,7 @@ Atlas baseline predstavuje konfiguráciu, ktorá má existovať na každej Atlas
 Aktuálne obsahuje:
 
 - 1× Custom Field Choice Set,
-- 4× Custom Fields.
+- 5× Custom Fields.
 
 Konfigurácia baseline je deklaratívne uložená v:
 
@@ -1893,21 +1942,28 @@ podporuje `aruba-aos-cx` a `checkpoint-gaia` a zbiera `hostname`, `model`,
 Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
 výrobcu. Vrstva načítava účelové `prophylaxis` credentials cez existujúcu
 OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API vykonáva
-Ansible cez `ansible-runner`; Atlas už nemá Netmiko ani vlastný SSH driver.
+secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API alebo
+allow-listed FortiOS SSH CLI vykonáva Ansible cez `ansible-runner`; Atlas už
+nemá Netmiko ani všeobecný SSH driver.
 Profylaxia číta výhradne účelový OpenBao secret bez fallbacku na `/admin`:
 
 ```text
 devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 ```
 
+Príklad pre FortiGate s `credential_profile=forti-mt` je
+`devices/credentials/fortinet/forti-mt/prophylaxis`.
+
 SSH platformy očakávajú `username`, `password` a voliteľný
-`enable_password`; FortiOS očakáva `api_token`. Oxidized naďalej používa
+`enable_password`. FortiOS so službou `fortios-api` očakáva `api_token`;
+FortiOS bez nej očakáva `username` a `password`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
 Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
-vrstvy. Spoločná uptime politika však vracia `WARNING` pri hodnote pod 3 dni
-alebo nad 365 dní bez ohľadu na platformu. UI a textový report zobrazujú uptime
-v ľudskom formáte, kým JSON/API zachováva sekundy. Operations UI poskytuje
+vrstvy. Existujúca uptime politika vracia `WARNING` pri hodnote pod 3 dni alebo
+nad 365 dní na platformách s hodnotiacim kontraktom. FortiOS je collection-first
+a uptime ponechá `UNKNOWN`, kým nebude zadaná explicitná politika. UI a textový
+report zobrazujú uptime v ľudskom formáte, kým JSON/API zachováva sekundy.
+Operations UI poskytuje
 manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Skupina
 `identity` vytvára výsledky
 `device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
@@ -1919,6 +1975,24 @@ OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
 manuálna CPU kontrola zostáva dostupná cez API.
 
+FortiOS používa rovnaké tematické check ID cez API aj SSH. Atlas automaticky
+objaví dostupné objekty a uloží ich hodnoty bez per-device thresholdov. Úplnú
+maticu a konzervatívne hranice parserov opisuje
+[FortiOS Profylaxia kontrakt](docs/prophylaxis-fortios.md).
+Úspešne získaný výsledok bez nakonfigurovaného hodnotenia sa počíta v
+`summary.unknown`, nie v `summary.failure`; UI aj textový report zobrazujú túto
+kategóriu samostatne.
+FortiOS `recent_log_events` kontroluje obmedzenú vzorku event logu. Severity
+`warning`, `error`, `critical`, `alert` alebo `emergency` vytvorí `WARNING` na
+manuálne preverenie a report uvedie čas, `logdesc` a `msg`; samotná závažnosť
+udalosti sa bez samostatnej politiky nemení na automatický `FAIL`.
+FortiOS SSH `ha_status` normalizuje názov a režim klastra, členov a ich roly,
+stav konfigurácie a checksumov, per-member CPU/RAM/session údaje a heartbeat
+rozhrania. Členovia sú v JSON uložení ako samostatné `values.records`; textový
+report a UI ich zobrazia pod príslušným zariadením. Explicitné `out-of-sync`,
+checksum mismatch alebo HA health odlišné od `OK` je `FAIL`; neúplný výstup
+ostáva `UNKNOWN`.
+
 | Platform slug | Transport | `device_facts` implementácia |
 | --- | --- | --- |
 | `cisco-ios` | SSH `network_cli`, explicitný Telnet fallback | NTC `show version` + `show inventory` |
@@ -1927,7 +2001,7 @@ manuálna CPU kontrola zostáva dostupná cez API.
 | `cisco-nxos` | `network_cli` | `show version` + `show inventory`, NTC Templates `cisco_nxos` |
 | `cisco-asa` | `network_cli` | `show version` + `show inventory`, NTC Templates `cisco_asa` |
 | `aruba-aos-cx` | `network_cli` | `arubanetworks.aoscx.aoscx_command` + NTC `show system` |
-| `fortios` | `httpapi` cez HTTPS | `system_status` + `web-ui/state` monitor API |
+| `fortios` | `httpapi` cez HTTPS pri službe `fortios-api`; inak SSH | API `system_status` + `web-ui/state`, alebo allow-listed `get system status` + `get system performance status` |
 | `checkpoint-gaia` | SSH do Gaia Clish | `show hostname`, `show asset all`, `show version all`, `show uptime` |
 
 Check Point Gaia používa vlastný allow-list Ansible modul nad Paramiko, pretože
@@ -2012,9 +2086,12 @@ zariadenia z NetBoxu; zoznam načítaný na začiatku behu sa nepovažuje za
 aktuálny podklad pre zápis. Serial aj model sa z tohto detailu vyhodnotia
 spoločne, bez druhého NetBox GET requestu.
 
-FortiOS ostáva pripojený cez HTTPS API, ale beta deployment profil má
-`fortios_validate_certs: false`, aby self-signed certifikát neblokoval zber.
-Prenos je šifrovaný, identita HTTPS servera sa však neoveruje.
+FortiOS používa HTTPS API iba vtedy, keď má zariadenie v NetBoxe aplikačnú
+službu `fortios-api`; jej port určí API port. Bez tejto služby použije SSH/22
+a účelové `username`/`password` z rovnakého `/prophylaxis` secretu. Existujúce
+API spojenie pri chybe automaticky neprechádza na SSH. Beta deployment profil
+má `fortios_validate_certs: false`, takže pri API sa neoveruje identita HTTPS
+servera.
 
 Beta backend deployment nastavuje `ATLAS_SSH_STRICT_HOST_KEYS=false`, takže
 Ansible pri Cisco a Aruba kolektoroch nevyžaduje uložený SSH host key. Toto
@@ -2057,6 +2134,11 @@ dcim.device
 ```
 
 Baseline provisioner kontroluje aj configuration drift.
+
+Staršie pole `profylaxia_expectations` už nie je súčasťou kontraktu. Pri
+upgrade ho provisioner odstráni iba vtedy, keď sú jeho hodnoty na všetkých
+zariadeniach prázdne (`null` alebo `{}`). Ak nájde neprázdnu hodnotu, pole
+zachová, aby sa používateľské dáta nestratili.
 
 Pri upgrade provisioner najprv vytvorí `monitoring_enabled`, skopíruje hodnotu
 z historického `checkmk_enabled` na každom zariadení a až po úspešnom prenose
@@ -2913,7 +2995,7 @@ v0.1.0-beta
 Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.4.2
+v0.4.3
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -2946,8 +3028,8 @@ python3 -m unittest discover -s tests -v
 # Po merge PR a úspešnom CI na konkrétnom main commite:
 git switch main
 git pull --ff-only
-git tag -a v0.4.2 -m "Aricoma Atlas v0.4.2"
-git push origin v0.4.2
+git tag -a v0.4.3 -m "Aricoma Atlas v0.4.3"
+git push origin v0.4.3
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.

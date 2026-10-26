@@ -132,7 +132,7 @@
     }
   },
   "total": 865,
-  "platform_mapping_sha256": "f3085615afdbe12110747b7cd9494a83976e5deb2bac69815838ddc33da13bb1",
+  "platform_mapping_sha256": "f5d0dad3ab2f5813224ab979e7492aa25f9f8e848ef09a7611a64021aa119050",
   "platforms": {
     "mapped": 669,
     "unmapped": 196,

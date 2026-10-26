@@ -48,6 +48,7 @@ from atlas.prophylaxis.run_models import (
 from atlas.prophylaxis.run_store import RunStoreError
 from atlas.prophylaxis.service import (
     device_target,
+    resolve_execution_profile,
     resolve_service_port,
     selected_check_values,
 )
@@ -148,9 +149,19 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
-            if summary.failure and not summary.success and not summary.warning:
+            if (
+                summary.failure
+                and not summary.success
+                and not summary.warning
+                and not summary.unknown
+            ):
                 status = "FAILED"
-            elif summary.failure or summary.skipped or summary.warning:
+            elif (
+                summary.failure
+                or summary.skipped
+                or summary.warning
+                or summary.unknown
+            ):
                 status = "PARTIAL"
             else:
                 status = "COMPLETED"
@@ -330,7 +341,14 @@ class DeviceFactsRunService:
         fields = device.get("custom_fields")
         fields = fields if isinstance(fields, dict) else {}
         raw_values = selected_check_values(fields.get("profylaxia_checks"))
-        return expand_check_selection(raw_values)
+        platform_data = device.get("platform")
+        platform_value = (
+            platform_data.get("slug")
+            if isinstance(platform_data, dict)
+            else None
+        )
+        platform = platform_value if isinstance(platform_value, str) else None
+        return expand_check_selection(raw_values, platform=platform)
 
     def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
         self._oxidized_nodes = {}
@@ -505,12 +523,13 @@ class DeviceFactsRunService:
             check
             for check in selected_checks
             if check in EXTERNAL_LIFECYCLE_CHECKS
+            and platform in CISCO_LIFECYCLE_PLATFORMS
         )
         known_checks = tuple(
             check
             for check in selected_checks
             if check != CheckId.CONFIGURATION_BACKUP
-            and check not in EXTERNAL_LIFECYCLE_CHECKS
+            and check not in lifecycle_checks
         )
         results = [
             self._check_error(
@@ -536,7 +555,12 @@ class DeviceFactsRunService:
             device_id, name, management_ip, platform = (
                 target.id, target.name, target.host, target.platform,
             )
-            profile = self.registry.resolve(target.platform)
+            base_profile = self.registry.resolve(target.platform)
+            profile, resolved_port = resolve_execution_profile(
+                self.netbox,
+                target,
+                base_profile,
+            )
             plan = self.collector_registry.plan(known_checks, profile)
         except Exception as exc:
             status, code = self._classify_exception(exc)
@@ -639,6 +663,7 @@ class DeviceFactsRunService:
         for task in plan.tasks:
             try:
                 if task.collector.id == CollectorId.SNMP_SYSTEM:
+                    execution_profile = profile
                     port = 161
                     telnet_fallback_port = None
                     if snmp_credentials is None:
@@ -666,27 +691,19 @@ class DeviceFactsRunService:
                     credentials = snmp_credentials
                 else:
                     if prophylaxis_connection is None:
-                        services = (
-                            self.netbox.get_device_services(
-                                target.id,
-                                profile.netbox_service_name,
-                            )
-                            if profile.netbox_service_name
-                            else []
-                        )
-                        port = resolve_service_port(services, profile.default_port)
+                        execution_profile, port = profile, resolved_port
                         telnet_services = (
                             self.netbox.get_device_services(
                                 target.id,
-                                profile.telnet_fallback_service_name,
+                                execution_profile.telnet_fallback_service_name,
                             )
-                            if profile.telnet_fallback_service_name
+                            if execution_profile.telnet_fallback_service_name
                             else []
                         )
                         telnet_fallback_port = (
                             resolve_service_port(
                                 telnet_services,
-                                profile.telnet_fallback_default_port,
+                                execution_profile.telnet_fallback_default_port,
                             )
                             if telnet_services
                             else None
@@ -694,15 +711,17 @@ class DeviceFactsRunService:
                         credentials = self.openbao.get_device_credentials(
                             target.vendor,
                             target.credential_profile,
-                            authentication=profile.authentication,
+                            authentication=execution_profile.authentication,
                             purpose="prophylaxis",
                         )
                         prophylaxis_connection = (
+                            execution_profile,
                             port,
                             telnet_fallback_port,
                             credentials,
                         )
                     (
+                        execution_profile,
                         port,
                         telnet_fallback_port,
                         credentials,
@@ -710,7 +729,7 @@ class DeviceFactsRunService:
                 raw = self.backend.execute(
                     host=target.host,
                     port=port,
-                    profile=profile,
+                    profile=execution_profile,
                     collector_id=task.collector.id,
                     check_id=(
                         task.checks[0]
@@ -721,6 +740,14 @@ class DeviceFactsRunService:
                     telnet_fallback_port=telnet_fallback_port,
                     device_model=target.model,
                 )
+                if raw.status == "ok":
+                    raw = raw.model_copy(update={
+                        "context": {
+                            "transport": execution_profile.transport,
+                            "port": port,
+                            "vdom": "root",
+                        }
+                    })
             except Exception as exc:
                 status, code = self._classify_exception(exc)
                 results.extend(
@@ -807,6 +834,12 @@ class DeviceFactsRunService:
             for check in task.checks:
                 try:
                     values = task.collector.normalize(check, raw)
+                    values = self._annotate_fortios_result(
+                        target.platform,
+                        check,
+                        values,
+                        raw,
+                    )
                     result = self._success_result(
                         device_id, name, management_ip, platform, check, values,
                     )
@@ -828,6 +861,65 @@ class DeviceFactsRunService:
                 inventory_results=inventory_results,
             ))
         return tuple(results)
+
+    @staticmethod
+    def _annotate_fortios_result(
+        platform: str,
+        check: CheckId,
+        values,
+        raw,
+    ):
+        if platform != "fortios":
+            return values
+        if check in {
+            CheckId.ROUTING_PROTOCOL_NEIGHBORS,
+        } and isinstance(values, DiagnosticValues):
+            summaries = {
+                CheckId.ROUTING_PROTOCOL_NEIGHBORS: (
+                    "Routing-neighbor inventory collected; expected adjacencies "
+                    "are not configured"
+                ),
+            }
+            values = values.model_copy(update={
+                "outcome": EvaluationOutcome.UNKNOWN,
+                "reason_code": "automatic_evaluation_not_configured",
+                "summary": summaries[check],
+            })
+        if check == CheckId.CPU_UTILIZATION and isinstance(
+            values, CPUUtilizationValues
+        ):
+            values = DiagnosticValues(
+                outcome=EvaluationOutcome.UNKNOWN,
+                reason_code="automatic_evaluation_not_configured",
+                summary="CPU utilization collected for inventory and reporting",
+                metrics={
+                    "current_percent": values.current_percent,
+                    "one_minute_percent": values.one_minute_percent,
+                    "five_minute_percent": values.five_minute_percent,
+                },
+            )
+        if isinstance(values, DiagnosticValues):
+            context = {
+                "transport": raw.context.get("transport"),
+                "port": raw.context.get("port"),
+                "vdom": raw.context.get("vdom"),
+            }
+            evidence = tuple(values.affected_items[:10])
+            action = {
+                EvaluationOutcome.FAIL: "Investigate the reported evidence before remediation.",
+                EvaluationOutcome.WARNING: "Plan a review of the reported evidence.",
+                EvaluationOutcome.UNKNOWN: "Review the collected values; automatic policy evaluation is not configured.",
+                EvaluationOutcome.UNSUPPORTED: "Confirm model and FortiOS command or API support.",
+                EvaluationOutcome.NOT_APPLICABLE: "No action unless the declared design differs.",
+            }.get(values.outcome)
+            values = values.model_copy(update={
+                "collected_at": utc_now(),
+                "context": context,
+                "evidence": evidence,
+                "evaluation_rule": values.reason_code or "explicit healthy state",
+                "recommended_action": action,
+            })
+        return values
 
     @staticmethod
     def _cisco_error_code(exc: Exception) -> str:
@@ -1444,6 +1536,20 @@ class DeviceFactsRunService:
                 values=values,
             )
         if check == CheckId.UPTIME and isinstance(values, UptimeValues):
+            if platform == "fortios":
+                return ProphylaxisCheckResult(
+                    check=check.value,
+                    device_id=device_id,
+                    device_name=name,
+                    management_ip=management_ip,
+                    platform=platform,
+                    status="incomplete",
+                    collection_status=CollectionStatus.COLLECTED,
+                    evaluation=EvaluationOutcome.UNKNOWN,
+                    values=values.model_copy(update={
+                        "reason_code": "automatic_evaluation_not_configured"
+                    }),
+                )
             outcome, reason_code = evaluate_uptime(values)
             return ProphylaxisCheckResult(
                 check=check.value,
@@ -1552,21 +1658,29 @@ class DeviceFactsRunService:
     @staticmethod
     def _summary(results: tuple[ProphylaxisCheckResult, ...]) -> RunSummary:
         success = sum(
-            result.status == "success"
-            and result.evaluation != EvaluationOutcome.WARNING
+            result.evaluation == EvaluationOutcome.PASS
             for result in results
         )
         warning = sum(
             result.evaluation == EvaluationOutcome.WARNING for result in results
         )
+        unknown = sum(
+            result.evaluation == EvaluationOutcome.UNKNOWN
+            and result.values is not None
+            and result.error is None
+            for result in results
+        )
         skipped = sum(result.status == "skipped" for result in results)
         failure = sum(
-            result.status in {"failed", "incomplete"} for result in results
+            result.status == "failed"
+            or (result.status == "incomplete" and result.error is not None)
+            for result in results
         )
         return RunSummary(
             total=len(results),
             success=success,
             warning=warning,
+            unknown=unknown,
             failure=failure,
             skipped=skipped,
         )

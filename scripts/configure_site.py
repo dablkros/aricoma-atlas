@@ -21,6 +21,8 @@ if str(ROOT) not in sys.path:
 
 from atlas.deployment import write_private  # noqa: E402
 from atlas.components import load_components  # noqa: E402
+from atlas.inventory.config import normalize_inventory_config  # noqa: E402
+from atlas.inventory.importer import slugify  # noqa: E402
 from atlas.monitoring.models import load_config as load_monitoring_config  # noqa: E402
 from atlas.proxy import HOSTNAME, load_config as load_proxy_config  # noqa: E402
 from scripts.import_site_config import import_config as import_proxy_config  # noqa: E402
@@ -297,6 +299,7 @@ def normalize_site(raw, base, expected_services=SERVICES):
         "services": normalized_services,
         "monitoring": normalized_monitoring,
         "fortios": normalized_fortios,
+        "inventory": normalize_inventory_config(raw.get("inventory", {})),
     }
 
 
@@ -399,6 +402,7 @@ def _managed_paths(target_root, site):
     runtime = target_root / ".runtime"
     paths = [
         runtime / "proxy.yaml",
+        runtime / "inventory.yaml",
         runtime / "monitoring/config.yaml",
         runtime / "tls/ca.crt",
     ]
@@ -468,6 +472,15 @@ def install_site(site, target_root, owner, group, force=False):
         )
         os.chown(monitoring_target, uid, gid)
 
+        inventory_target = runtime / "inventory.yaml"
+        write_private(
+            inventory_target,
+            yaml.safe_dump(site["inventory"], sort_keys=False),
+            mode=0o600,
+            group_id=gid,
+        )
+        os.chown(inventory_target, uid, gid)
+
     return proxy_target, monitoring_target
 
 
@@ -483,6 +496,26 @@ def interactive_site(service_names=SERVICES):
     listen = _prompt("Atlas management/listen IP")
     domain = _prompt("DNS suffix, for example atlas.example.internal")
     tls_mode = _prompt("TLS mode (existing or lab_generated)", "existing")
+    tenant_name = _prompt("Customer / Tenant name (optional)", "")
+    inventory = {}
+    if tenant_name:
+        default_slug = slugify(tenant_name)
+        tenant_slug = _prompt("Tenant slug", default_slug)
+        create_tenant = _prompt("Create Tenant? (Y/n)", "Y")
+        if str(create_tenant).strip().casefold() not in {"y", "yes", "n", "no"}:
+            raise ValueError("Create Tenant must be answered with Y or n")
+        inventory["default_tenant"] = {
+            "name": tenant_name,
+            "slug": tenant_slug,
+            "provision": str(create_tenant).strip().casefold() in {"y", "yes"},
+        }
+        site_name = _prompt("Default inventory Site name (optional)", "")
+        if site_name:
+            inventory["default_site"] = {
+                "name": site_name,
+                "slug": slugify(site_name),
+                "provision": True,
+            }
     monitoring_source = (
         _prompt("Zabbix SNMP source IP", listen)
         if "zabbix" in service_names
@@ -495,7 +528,9 @@ def interactive_site(service_names=SERVICES):
             "https_port": int(_prompt("HTTPS port", "443")),
             "allowed_networks": [
                 value.strip()
-                for value in _prompt("Administrator CIDRs (comma separated)").split(",")
+                for value in _prompt(
+                    "Administrator CIDRs (comma separated)", f"{listen}/32"
+                ).split(",")
                 if value.strip()
             ],
         },
@@ -507,6 +542,7 @@ def interactive_site(service_names=SERVICES):
             "source_ip": monitoring_source,
             "allowed_device_networks": PRIVATE_NETWORKS,
         },
+        "inventory": inventory,
     }
     if tls_mode == "existing":
         site["tls"]["ca_certificate"] = _prompt("CA bundle path")

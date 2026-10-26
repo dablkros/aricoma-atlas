@@ -346,6 +346,12 @@ class BackendRuntimeTests(unittest.TestCase):
             "[]\n",
             encoding="utf-8",
         )
+        (self.root / "build/device-types").mkdir(parents=True)
+        (self.root / "build/catalog-report.json").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        (self.root / "devicetype-library/device-types").mkdir(parents=True)
         self.environment = patch.dict(
             os.environ,
             {"ATLAS_OXIDIZED_RUN_DIR": str(self.inventory_directory)},
@@ -411,6 +417,18 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/atlas/prophylaxis/results.sqlite3",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_CONFIG"],
+            "/run/atlas/inventory/config.yaml",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_DEVICE_TYPES"],
+            "/run/atlas/inventory/device-types",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG"],
+            "true",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
             "10000",
         )
@@ -461,6 +479,20 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertIn(
             f"{(self.root / '.runtime/prophylaxis').resolve()}:"
             "/run/atlas/prophylaxis:rw",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / '.runtime/inventory/device-types').resolve()}:"
+            "/run/atlas/inventory/device-types:rw",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / 'build').resolve()}:/app/build:ro",
+            service["volumes"],
+        )
+        self.assertIn(
+            f"{(self.root / 'devicetype-library/device-types').resolve()}:"
+            "/app/devicetype-library/device-types:ro",
             service["volumes"],
         )
         self.assertEqual(
@@ -725,6 +757,7 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("HEALTHCHECK", dockerfile)
         self.assertIn("ansible-galaxy collection install", dockerfile)
         self.assertIn("COPY --chown=atlas:atlas automation", dockerfile)
+        self.assertIn("COPY --chown=atlas:atlas scripts /app/scripts", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
 
 

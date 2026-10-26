@@ -2,6 +2,7 @@
 
 import argparse
 import os
+import re
 import sys
 from pathlib import Path
 from urllib.parse import urljoin
@@ -26,6 +27,11 @@ CHOICE_SETS_FILE = (
 CUSTOM_FIELDS_FILE = (
     BASELINE_DIR
     / "custom_fields.yaml"
+)
+
+DEVICE_ROLES_FILE = (
+    BASELINE_DIR
+    / "device_roles.yaml"
 )
 
 NETBOX_URL = os.getenv(
@@ -298,6 +304,14 @@ def load_baseline():
     )
 
 
+def load_device_roles():
+    data = load_yaml(DEVICE_ROLES_FILE)
+    roles = data.get("device_roles", [])
+    if not isinstance(roles, list):
+        raise RuntimeError("device_roles must be a list")
+    return roles
+
+
 # ---------------------------------------------------------------------------
 # Validation
 # ---------------------------------------------------------------------------
@@ -391,6 +405,24 @@ def validate_baseline(
                 f"has a Choice Set but type "
                 f"is '{field_type}'"
             )
+
+
+def validate_device_roles(device_roles):
+    validate_unique_names(device_roles, "Device Role")
+    slugs = []
+    for role in device_roles:
+        slug = role.get("slug")
+        color = role.get("color")
+        if not isinstance(slug, str) or not slug:
+            raise RuntimeError("Device Role without slug")
+        if not isinstance(color, str) or not re.fullmatch(r"[0-9a-fA-F]{6}", color):
+            raise RuntimeError(f"Device Role {slug} has invalid color")
+        if type(role.get("vm_role")) is not bool:
+            raise RuntimeError(f"Device Role {slug} has invalid vm_role")
+        slugs.append(slug)
+    duplicates = {slug for slug in slugs if slugs.count(slug) > 1}
+    if duplicates:
+        raise RuntimeError(f"Duplicate Device Role slug(s): {sorted(duplicates)}")
 
 
 # ---------------------------------------------------------------------------
@@ -487,6 +519,45 @@ def print_drift(
             f"          current: "
             f"{values['current']!r}"
         )
+
+
+# ---------------------------------------------------------------------------
+# Device Roles
+# ---------------------------------------------------------------------------
+
+def provision_device_roles(client, desired_roles, apply_changes):
+    endpoint = "/api/dcim/device-roles/"
+    existing_objects = client.get_all(endpoint)
+    existing_by_slug = {obj["slug"]: obj for obj in existing_objects}
+    existing_count = 0
+    missing_count = 0
+    created_count = 0
+
+    print()
+    print("Device Roles")
+    print("-" * 72)
+
+    for desired in desired_roles:
+        slug = desired["slug"]
+        existing = existing_by_slug.get(slug)
+        if existing is not None:
+            existing_count += 1
+            print(f"[OK] {desired['name']} ({slug})")
+            continue
+
+        missing_count += 1
+        print(f"[CREATE] {desired['name']} ({slug})")
+        if apply_changes:
+            created = client.post(endpoint, desired)
+            existing_by_slug[slug] = created
+            created_count += 1
+            print(f"[CREATED] {desired['name']} (id={created['id']})")
+
+    return {
+        "existing": existing_count,
+        "missing": missing_count,
+        "created": created_count,
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -993,6 +1064,12 @@ def provision_custom_fields(
         existing_by_name,
         apply_changes,
     )
+    retired_expectations = retire_empty_custom_field(
+        client,
+        existing_by_name,
+        "profylaxia_expectations",
+        apply_changes,
+    )
 
     return {
         "existing": existing_count,
@@ -1000,7 +1077,61 @@ def provision_custom_fields(
         "created": created_count,
         "drift": drift_count,
         "monitoring_migration": migration,
+        "retired_expectations": retired_expectations,
     }
+
+
+def retire_empty_custom_field(
+    client,
+    existing_by_name,
+    field_name,
+    apply_changes,
+):
+    """Remove one retired field only when every Device value is empty."""
+    existing = existing_by_name.get(field_name)
+    result = {
+        "found": existing is not None,
+        "devices_examined": 0,
+        "nonempty_devices": 0,
+        "removed": False,
+    }
+    if existing is None:
+        return result
+
+    devices = client.get_all("/api/dcim/devices/")
+    result["devices_examined"] = len(devices)
+    nonempty = []
+    for device in devices:
+        custom_fields = device.get("custom_fields")
+        if not isinstance(custom_fields, dict):
+            raise RuntimeError(
+                f"Device {device.get('id')} returned invalid custom_fields"
+            )
+        if custom_fields.get(field_name) not in (None, {}):
+            nonempty.append(device.get("id"))
+
+    result["nonempty_devices"] = len(nonempty)
+    print()
+    print("Retired custom field cleanup")
+    print("-" * 72)
+    if nonempty:
+        print(
+            f"[KEEP] {field_name}: {len(nonempty)} Device values are not empty"
+        )
+        return result
+
+    print(f"[REMOVE] {field_name}: all Device values are empty")
+    if not apply_changes:
+        return result
+
+    field_id = existing.get("id")
+    if isinstance(field_id, bool) or not isinstance(field_id, int):
+        raise RuntimeError(f"Retired {field_name} field has no valid id")
+    client.delete(f"/api/extras/custom-fields/{field_id}/")
+    existing_by_name.pop(field_name, None)
+    result["removed"] = True
+    print(f"[REMOVED] retired {field_name} field")
+    return result
 
 
 def migrate_monitoring_enabled(client, existing_by_name, apply_changes):
@@ -1098,11 +1229,13 @@ def main():
             choice_sets,
             custom_fields,
         ) = load_baseline()
+        device_roles = load_device_roles()
 
         validate_baseline(
             choice_sets,
             custom_fields,
         )
+        validate_device_roles(device_roles)
 
     except Exception as exc:
         sys.exit(
@@ -1140,6 +1273,11 @@ def main():
     print()
 
     print(
+        f"Declared Device Roles: "
+        f"{len(device_roles)}"
+    )
+
+    print(
         f"Declared Choice Sets: "
         f"{len(choice_sets)}"
     )
@@ -1150,6 +1288,14 @@ def main():
     )
 
     try:
+        device_role_summary = (
+            provision_device_roles(
+                client,
+                device_roles,
+                args.apply,
+            )
+        )
+
         choice_summary = (
             provision_choice_sets(
                 client,
@@ -1182,6 +1328,28 @@ def main():
         print("DRY-RUN SUMMARY")
 
     print("=" * 72)
+
+    print(
+        "Device Roles:"
+    )
+
+    print(
+        f"  existing: "
+        f"{device_role_summary['existing']}"
+    )
+
+    print(
+        f"  missing:  "
+        f"{device_role_summary['missing']}"
+    )
+
+    if args.apply:
+        print(
+            f"  created:  "
+            f"{device_role_summary['created']}"
+        )
+
+    print()
 
     print(
         "Choice Sets:"

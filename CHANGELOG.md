@@ -4,6 +4,54 @@ All notable changes to Aricoma Atlas are documented here. A release section is
 final only after its commit passes the complete release workflow and receives
 the corresponding Git tag.
 
+## [0.4.3] - 2026-10-26
+
+### Added
+
+- NetBox inventory import from CSV/XLSX and pasted spreadsheet data with a
+  shared dry-run plan, per-row results, explicit confirmation and guarded apply.
+- Operations UI import workflow with visible phase/elapsed-time feedback,
+  runtime Device Type YAML upload and automatic plan retry.
+- Device Type preflight across NetBox, the built Atlas catalog, the pinned
+  upstream Device Type Library and an operator-managed persistent runtime
+  catalog.
+- Standard NetBox Device Roles for network devices, switches, routers,
+  firewalls, load balancers and management appliances, including deterministic
+  model/platform mapping and a conservative `Network Device` fallback.
+- Tenant and default Site provisioning through first-boot configuration and
+  `atlasctl inventory` administration commands.
+- Cisco Software Suggestion API V2 and EoX integration backed by OpenBao for
+  normalized firmware recommendation and lifecycle results.
+- Extended FortiOS prophylaxis collection and evaluation through both REST API
+  and SSH, selected by the explicit NetBox `fortios-api` service.
+
+### Changed
+
+- Refreshed the Operations UI visual design and grouped inventory/prophylaxis
+  actions without exposing shell execution or the Docker socket.
+- Device Type matching accepts an exact manufacturer-and-model input while
+  continuing to reject ambiguous definitions.
+- Prophylaxis run artifacts provide compact per-device structured data alongside
+  the existing human-readable report.
+- Align package, deployment image, README and example environment versions to
+  0.4.3.
+
+### Security
+
+- Inventory apply is authorized with the operator token, bound to the reviewed
+  input by a SHA-256 plan fingerprint and revalidated immediately before writes.
+- Uploaded Device Type YAML is schema-validated and stored in the protected
+  runtime catalog; arbitrary URLs are not fetched by Atlas.
+
+### Known limitations
+
+- Inventory import does not create unknown customer-specific Sites, Platforms
+  or VRFs and does not repair conflicting existing Devices or IP addresses.
+- Role selection never infers device purpose from hostname; ambiguous models
+  require an explicit row or configured mapping.
+- Vendor API availability and entitlement can still produce explicit
+  `UNKNOWN` results rather than a firmware or lifecycle verdict.
+
 ## [0.4.2] - 2026-10-22
 
 ### Added

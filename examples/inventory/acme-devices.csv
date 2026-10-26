@@ -1,0 +1,4 @@
+Hostname,Hardware model,Management IP,Tenant,Site,Device Role,Platform,VRF
+BR-CORE-SW01,C9500-48Y4C,10.10.0.11/24,acme-slovakia,bratislava-dc,Network Device,cisco-ios,
+ZA-ACCESS-SW01,C9300L-24P-4G,10.20.0.11,acme-slovakia,zilina-office,Network Device,cisco-ios,
+KE-EDGE-SW01,C9200L-24T-4X,10.30.0.11,acme-slovakia,kosice-branch,Network Device,cisco-ios,

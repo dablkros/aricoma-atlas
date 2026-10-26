@@ -1134,6 +1134,15 @@ class FakeStatusService:
 
 
 class ZabbixApiTests(unittest.TestCase):
+    def setUp(self):
+        self.operator_directory = tempfile.TemporaryDirectory()
+        self.operator_token = "zabbix-operator-token-for-tests-12345"
+        self.operator_token_file = Path(self.operator_directory.name) / "operator-token"
+        self.operator_token_file.write_text(self.operator_token, encoding="utf-8")
+
+    def tearDown(self):
+        self.operator_directory.cleanup()
+
     def client(self):
         monitoring = FakeMonitoring()
         sync = Mock()
@@ -1154,6 +1163,7 @@ class ZabbixApiTests(unittest.TestCase):
         settings = Settings(
             environment="test",
             log_level="CRITICAL",
+            monitoring_operator_token_file=self.operator_token_file,
             _env_file=None,
         )
         return (
@@ -1168,7 +1178,10 @@ class ZabbixApiTests(unittest.TestCase):
         client, monitoring = self.client()
 
         status = client.get("/api/zabbix/status")
-        sync = client.post("/api/zabbix/sync")
+        sync = client.post(
+            "/api/zabbix/sync",
+            headers={"Authorization": f"Bearer {self.operator_token}"},
+        )
         device = client.get("/api/devices/123/monitoring")
         metric = client.get(
             "/api/devices/123/monitoring/metrics/cpu?window=30d"
@@ -1184,6 +1197,12 @@ class ZabbixApiTests(unittest.TestCase):
             response.text for response in (status, sync, device, metric)
         )
         self.assertNotIn(COMMUNITY, serialized)
+
+    def test_sync_requires_operator_token(self):
+        client, _monitoring = self.client()
+        response = client.post("/api/zabbix/sync")
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "zabbix_unauthorized")
 
     def test_unknown_host_and_metric_use_stable_errors(self):
         client, _monitoring = self.client()

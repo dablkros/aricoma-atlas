@@ -1,0 +1,72 @@
+---
+- name: Collect FortiOS resource usage through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_resource_usage
+    vdom: root
+    params:
+      resource: memory
+      scope: global
+      interval: 1-min
+  register: atlas_fortios_resource_usage
+  changed_when: false
+
+- name: Collect FortiOS performance status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_performance_status
+    vdom: root
+  register: atlas_fortios_performance
+  changed_when: false
+
+- name: Collect FortiOS system status for platform context
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_status
+    vdom: root
+  register: atlas_fortios_resource_system_status
+  changed_when: false
+
+- name: Collect FortiOS storage status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_storage
+    vdom: root
+  register: atlas_fortios_storage
+  changed_when: false
+
+- name: Collect FortiOS sensor status through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_sensor-info
+    vdom: root
+  register: atlas_fortios_sensors
+  changed_when: false
+
+- name: Collect FortiOS crash log through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_crash-log_download
+    vdom: root
+  register: atlas_fortios_crash_log
+  changed_when: false
+
+- name: Collect FortiOS configuration error log through the monitor API
+  fortinet.fortios.fortios_monitor_fact:
+    access_token: "{{ lookup('ansible.builtin.env', 'ATLAS_FORTIOS_API_TOKEN') }}"
+    selector: system_config-error-log_download
+    vdom: root
+  register: atlas_fortios_config_error_log
+  changed_when: false
+
+- name: Prepare FortiOS API resource evidence for Atlas normalization
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        system_resource_usage: "{{ atlas_fortios_resource_usage.meta.results | to_json }}"
+        system_performance_status: "{{ atlas_fortios_performance.meta.results | to_json }}"
+        get_system_status: "{{ atlas_fortios_resource_system_status.meta.results | to_json }}"
+        system_storage: "{{ atlas_fortios_storage.meta.results | to_json }}"
+        system_sensor_info: "{{ atlas_fortios_sensors.meta.results | to_json }}"
+        system_crash_log_download: "{{ atlas_fortios_crash_log.meta.results | to_json }}"
+        system_config_error_log_download: "{{ atlas_fortios_config_error_log.meta.results | to_json }}"

@@ -478,6 +478,26 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     prophylaxis_directory.mkdir(parents=True, exist_ok=True)
     os.chmod(prophylaxis_directory, 0o700)
 
+    inventory_config = root / ".runtime/inventory.yaml"
+    inventory_device_types = root / ".runtime/inventory/device-types"
+    inventory_device_types.mkdir(parents=True, exist_ok=True)
+    os.chmod(inventory_device_types, 0o750)
+
+    built_catalog = root / "build"
+    built_device_types = built_catalog / "device-types"
+    catalog_report = built_catalog / "catalog-report.json"
+    upstream_device_types = root / "devicetype-library/device-types"
+    if (
+        built_catalog.is_symlink()
+        or built_device_types.is_symlink()
+        or not built_device_types.is_dir()
+    ):
+        raise RuntimeError("Built Device Type catalog is missing or invalid")
+    if catalog_report.is_symlink() or not catalog_report.is_file():
+        raise RuntimeError("Device Type catalog report is missing")
+    if upstream_device_types.is_symlink() or not upstream_device_types.is_dir():
+        raise RuntimeError("Pinned upstream Device Type catalog is missing or invalid")
+
     runtime_user = os.geteuid()
     runtime_group = os.getegid()
     if runtime_user == 0:
@@ -500,7 +520,12 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
         f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
+        f"{inventory_device_types}:/run/atlas/inventory/device-types:rw",
+        f"{built_catalog}:/app/build:ro",
+        f"{upstream_device_types}:/app/devicetype-library/device-types:ro",
     ]
+    if inventory_config.is_file():
+        volumes.append(f"{inventory_config}:/run/atlas/inventory/config.yaml:ro")
     if selection.enabled("oxidized"):
         volumes.append(f"{inventory_directory}:/run/atlas/oxidized:rw")
     if backend["ssh_strict_host_keys"]:
@@ -520,6 +545,9 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",
         "ATLAS_NETBOX_URL": "http://atlas-netbox:8080",
         "ATLAS_NETBOX_UI_URL": ui_urls["netbox"],
+        "ATLAS_INVENTORY_CONFIG": "/run/atlas/inventory/config.yaml",
+        "ATLAS_INVENTORY_DEVICE_TYPES": "/run/atlas/inventory/device-types",
+        "ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG": "true",
         "ATLAS_OXIDIZED_ENABLED": str(selection.enabled("oxidized")).lower(),
         "ATLAS_ZABBIX_ENABLED": str(selection.enabled("zabbix")).lower(),
         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",

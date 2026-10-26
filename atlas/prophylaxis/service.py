@@ -29,6 +29,7 @@ from atlas.prophylaxis.models import (
     expand_check_selection,
 )
 from atlas.prophylaxis.platforms import (
+    FORTIOS_SSH_PROFILE,
     AnsiblePlatformProfile,
     AnsiblePlatformRegistry,
 )
@@ -159,6 +160,23 @@ def resolve_service_port(services: object, default_port: int) -> int:
         raise InvalidServicePortError() from None
 
 
+def resolve_execution_profile(
+    netbox,
+    target: DeviceTarget,
+    profile: AnsiblePlatformProfile,
+) -> tuple[AnsiblePlatformProfile, int]:
+    """Resolve the desired transport and port before reading credentials."""
+    if profile.slug == "fortios":
+        services = netbox.get_device_services(target.id, "fortios-api")
+        if not services:
+            return FORTIOS_SSH_PROFILE, FORTIOS_SSH_PROFILE.default_port
+        return profile, resolve_service_port(services, profile.default_port)
+    if profile.netbox_service_name is None:
+        return profile, profile.default_port
+    services = netbox.get_device_services(target.id, profile.netbox_service_name)
+    return profile, resolve_service_port(services, profile.default_port)
+
+
 class ProphylaxisService:
     def __init__(
         self,
@@ -194,19 +212,6 @@ class ProphylaxisService:
         if len(devices) != 1:
             raise DeviceAmbiguousError()
         return devices[0]
-
-    def _connection_port(
-        self,
-        target: DeviceTarget,
-        profile: AnsiblePlatformProfile,
-    ) -> int:
-        if profile.netbox_service_name is None:
-            return profile.default_port
-        services = self.netbox.get_device_services(
-            target.id,
-            profile.netbox_service_name,
-        )
-        return resolve_service_port(services, profile.default_port)
 
     def _telnet_fallback_port(
         self,
@@ -246,7 +251,12 @@ class ProphylaxisService:
             device_id = target.id
             device_name = target.name
             platform = target.platform
-            profile = self.registry.resolve(target.platform)
+            base_profile = self.registry.resolve(target.platform)
+            profile, connection_port = resolve_execution_profile(
+                self.netbox,
+                target,
+                base_profile,
+            )
             try:
                 collector = self.collector_registry.resolve_check(
                     check_id,
@@ -270,18 +280,21 @@ class ProphylaxisService:
                     check_id=check_id,
                     status="unsupported",
                 )
-            connection_port = self._connection_port(target, profile)
-            telnet_fallback_port = self._telnet_fallback_port(target, profile)
+            execution_profile = profile
+            telnet_fallback_port = self._telnet_fallback_port(
+                target,
+                execution_profile,
+            )
             credentials = self.openbao.get_device_credentials(
                 target.vendor,
                 target.credential_profile,
-                authentication=profile.authentication,
+                authentication=execution_profile.authentication,
                 purpose="prophylaxis",
             )
             raw_result = self.backend.execute(
                 host=target.host,
                 port=connection_port,
-                profile=profile,
+                profile=execution_profile,
                 collector_id=collector.id,
                 check_id=check_id,
                 credentials=credentials,
@@ -421,6 +434,7 @@ __all__ = [
     "ProphylaxisService",
     "PublicProphylaxisDevice",
     "device_target",
+    "resolve_execution_profile",
     "resolve_service_port",
     "selected_check_values",
     "validate_check_selection",

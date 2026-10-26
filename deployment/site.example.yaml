@@ -1,5 +1,19 @@
 version: 1
 
+# Optional customer identity. Omit this section to preserve the legacy flow.
+inventory:
+  default_tenant:
+    name: ACME Slovakia
+    slug: acme-slovakia
+    provision: true
+  management_interface: mgmt0
+  default_ipv4_prefix_length: 32
+  default_device_role: network-device
+  device_type_aliases: {}
+  role_mappings:
+    models: {}
+    platforms: {}
+
 proxy:
   listen_address: 10.20.30.40
   https_port: 443

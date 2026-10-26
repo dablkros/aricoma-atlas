@@ -1,4 +1,5 @@
 import unittest
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from atlas.prophylaxis.models import (
@@ -6,6 +7,7 @@ from atlas.prophylaxis.models import (
     CollectionStatus,
     CPUUtilizationValues,
     DeviceFactsValues,
+    DiagnosticValues,
     EvaluationOutcome,
     SystemMetricValues,
 )
@@ -34,15 +36,60 @@ def result(**overrides):
 
 
 class ProphylaxisReportTests(unittest.TestCase):
+    def test_report_data_is_compact_and_grouped_per_device(self):
+        run = ProphylaxisRun(
+            run_id=uuid4(),
+            status="PARTIAL",
+            report_path="/run/report.txt",
+            summary=RunSummary(total=1, warning=1),
+            results=(
+                result(
+                    check=CheckId.HA_STATUS.value,
+                    platform="fortios",
+                    evaluation=EvaluationOutcome.WARNING,
+                    values=DiagnosticValues(
+                        outcome=EvaluationOutcome.WARNING,
+                        reason_code="ha_heartbeat_interface_down",
+                        summary="One heartbeat interface is down",
+                        metrics={"declared_member_count": 2},
+                        records=({
+                            "record_type": "ha_member",
+                            "hostname": "FGT-01",
+                            "role": "primary",
+                        },),
+                        affected_items=("FGT-01 heartbeat=down",),
+                        collected_at=datetime.now(timezone.utc),
+                        context={"transport": "ssh", "port": 22},
+                        source_commands=("get system ha status",),
+                        evaluation_rule="ha_heartbeat_interface_down",
+                        recommended_action="Review HA heartbeat",
+                    ),
+                ),
+            ),
+        )
+
+        payload = FileRunStore._report_data(run)
+        check = payload["devices"][0]["checks"][0]
+
+        self.assertEqual(len(payload["devices"]), 1)
+        self.assertEqual(payload["devices"][0]["device"]["name"], "R1")
+        self.assertEqual(check["evaluation"], "WARNING")
+        self.assertEqual(check["records"][0]["hostname"], "FGT-01")
+        self.assertEqual(check["findings"], ["FGT-01 heartbeat=down"])
+        self.assertNotIn("collected_at", check)
+        self.assertNotIn("context", check)
+        self.assertNotIn("source_commands", check)
+
     def test_report_groups_device_and_separates_collection_from_evaluation(self):
         run = ProphylaxisRun(
             run_id=uuid4(),
             status="PARTIAL",
             report_path="/run/report.txt",
             summary=RunSummary(
-                total=5,
+                total=6,
                 success=2,
                 warning=1,
+                unknown=1,
                 failure=1,
                 skipped=1,
             ),
@@ -74,6 +121,15 @@ class ProphylaxisReportTests(unittest.TestCase):
                     error="unsupported_check",
                 ),
                 result(
+                    check=CheckId.ROUTING_TABLE.value,
+                    status="incomplete",
+                    evaluation=EvaluationOutcome.UNKNOWN,
+                    values=SystemMetricValues(
+                        outcome=EvaluationOutcome.UNKNOWN,
+                        reason_code="automatic_evaluation_not_configured",
+                    ),
+                ),
+                result(
                     check=CheckId.INTERFACE_ERROR_COUNTERS.value,
                     status="failed",
                     collection_status=CollectionStatus.FAILED,
@@ -96,6 +152,8 @@ class ProphylaxisReportTests(unittest.TestCase):
         ):
             self.assertIn(section, report)
         self.assertIn("collection=COLLECTED, evaluation=WARNING", report)
+        self.assertIn("Unknown: 1", report)
+        self.assertIn("collection=COLLECTED, evaluation=UNKNOWN", report)
         self.assertIn("collection=UNSUPPORTED, evaluation=UNSUPPORTED", report)
 
 

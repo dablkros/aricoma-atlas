@@ -13,12 +13,16 @@ from atlas.prophylaxis.parsers import (
     normalize_cpu,
     normalize_device_facts,
     normalize_environment_health,
+    normalize_firmware_recommendation,
+    normalize_ha_status,
     normalize_interface_errors,
+    normalize_interface_state,
     normalize_license_state,
     normalize_memory,
     normalize_ntp_status,
     normalize_pki_certificates,
     normalize_recent_logs,
+    normalize_storage_health,
     normalize_uptime,
 )
 
@@ -84,6 +88,101 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.current_percent, 9.0)
         self.assertEqual(values.one_minute_percent, 7.0)
         self.assertIsNone(values.five_minute_percent)
+
+    def test_fortios_complete_catalog_without_upgrade_is_not_a_recommendation(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status=(
+                "Version: FortiGate-VM64-KVM v8.0.2,build0251,260928 (GA.F)"
+            ),
+            diagnose_fdsm_image_list=(
+                "Last update: 895 secs ago. Total: 3\n"
+                "FGT_VM64_KVM-v8.0.1-FORTINET.out v8.0 P1 b0245 (downgrade)\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)\n"
+                "FGT_VM64_KVM-v7.6.8-FORTINET.out v7.6 P8 b3744 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertFalse(values.metrics["firmware_update_available"])
+        self.assertIsNone(values.metrics["firmware_recommended_version"])
+        self.assertTrue(values.metrics["catalog_complete"])
+        self.assertEqual(values.metrics["downgrade_image_count"], 3)
+
+    def test_fortios_catalog_with_upgrade_reports_available_image(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status="Version: FortiGate-VM64-KVM v8.0.1,build0245",
+            diagnose_fdsm_image_list=(
+                "Last update: 10 secs ago. Total: 2\n"
+                "FGT_VM64_KVM-v8.0.2-FORTINET.out v8.0 P2 b0251 (upgrade)\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertTrue(values.metrics["firmware_update_available"])
+        self.assertEqual(values.metrics["upgrade_image_count"], 1)
+        self.assertEqual(values.records[0]["direction"], "upgrade")
+
+    def test_fortios_incomplete_catalog_does_not_claim_no_upgrade(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            diagnose_fdsm_image_list=(
+                "Last update: 10 secs ago. Total: 104\n"
+                "FGT_VM64_KVM-v8.0-FORTINET.out v8.0 b0167 (downgrade)"
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertIsNone(values.metrics["firmware_update_available"])
+        self.assertFalse(values.metrics["catalog_complete"])
+
+    def test_fortios_api_requires_an_explicit_upgrade_marker(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status='{"version":"v8.0.1","build":245}',
+            system_firmware=(
+                '{"available":[{"id":"08000000FIMG0001",'
+                '"version":"v8.0.2","build":251,"direction":"upgrade"}]}'
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertTrue(values.metrics["firmware_update_available"])
+        self.assertEqual(values.records[0]["image_id"], "08000000FIMG0001")
+
+    def test_fortios_api_does_not_infer_upgrade_from_an_available_list(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_COMPLIANCE,
+            get_system_status='{"version":"v8.0.2","build":251}',
+            system_firmware=(
+                '{"available":[{"id":"08000000FIMG0001",'
+                '"version":"v8.0.3","build":300}]}'
+            ),
+        )
+
+        values = normalize_firmware_recommendation(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertIsNone(values.metrics["firmware_update_available"])
+        self.assertEqual(
+            values.reason_code,
+            "firmware_catalog_semantics_unverified",
+        )
 
     def test_missing_data_is_parse_failed_not_zero(self):
         raw = RawCheckResult(
@@ -264,6 +363,143 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
         self.assertEqual(values.reason_code, "counter_delta_unavailable")
         self.assertEqual(values.metrics["absolute_error_total"], 15)
+
+    def test_fortios_physical_interfaces_and_spaced_error_counters(self):
+        raw = RawCollectorResult(
+            collector=CollectorId.FORTIOS_INTERFACES,
+            platform="fortios",
+            status="ok",
+            data={
+                "get_system_interface_physical": (
+                    "== [onboard]\n"
+                    "        ==[port1]\n"
+                    "                status: up\n"
+                    "        ==[port2]\n"
+                    "                status: down\n"
+                    "        ==[port3]\n"
+                    "                status: up\n"
+                ),
+                "diagnose_hardware_deviceinfo_nic": (
+                    "===== diagnose hardware deviceinfo nic port1 =====\n"
+                    "Link: up\nRx errors: 0\nTx errors: 0\n"
+                    "===== diagnose hardware deviceinfo nic port2 =====\n"
+                    "Link: down\nRx errors: 0\nTx errors: 0\n"
+                    "===== diagnose hardware deviceinfo nic port3 =====\n"
+                    "Link: up\nRx errors: 0\nTx errors: 0\n"
+                ),
+                "discovered_interface_count": 3,
+                "interface_diagnostics_truncated": False,
+            },
+        )
+
+        state = normalize_interface_state(raw)
+        errors = normalize_interface_errors(raw)
+
+        self.assertEqual(state.metrics["discovered_physical_interfaces"], 3)
+        self.assertEqual(state.metrics["up"], 2)
+        self.assertEqual(state.metrics["down_or_unused"], 1)
+        self.assertEqual(errors.reason_code, "counter_delta_unavailable")
+        self.assertEqual(errors.metrics["absolute_error_total"], 0)
+
+    def test_fortios_storage_inventory_is_normalized_without_threshold(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_RESOURCES,
+            diagnose_hardware_deviceinfo_disk=(
+                "Disk SYSTEM(boot) 2.0GiB type: IDE [Virtio Disk]\n"
+                "  partition 479.0MiB, 289.0MiB free mounted: Y\n"
+                "  partition 1.4GiB, 1.3GiB free mounted: Y\n"
+                "Disk Virtual-Disk ref: 16 30.0GiB type: IDE [Virtio Disk]\n"
+                "  partition ref: 17 29.4GiB, 29.4GiB free mounted: Y\n"
+                "Total available disks: 2\n"
+                "Max SSD disks: 8 Available storage disks: 1\n"
+            ),
+        )
+
+        values = normalize_storage_health(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
+        self.assertEqual(values.reason_code, "storage_threshold_unconfigured")
+        self.assertEqual(values.metrics["disk_count"], 2)
+        self.assertEqual(values.metrics["available_storage_disk_count"], 1)
+
+    def test_fortios_important_log_severities_include_event_reason(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_OPERATIONS,
+            execute_log_display=(
+                'date=2026-10-24 time=20:00:01 level="alert" '
+                'logdesc="Configuration changed" '
+                'msg="Administrator changed system settings"\n'
+                'date=2026-10-24 time=20:01:02 level="warning" '
+                'logdesc="Update failed" msg="FortiGuard timeout"\n'
+                'date=2026-10-24 time=20:02:03 level="information" '
+                'logdesc="Admin login successful"\n'
+            ),
+        )
+
+        values = normalize_recent_logs(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.WARNING)
+        self.assertEqual(values.reason_code, "important_log_events_detected")
+        self.assertEqual(values.metrics["important_event_count"], 2)
+        self.assertIn("Configuration changed", values.affected_items[0])
+        self.assertIn("Administrator changed", values.affected_items[0])
+
+    def test_fortios_ha_members_sync_roles_and_heartbeat_are_structured(self):
+        raw = self.command_result(
+            "fortios",
+            CollectorId.FORTIOS_OPERATIONS,
+            get_system_ha_status=(
+                "HA Health Status: OK\n"
+                "Model: FortiGate-VM64-KVM\n"
+                "Mode: HA A-P\n"
+                "Group Name: GNS3-HA\n"
+                "Group ID: 10\n"
+                "Cluster Uptime: 0 days 3h:41m:18s\n"
+                "Configuration Status:\n"
+                "  SERIAL-A(updated 3 seconds ago): in-sync\n"
+                "  SERIAL-A chksum dump: 18 ba 83 0d\n"
+                "  SERIAL-B(updated 1 seconds ago): in-sync\n"
+                "  SERIAL-B chksum dump: 18 ba 83 0d\n"
+                "System Usage stats:\n"
+                "  SERIAL-A(updated 3 seconds ago):\n"
+                "    sessions=6, average-cpu-user/nice/system/idle="
+                "0%/0%/0%/92%, memory=53%\n"
+                "  SERIAL-B(updated 1 seconds ago):\n"
+                "    sessions=0, average-cpu-user/nice/system/idle="
+                "0%/0%/0%/91%, memory=50%\n"
+                "HBDEV stats:\n"
+                "  SERIAL-A(updated 3 seconds ago):\n"
+                "    port3: physical/1000auto, up, "
+                "rx-bytes/packets/dropped/errors=100/10/0/0, "
+                "tx=200/20/0/0\n"
+                "  SERIAL-B(updated 1 seconds ago):\n"
+                "    port3: physical/1000auto, up, "
+                "rx-bytes/packets/dropped/errors=200/20/0/0, "
+                "tx=100/10/0/0\n"
+                "number of member: 2\n"
+                "FGT-01, SERIAL-A, HA cluster index = 0\n"
+                "FGT-02, SERIAL-B, HA cluster index = 1\n"
+                "number of vcluster: 1\n"
+                "Primary: SERIAL-A, HA operating index = 0\n"
+                "Secondary: SERIAL-B, HA operating index = 1\n"
+            ),
+        )
+
+        values = normalize_ha_status(raw)
+
+        self.assertEqual(values.outcome, EvaluationOutcome.PASS)
+        self.assertEqual(values.metrics["mode"], "HA A-P")
+        self.assertEqual(values.metrics["group_name"], "GNS3-HA")
+        self.assertEqual(values.metrics["declared_member_count"], 2)
+        self.assertEqual(values.metrics["in_sync_member_count"], 2)
+        self.assertTrue(values.metrics["checksum_match"])
+        self.assertEqual(len(values.records), 2)
+        self.assertEqual(values.records[0]["hostname"], "FGT-01")
+        self.assertEqual(values.records[0]["role"], "primary")
+        self.assertEqual(values.records[1]["role"], "secondary")
+        self.assertTrue(values.records[0]["heartbeat_all_up"])
 
     def test_license_certificate_ntp_and_logs_have_actionable_outcomes(self):
         compliance = self.command_result(

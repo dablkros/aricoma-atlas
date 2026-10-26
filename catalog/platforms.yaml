@@ -146,6 +146,7 @@ platform_mappings:
         - 'check-point-sg9300'
         - 'check-point-sg9400'
         - 'check-point-sg9700'
+        - 'check-point-sg9700-plus'
         - 'check-point-sg9800'
         - 'check-point-sg16000'
         - 'check-point-sg16200'
@@ -153,6 +154,7 @@ platform_mappings:
         - 'check-point-sg19200'
         - 'check-point-sg29100'
         - 'check-point-sg29200'
+        - 'check-point-smart-1-600-m'
         - 'check-point-smart-1-6000-xl'
       platform: checkpoint-gaia
     - slugs:

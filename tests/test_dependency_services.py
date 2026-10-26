@@ -427,6 +427,27 @@ class NetBoxServiceTests(unittest.TestCase):
 
         self.assertEqual(raised.exception.reason, "invalid_response")
 
+    def test_bulk_post_uses_bounded_batches_and_validates_results(self):
+        requester = Mock()
+        requester.post.side_effect = [
+            FakeResponse(data=[{"id": 1}, {"id": 2}]),
+            FakeResponse(data=[{"id": 3}]),
+        ]
+        service, _openbao = self.service(requester)
+
+        created = service.bulk_post(
+            "/api/dcim/interface-templates/",
+            [{"name": "1"}, {"name": "2"}, {"name": "3"}],
+            2,
+        )
+
+        self.assertEqual(created, [{"id": 1}, {"id": 2}, {"id": 3}])
+        self.assertEqual(requester.post.call_count, 2)
+        first = requester.post.call_args_list[0]
+        self.assertEqual(first.args[0], "https://netbox.example.test/api/dcim/interface-templates/")
+        self.assertEqual(first.kwargs["json"], [{"name": "1"}, {"name": "2"}])
+        self.assertEqual(first.kwargs["timeout"], (2.0, 8.0))
+
     def test_oxidized_selection_uses_active_enabled_filter_and_pagination(self):
         requester = QueueRequester(
             FakeResponse(
