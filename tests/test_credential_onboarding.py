@@ -42,51 +42,55 @@ class FakeNetBox:
             "platform": None,
             "custom_fields": {"site_note": "preserve"},
         }
+        self.devices = {7: self.device}
         self.platforms = [{"id": 12, "slug": "fortios", "name": "FortiOS"}]
         self.services = []
         self.posts = []
         self.patches = []
 
     def get(self, endpoint):
-        self.assert_endpoint(endpoint)
-        return self.device
+        device_id = self.device_id_from_endpoint(endpoint)
+        return self.devices[device_id]
 
     @staticmethod
-    def assert_endpoint(endpoint):
-        if endpoint != "/api/dcim/devices/7/":
+    def device_id_from_endpoint(endpoint):
+        prefix = "/api/dcim/devices/"
+        if not endpoint.startswith(prefix) or not endpoint.endswith("/"):
             raise AssertionError(endpoint)
+        return int(endpoint[len(prefix):-1])
 
     def get_all(self, endpoint, params=None):
         if endpoint == "/api/dcim/platforms/":
             return [item for item in self.platforms if item["slug"] == params["slug"]]
         if endpoint == "/api/dcim/devices/":
-            return [self.device]
+            return list(self.devices.values())
         raise AssertionError((endpoint, params))
 
     def get_device_services(self, device_id, name):
-        if device_id != 7 or name != "fortios-api":
+        if device_id not in self.devices or name != "fortios-api":
             raise AssertionError((device_id, name))
-        return list(self.services)
+        return list(self.services if device_id == 7 else [])
 
     def post(self, endpoint, payload):
         if endpoint != "/api/ipam/services/":
             raise AssertionError(endpoint)
         service = {"id": 50, **payload}
-        self.services.append(service)
+        if payload["device"] == 7:
+            self.services.append(service)
         self.posts.append((endpoint, payload))
         return service
 
     def patch(self, endpoint, payload):
-        self.assert_endpoint(endpoint)
-        self.device["platform"] = {"id": payload["platform"], "slug": "fortios"}
-        self.device["custom_fields"] = dict(payload["custom_fields"])
+        device = self.devices[self.device_id_from_endpoint(endpoint)]
+        device["platform"] = {"id": payload["platform"], "slug": "fortios"}
+        device["custom_fields"] = dict(payload["custom_fields"])
         self.patches.append((endpoint, payload))
         return self.device
 
 
 def api_request(**overrides):
     values = {
-        "device_id": 7,
+        "device_ids": [7],
         "platform": "fortios",
         "credential_profile": "forti-mt",
         "prophylaxis_enabled": True,
@@ -188,6 +192,30 @@ class CredentialOnboardingTests(unittest.TestCase):
             CredentialOnboardingInvalid, "does not belong"
         ):
             self.service.plan(api_request())
+
+    def test_batch_requires_one_manufacturer_and_plans_each_device(self):
+        second = {
+            **self.netbox.device,
+            "id": 8,
+            "name": "forti-mt-3",
+            "custom_fields": {},
+        }
+        self.netbox.devices[8] = second
+
+        result = self.service.plan(api_request(device_ids=[7, 8]))
+
+        self.assertTrue(result["apply_allowed"])
+        self.assertEqual([7, 8], [item["id"] for item in result["devices"]])
+        device_operations = [
+            item for item in result["operations"] if item.get("object") == "device"
+        ]
+        self.assertEqual([7, 8], [item["device"]["id"] for item in device_operations])
+
+        second["device_type"] = {
+            "manufacturer": {"name": "Cisco", "slug": "cisco"},
+        }
+        with self.assertRaisesRegex(CredentialOnboardingInvalid, "same manufacturer"):
+            self.service.plan(api_request(device_ids=[7, 8]))
 
 
 if __name__ == "__main__":

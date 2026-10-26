@@ -78,19 +78,35 @@ class CredentialOnboardingService:
             })
         return {"devices": result_devices, "platforms": platforms, "profiles": profiles}
 
-    def _device(self, body: CredentialOnboardingRequest) -> tuple[dict, str]:
-        device = self.netbox.get(f"/api/dcim/devices/{body.device_id}/")
-        if self._nested_value(device.get("status")) != "active":
+    def _devices(self, body: CredentialOnboardingRequest) -> tuple[list[dict], str]:
+        devices = [
+            self.netbox.get(f"/api/dcim/devices/{device_id}/")
+            for device_id in body.device_ids
+        ]
+        if any(
+            self._nested_value(device.get("status")) != "active"
+            for device in devices
+        ):
             raise CredentialOnboardingInvalid("Only active devices can be onboarded")
-        manufacturer = ((device.get("device_type") or {}).get("manufacturer") or {})
-        vendor = manufacturer.get("slug")
-        vendor_name = manufacturer.get("name")
+        manufacturers = [
+            ((device.get("device_type") or {}).get("manufacturer") or {})
+            for device in devices
+        ]
+        vendor_pairs = {
+            (manufacturer.get("slug"), manufacturer.get("name"))
+            for manufacturer in manufacturers
+        }
+        if len(vendor_pairs) != 1:
+            raise CredentialOnboardingInvalid(
+                "All selected devices must have the same manufacturer"
+            )
+        vendor, vendor_name = vendor_pairs.pop()
         definition = self.platform_config["platforms"].get(body.platform)
         if not vendor or not definition:
             raise CredentialOnboardingInvalid("Device manufacturer or platform is missing")
         if str(vendor_name).casefold() != str(definition["manufacturer"]).casefold():
             raise CredentialOnboardingInvalid("Platform does not belong to the device manufacturer")
-        return device, vendor
+        return devices, vendor
 
     def _requested_secrets(self, body: CredentialOnboardingRequest) -> list[tuple[str, dict]]:
         try:
@@ -151,7 +167,7 @@ class CredentialOnboardingService:
                 "action": "UPDATE", "version": version, "blocked": False}
 
     def plan(self, body: CredentialOnboardingRequest) -> dict:
-        device, vendor = self._device(body)
+        devices, vendor = self._devices(body)
         secrets = self._requested_secrets(body)
         operations = [
             self._secret_operation(
@@ -159,48 +175,65 @@ class CredentialOnboardingService:
             )
             for purpose, value in secrets
         ]
-        services = self.netbox.get_device_services(body.device_id, "fortios-api")
-        if body.platform == "fortios" and body.prophylaxis_enabled:
-            if body.prophylaxis_auth == "api_token":
-                port = body.fortios_api_port or 443
-                matching = [service for service in services if (
-                    self._nested_value(service.get("protocol")) == "tcp"
-                    and service.get("ports") == [port]
-                )]
-                if not services:
-                    operations.append({"target": "netbox", "object": "fortios-api",
-                                       "action": "CREATE", "port": port, "blocked": False})
-                elif len(services) == 1 and len(matching) == 1:
-                    operations.append({"target": "netbox", "object": "fortios-api",
-                                       "action": "UNCHANGED", "port": port, "blocked": False})
-                else:
-                    operations.append({"target": "netbox", "object": "fortios-api",
-                                       "action": "CONFLICT", "blocked": True,
-                                       "reason": "fortios_api_service_conflict"})
-            elif services:
-                operations.append({"target": "netbox", "object": "fortios-api",
-                                   "action": "CONFLICT", "blocked": True,
-                                   "reason": "fortios_api_service_selects_api_transport"})
         platforms = self.netbox.get_all(
             "/api/dcim/platforms/", params={"slug": body.platform}
         )
         if len(platforms) != 1:
             raise CredentialOnboardingInvalid("Selected platform is not provisioned uniquely in NetBox")
-        fields = deepcopy(device.get("custom_fields") or {})
-        desired_fields = {
-            **fields,
-            "credential_profile": body.credential_profile,
-            "profylaxia_enabled": body.prophylaxis_enabled,
-            "oxidized_enabled": body.oxidized_enabled,
-            "monitoring_enabled": body.monitoring_enabled,
-        }
-        current_platform = (device.get("platform") or {}).get("id")
-        changed = current_platform != platforms[0]["id"] or fields != desired_fields
-        operations.append({"target": "netbox", "object": "device",
-                           "action": "UPDATE" if changed else "UNCHANGED", "blocked": False})
+        for device in devices:
+            device_ref = {"id": device.get("id"), "name": device.get("name")}
+            services = self.netbox.get_device_services(device["id"], "fortios-api")
+            if body.platform == "fortios" and body.prophylaxis_enabled:
+                if body.prophylaxis_auth == "api_token":
+                    port = body.fortios_api_port or 443
+                    matching = [service for service in services if (
+                        self._nested_value(service.get("protocol")) == "tcp"
+                        and service.get("ports") == [port]
+                    )]
+                    if not services:
+                        operations.append({"target": "netbox", "object": "fortios-api",
+                                           "device": device_ref, "action": "CREATE",
+                                           "port": port, "blocked": False})
+                    elif len(services) == 1 and len(matching) == 1:
+                        operations.append({"target": "netbox", "object": "fortios-api",
+                                           "device": device_ref, "action": "UNCHANGED",
+                                           "port": port, "blocked": False})
+                    else:
+                        operations.append({"target": "netbox", "object": "fortios-api",
+                                           "device": device_ref, "action": "CONFLICT",
+                                           "blocked": True,
+                                           "reason": "fortios_api_service_conflict"})
+                elif services:
+                    operations.append({"target": "netbox", "object": "fortios-api",
+                                       "device": device_ref, "action": "CONFLICT",
+                                       "blocked": True,
+                                       "reason": "fortios_api_service_selects_api_transport"})
+            current_platform = device.get("platform") or {}
+            current_slug = current_platform.get("slug")
+            if current_slug and current_slug != body.platform:
+                operations.append({"target": "netbox", "object": "device",
+                                   "device": device_ref, "action": "CONFLICT",
+                                   "blocked": True, "reason": "platform_mismatch"})
+                continue
+            fields = deepcopy(device.get("custom_fields") or {})
+            desired_fields = {
+                **fields,
+                "credential_profile": body.credential_profile,
+                "profylaxia_enabled": body.prophylaxis_enabled,
+                "oxidized_enabled": body.oxidized_enabled,
+                "monitoring_enabled": body.monitoring_enabled,
+            }
+            changed = current_platform.get("id") != platforms[0]["id"] or fields != desired_fields
+            operations.append({"target": "netbox", "object": "device",
+                               "device": device_ref,
+                               "action": "UPDATE" if changed else "UNCHANGED",
+                               "blocked": False})
         return {
-            "device": {"id": device.get("id"), "name": device.get("name"),
-                       "manufacturer": vendor},
+            "devices": [
+                {"id": device.get("id"), "name": device.get("name")}
+                for device in devices
+            ],
+            "manufacturer": vendor,
             "platform": body.platform,
             "credential_profile": body.credential_profile,
             "apply_allowed": not any(item.get("blocked") for item in operations),
@@ -211,7 +244,7 @@ class CredentialOnboardingService:
         preview = expected_plan
         if not preview["apply_allowed"]:
             raise CredentialOnboardingInvalid("Resolve credential conflicts before apply")
-        device, vendor = self._device(body)
+        devices, vendor = self._devices(body)
         secret_values = dict(self._requested_secrets(body))
         secret_operations = {
             operation.get("purpose"): operation
@@ -237,57 +270,58 @@ class CredentialOnboardingService:
                 self.secret_writer.write_secret(
                     operation["path"], value, cas=operation["version"]
                 )
-        if (body.platform == "fortios" and body.prophylaxis_enabled
-                and body.prophylaxis_auth == "api_token"):
-            services = self.netbox.get_device_services(body.device_id, "fortios-api")
-            service_operation = next(
-                (
-                    operation
-                    for operation in preview["operations"]
-                    if operation.get("object") == "fortios-api"
-                ),
-                None,
-            )
-            if service_operation is None:
-                raise CredentialOnboardingInvalid("Confirmed service plan is incomplete")
-            if service_operation["action"] == "CREATE" and services:
-                raise CredentialOnboardingInvalid(
-                    "FortiOS API service state changed; create a new plan"
-                )
-            if service_operation["action"] == "CREATE":
-                self.netbox.post("/api/ipam/services/", {
-                    "name": "fortios-api",
-                    "device": body.device_id,
-                    "protocol": "tcp",
-                    "ports": [body.fortios_api_port or 443],
-                    "description": "Aricoma Atlas FortiOS REST API",
-                })
-            elif not (
-                len(services) == 1
-                and self._nested_value(services[0].get("protocol")) == "tcp"
-                and services[0].get("ports") == [body.fortios_api_port or 443]
-            ):
-                raise CredentialOnboardingInvalid(
-                    "FortiOS API service state changed; create a new plan"
-                )
-        elif body.platform == "fortios" and body.prophylaxis_enabled:
-            if self.netbox.get_device_services(body.device_id, "fortios-api"):
-                raise CredentialOnboardingInvalid(
-                    "FortiOS API service state changed; create a new plan"
-                )
         platform = self.netbox.get_all(
             "/api/dcim/platforms/", params={"slug": body.platform}
         )[0]
-        fields = deepcopy(device.get("custom_fields") or {})
-        fields.update({
-            "credential_profile": body.credential_profile,
-            "profylaxia_enabled": body.prophylaxis_enabled,
-            "oxidized_enabled": body.oxidized_enabled,
-            "monitoring_enabled": body.monitoring_enabled,
-        })
-        self.netbox.patch(f"/api/dcim/devices/{body.device_id}/", {
-            "platform": platform["id"], "custom_fields": fields,
-        })
+        for device in devices:
+            if body.platform == "fortios" and body.prophylaxis_enabled:
+                services = self.netbox.get_device_services(device["id"], "fortios-api")
+                service_operation = next(
+                    (
+                        operation
+                        for operation in preview["operations"]
+                        if operation.get("object") == "fortios-api"
+                        and (operation.get("device") or {}).get("id") == device["id"]
+                    ),
+                    None,
+                )
+                if body.prophylaxis_auth == "api_token":
+                    if service_operation is None:
+                        raise CredentialOnboardingInvalid("Confirmed service plan is incomplete")
+                    if service_operation["action"] == "CREATE" and services:
+                        raise CredentialOnboardingInvalid(
+                            "FortiOS API service state changed; create a new plan"
+                        )
+                    if service_operation["action"] == "CREATE":
+                        self.netbox.post("/api/ipam/services/", {
+                            "name": "fortios-api",
+                            "device": device["id"],
+                            "protocol": "tcp",
+                            "ports": [body.fortios_api_port or 443],
+                            "description": "Aricoma Atlas FortiOS REST API",
+                        })
+                    elif not (
+                        len(services) == 1
+                        and self._nested_value(services[0].get("protocol")) == "tcp"
+                        and services[0].get("ports") == [body.fortios_api_port or 443]
+                    ):
+                        raise CredentialOnboardingInvalid(
+                            "FortiOS API service state changed; create a new plan"
+                        )
+                elif services:
+                    raise CredentialOnboardingInvalid(
+                        "FortiOS API service state changed; create a new plan"
+                    )
+            fields = deepcopy(device.get("custom_fields") or {})
+            fields.update({
+                "credential_profile": body.credential_profile,
+                "profylaxia_enabled": body.prophylaxis_enabled,
+                "oxidized_enabled": body.oxidized_enabled,
+                "monitoring_enabled": body.monitoring_enabled,
+            })
+            self.netbox.patch(f"/api/dcim/devices/{device['id']}/", {
+                "platform": platform["id"], "custom_fields": fields,
+            })
         result = self.plan(body)
         result["status"] = "APPLIED"
         return result

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261026-2">
-    <script src="/static/app.js?v=20261026-2" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261026-3">
+    <script src="/static/app.js?v=20261026-3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -342,19 +342,19 @@
           <div>
             <p class="section-kicker">OpenBao and NetBox</p>
             <h2 id="credential-onboarding-title">Onboard device credentials</h2>
-            <p>Select a device and credential consumers, review the exact plan, then explicitly apply it. Secret values are never returned by Atlas.</p>
+            <p>Select one or more devices from the same manufacturer, choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
           </div>
           <button id="credential-onboarding-close" class="dialog-close" type="button" aria-label="Close credential window">×</button>
         </header>
 
         <div class="inventory-fields">
           <div class="field-group">
-            <label for="credential-device">Device</label>
-            <select id="credential-device"><option value="">Select a device</option></select>
+            <label for="credential-manufacturer">Manufacturer</label>
+            <select id="credential-manufacturer"><option value="">Select a manufacturer</option></select>
           </div>
           <div class="field-group">
             <label for="credential-platform">Platform</label>
-            <select id="credential-platform"><option value="">Select a device first</option></select>
+            <select id="credential-platform"><option value="">Select a manufacturer first</option></select>
           </div>
           <div class="field-group">
             <label for="credential-profile">Credential profile</label>
@@ -364,6 +364,17 @@
           <div class="field-group">
             <label for="credential-fortios-auth">Prophylaxia transport</label>
             <select id="credential-fortios-auth"><option value="ssh">SSH</option></select>
+          </div>
+        </div>
+
+        <div class="credential-device-picker">
+          <div class="field-label-row">
+            <label for="credential-device-filter">Devices</label>
+            <span id="credential-device-count" class="field-help">0 selected</span>
+          </div>
+          <input id="credential-device-filter" type="search" autocomplete="off" placeholder="Filter devices by name">
+          <div id="credential-device-list" class="credential-device-list" role="group" aria-label="Devices from the selected manufacturer">
+            <p class="field-help">Select a manufacturer first.</p>
           </div>
         </div>
 
@@ -426,7 +437,7 @@
           </div>
           <div class="table-wrap inventory-results-table">
             <table aria-label="Credential onboarding plan">
-              <thead><tr><th>Target</th><th>Purpose or object</th><th>Action</th><th>Reason</th></tr></thead>
+              <thead><tr><th>Device</th><th>Target</th><th>Purpose or object</th><th>Action</th><th>Reason</th></tr></thead>
               <tbody id="credential-plan-operations"></tbody>
             </table>
           </div>

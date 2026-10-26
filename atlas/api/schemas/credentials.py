@@ -1,6 +1,6 @@
 """Secret-safe request contracts for device credential onboarding."""
 
-from typing import Literal
+from typing import Annotated, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -24,7 +24,10 @@ class SNMPv2Input(BaseModel):
 
 class CredentialOnboardingRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
-    device_id: int = Field(gt=0)
+    device_ids: list[Annotated[int, Field(gt=0)]] = Field(
+        min_length=1,
+        max_length=100,
+    )
     platform: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     credential_profile: str = Field(
         min_length=1,
@@ -45,6 +48,8 @@ class CredentialOnboardingRequest(BaseModel):
 
     @model_validator(mode="after")
     def validate_selected_credentials(self):
+        if len(set(self.device_ids)) != len(self.device_ids):
+            raise ValueError("Device selection contains duplicates")
         if not any((self.prophylaxis_enabled, self.oxidized_enabled, self.monitoring_enabled)):
             raise ValueError("Select at least one credential purpose")
         if self.prophylaxis_enabled:

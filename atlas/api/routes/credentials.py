@@ -66,14 +66,15 @@ def plan(body: CredentialOnboardingRequest, request: Request) -> dict:
     logger.info(
         "credential_onboarding.operation_started",
         extra={"event": "credential_onboarding.operation_started", "operation": "plan",
-               "device_id": body.device_id},
+               "device_ids": body.device_ids, "device_count": len(body.device_ids)},
     )
     result = _translate(lambda: request.app.state.dependencies.credentials.plan(body))
     result["plan_hash"] = _plan_hash(body, result, token)
     logger.info(
         "credential_onboarding.operation_completed",
         extra={"event": "credential_onboarding.operation_completed", "operation": "plan",
-               "device_id": body.device_id, "apply_allowed": result["apply_allowed"]},
+               "device_ids": body.device_ids, "device_count": len(body.device_ids),
+               "apply_allowed": result["apply_allowed"]},
     )
     return result
 
@@ -98,7 +99,7 @@ def apply(body: CredentialOnboardingRequest, request: Request) -> dict:
     logger.info(
         "credential_onboarding.operation_started",
         extra={"event": "credential_onboarding.operation_started", "operation": "apply",
-               "device_id": body.device_id},
+               "device_ids": body.device_ids, "device_count": len(body.device_ids)},
     )
     result = _translate(
         lambda: request.app.state.dependencies.credentials.apply(
@@ -109,7 +110,7 @@ def apply(body: CredentialOnboardingRequest, request: Request) -> dict:
     logger.info(
         "credential_onboarding.operation_completed",
         extra={"event": "credential_onboarding.operation_completed", "operation": "apply",
-               "device_id": body.device_id},
+               "device_ids": body.device_ids, "device_count": len(body.device_ids)},
     )
     return result
 

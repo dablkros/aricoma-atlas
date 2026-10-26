@@ -22,6 +22,7 @@ const state = {
   credentialOptions: null,
   credentialPlan: null,
   credentialBusy: false,
+  credentialSelectedDeviceIds: new Set(),
 };
 
 const elements = {
@@ -117,7 +118,10 @@ const elements = {
   credentialOpen: document.querySelector("#credential-onboarding-open"),
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
-  credentialDevice: document.querySelector("#credential-device"),
+  credentialManufacturer: document.querySelector("#credential-manufacturer"),
+  credentialDeviceFilter: document.querySelector("#credential-device-filter"),
+  credentialDeviceList: document.querySelector("#credential-device-list"),
+  credentialDeviceCount: document.querySelector("#credential-device-count"),
   credentialPlatform: document.querySelector("#credential-platform"),
   credentialProfile: document.querySelector("#credential-profile"),
   credentialProfileOptions: document.querySelector("#credential-profile-options"),
@@ -284,9 +288,10 @@ function resetCredentialPlan() {
   elements.credentialApply.disabled = true;
 }
 
-function selectedCredentialDevice() {
-  const id = Number(elements.credentialDevice.value);
-  return state.credentialOptions?.devices?.find((device) => device.id === id) || null;
+function selectedCredentialDevices() {
+  return (state.credentialOptions?.devices || []).filter(
+    (device) => state.credentialSelectedDeviceIds.has(device.id),
+  );
 }
 
 function selectedCredentialPlatform() {
@@ -296,25 +301,73 @@ function selectedCredentialPlatform() {
 }
 
 function renderCredentialPlatformOptions() {
-  const device = selectedCredentialDevice();
+  const manufacturer = elements.credentialManufacturer.value;
+  const devices = selectedCredentialDevices();
   const previous = elements.credentialPlatform.value;
   const platforms = (state.credentialOptions?.platforms || []).filter(
-    (platform) => platform.manufacturer === device?.manufacturer?.name,
+    (platform) => platform.manufacturer === manufacturer,
   );
   elements.credentialPlatform.replaceChildren(
-    new Option(device ? "Select platform" : "Select a device first", ""),
+    new Option(manufacturer ? "Select platform" : "Select a manufacturer first", ""),
     ...platforms.map((platform) => new Option(platform.name, platform.slug)),
   );
-  const preferred = device?.platform && platforms.some((item) => item.slug === device.platform)
-    ? device.platform : previous;
+  const selectedPlatforms = new Set(devices.map((device) => device.platform).filter(Boolean));
+  const preferred = selectedPlatforms.size === 1 ? [...selectedPlatforms][0] : previous;
   if (platforms.some((item) => item.slug === preferred)) {
     elements.credentialPlatform.value = preferred;
   }
-  if (device?.credential_profile) elements.credentialProfile.value = device.credential_profile;
-  elements.credentialProphylaxisEnabled.checked = device?.prophylaxis_enabled === true;
-  elements.credentialOxidizedEnabled.checked = device?.oxidized_enabled === true;
-  elements.credentialMonitoringEnabled.checked = device?.monitoring_enabled === true;
+  const profiles = new Set(devices.map((device) => device.credential_profile).filter(Boolean));
+  if (profiles.size === 1) elements.credentialProfile.value = [...profiles][0];
+  elements.credentialProphylaxisEnabled.checked = devices.length > 0
+    && devices.every((device) => device.prophylaxis_enabled === true);
+  elements.credentialOxidizedEnabled.checked = devices.length > 0
+    && devices.every((device) => device.oxidized_enabled === true);
+  elements.credentialMonitoringEnabled.checked = devices.length > 0
+    && devices.every((device) => device.monitoring_enabled === true);
   renderCredentialAuthOptions();
+}
+
+function renderCredentialDeviceOptions() {
+  const manufacturer = elements.credentialManufacturer.value;
+  const query = elements.credentialDeviceFilter.value.trim().toLocaleLowerCase();
+  const selected = state.credentialSelectedDeviceIds;
+  const devices = (state.credentialOptions?.devices || []).filter((device) => (
+    device.manufacturer?.name === manufacturer
+    && (!query || device.name.toLocaleLowerCase().includes(query))
+  ));
+  if (!manufacturer) {
+    elements.credentialDeviceList.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "Select a manufacturer first.",
+      }),
+    );
+  } else if (!devices.length) {
+    elements.credentialDeviceList.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "No matching active devices.",
+      }),
+    );
+  } else {
+    elements.credentialDeviceList.replaceChildren(...devices.map((device) => {
+      const checkbox = Object.assign(document.createElement("input"), {
+        type: "checkbox", value: String(device.id), checked: selected.has(device.id),
+      });
+      const label = document.createElement("label");
+      label.className = "credential-device-option";
+      const name = document.createElement("span");
+      name.textContent = `${device.name}${device.platform ? ` — ${device.platform}` : ""}`;
+      label.append(checkbox, name);
+      return label;
+    }));
+  }
+  elements.credentialDeviceCount.textContent = `${selected.size} selected`;
+}
+
+function credentialDeviceSelectionChanged() {
+  const count = selectedCredentialDevices().length;
+  elements.credentialDeviceCount.textContent = `${count} selected`;
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
 }
 
 function renderCredentialAuthOptions() {
@@ -342,18 +395,24 @@ async function openCredentialOnboarding() {
     state.credentialOptions = await apiRequest("/api/credentials/options", {
       headers: operatorHeaders(),
     });
-    elements.credentialDevice.replaceChildren(
-      new Option("Select a device", ""),
-      ...(state.credentialOptions.devices || []).map((device) => new Option(
-        `${device.name} — ${device.manufacturer?.name || "Unknown manufacturer"}`,
-        String(device.id),
-      )),
+    const manufacturers = [...new Set(
+      (state.credentialOptions.devices || [])
+        .map((device) => device.manufacturer?.name)
+        .filter(Boolean),
+    )].sort((left, right) => left.localeCompare(right));
+    elements.credentialManufacturer.replaceChildren(
+      new Option("Select a manufacturer", ""),
+      ...manufacturers.map((manufacturer) => new Option(manufacturer, manufacturer)),
     );
+    state.credentialSelectedDeviceIds.clear();
+    elements.credentialDeviceFilter.value = "";
+    renderCredentialDeviceOptions();
+    renderCredentialPlatformOptions();
     elements.credentialProfileOptions.replaceChildren(
       ...(state.credentialOptions.profiles || []).map((profile) => new Option(profile)),
     );
     elements.credentialDialog.showModal();
-    elements.credentialDevice.focus();
+    elements.credentialManufacturer.focus();
   } catch (error) {
     toast(error.safeMessage || "Could not load credential onboarding options.", "error");
   } finally {
@@ -368,7 +427,7 @@ function credentialPayload() {
   const auth = elements.credentialAuth.value;
   const enablePassword = elements.credentialProphylaxisEnable.value;
   const payload = {
-    device_id: Number(elements.credentialDevice.value),
+    device_ids: selectedCredentialDevices().map((device) => device.id),
     platform: elements.credentialPlatform.value,
     credential_profile: elements.credentialProfile.value.trim(),
     prophylaxis_enabled: prophylaxis,
@@ -408,6 +467,7 @@ function renderCredentialPlan(result) {
   elements.credentialPlanOperations.replaceChildren(...result.operations.map((operation) => {
     const row = document.createElement("tr");
     for (const value of [
+      operation.device?.name || "Shared profile",
       operation.target,
       operation.purpose || operation.object || "—",
       operation.action,
@@ -434,6 +494,18 @@ function setCredentialBusy(busy) {
 
 async function planCredentials() {
   if (!requireOperatorToken()) return;
+  if (!selectedCredentialDevices().length) {
+    toast("Select at least one device.", "warning");
+    return;
+  }
+  if (!elements.credentialPlatform.value) {
+    toast("Select the platform for this device batch.", "warning");
+    return;
+  }
+  if (!elements.credentialProfile.value.trim()) {
+    toast("Enter a shared credential profile.", "warning");
+    return;
+  }
   setCredentialBusy(true);
   try {
     const result = await apiRequest("/api/credentials/plan", {
@@ -1546,8 +1618,25 @@ function toast(message, type = "success") {
   const item = document.createElement("div");
   item.className = `toast toast-${type}`;
   item.textContent = message;
-  elements.toastRegion.append(item);
-  window.setTimeout(() => item.remove(), 5000);
+  const openDialogs = [...document.querySelectorAll("dialog[open]")];
+  const activeDialog = openDialogs.at(-1);
+  let region = elements.toastRegion;
+  if (activeDialog) {
+    region = activeDialog.querySelector("[data-dialog-toast-region]");
+    if (!region) {
+      region = document.createElement("div");
+      region.className = "toast-region";
+      region.dataset.dialogToastRegion = "true";
+      region.setAttribute("aria-live", "polite");
+      region.setAttribute("aria-atomic", "true");
+      activeDialog.append(region);
+    }
+  }
+  region.append(item);
+  window.setTimeout(() => {
+    item.remove();
+    if (region !== elements.toastRegion && !region.childElementCount) region.remove();
+  }, 5000);
 }
 
 function setSyncBusy(busy) {
@@ -1725,9 +1814,20 @@ elements.credentialClose.addEventListener("click", () => {
   clearCredentialSecrets();
   elements.credentialDialog.close();
 });
-elements.credentialDevice.addEventListener("change", () => {
+elements.credentialManufacturer.addEventListener("change", () => {
+  state.credentialSelectedDeviceIds.clear();
+  elements.credentialDeviceFilter.value = "";
+  renderCredentialDeviceOptions();
   renderCredentialPlatformOptions();
   resetCredentialPlan();
+});
+elements.credentialDeviceFilter.addEventListener("input", renderCredentialDeviceOptions);
+elements.credentialDeviceList.addEventListener("change", (event) => {
+  if (!(event.target instanceof HTMLInputElement) || event.target.type !== "checkbox") return;
+  const id = Number(event.target.value);
+  if (event.target.checked) state.credentialSelectedDeviceIds.add(id);
+  else state.credentialSelectedDeviceIds.delete(id);
+  credentialDeviceSelectionChanged();
 });
 elements.credentialPlatform.addEventListener("change", () => {
   renderCredentialAuthOptions();
