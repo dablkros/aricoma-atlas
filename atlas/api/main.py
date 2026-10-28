@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
 from atlas.api.routes import (
+    auth,
     credentials,
     health,
     inventory,
@@ -23,6 +24,7 @@ from atlas.api.routes import (
     zabbix,
 )
 from atlas.config import Settings, get_settings
+from atlas.auth import AdminSessionService
 from atlas.logging import configure_logging
 from atlas.services.factory import DependencyServices, build_dependency_services
 
@@ -63,9 +65,14 @@ def create_app(
     )
     application.state.settings = settings
     application.state.dependencies = dependencies or build_dependency_services(settings)
+    application.state.auth = AdminSessionService(
+        getattr(application.state.dependencies, "openbao", None),
+        ttl_seconds=settings.admin_session_ttl_seconds,
+    )
 
     install_request_middleware(application)
     register_error_handlers(application)
+    application.include_router(auth.router, prefix=settings.api_prefix)
     if settings.zabbix_enabled:
         application.include_router(monitoring.router, prefix=settings.api_prefix)
     application.include_router(health.router, prefix=settings.api_prefix)

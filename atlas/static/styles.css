@@ -273,6 +273,9 @@ h2 {
 
 .operator-token-field { min-width: 0; }
 
+.admin-login-dialog { width: min(520px, calc(100% - 2rem)); }
+.admin-login-fields { display: grid; gap: 1rem; }
+
 .inventory-dialog {
   width: min(1180px, calc(100% - 2rem));
   max-height: calc(100vh - 2rem);

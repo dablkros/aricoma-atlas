@@ -4,6 +4,7 @@
 import argparse
 import copy
 import ipaddress
+import json
 import os
 import re
 import secrets
@@ -20,6 +21,7 @@ sys.path.insert(0, str(ROOT))
 from atlas import __version__  # noqa: E402
 from atlas.components import load_components  # noqa: E402
 from atlas.openbao_client import (  # noqa: E402
+    OpenBaoAuthenticationError,
     OpenBaoClient,
     OpenBaoError,
     OpenBaoNotFound,
@@ -51,6 +53,8 @@ LOG_LEVELS = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
 OPENBAO_URL = "http://127.0.0.1:18200"
 BACKEND_SECRET_PATH = "backend"
 OPERATOR_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,256}")
+ADMIN_BOOTSTRAP_PATH = Path(".runtime/auth/bootstrap-admin.json")
+ADMIN_MARKER_PATH = Path(".runtime/auth/admin-configured")
 
 
 def _route_probe_address(network):
@@ -373,6 +377,128 @@ def sync_backend_operator_token(root=ROOT, client=None):
     return token_file
 
 
+def sync_admin_bootstrap(root=ROOT, client=None):
+    """Move the one-time administrator hash into OpenBao, then remove it."""
+    root = Path(root).resolve()
+    bootstrap = root / ADMIN_BOOTSTRAP_PATH
+    marker = root / ADMIN_MARKER_PATH
+    if marker.is_file() and not bootstrap.exists():
+        return marker
+    if bootstrap.is_symlink():
+        raise RuntimeError("Administrator bootstrap cannot be a symlink")
+    if not bootstrap.is_file():
+        print(
+            "[WARN] Atlas administrator is not configured; privileged human login "
+            "will remain unavailable until 'sudo atlasctl admin bootstrap' and a "
+            "subsequent deploy"
+        )
+        return None
+    try:
+        record = json.loads(bootstrap.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Administrator bootstrap is invalid") from exc
+    username = record.get("username") if isinstance(record, dict) else None
+    if not isinstance(record, dict) or (
+        record.get("schema_version") != 1
+        or not isinstance(username, str)
+        or not re.fullmatch(r"[a-z][a-z0-9_.-]{2,63}", username)
+        or record.get("role") != "admin"
+        or record.get("active") is not True
+        or not isinstance(record.get("password_hash"), str)
+        or not record["password_hash"].startswith("$argon2id$")
+    ):
+        raise RuntimeError("Administrator bootstrap schema is invalid")
+
+    identity_file = root / ".runtime/openbao-approle.json"
+    client = client or OpenBaoClient(
+        os.environ.get("OPENBAO_URL", OPENBAO_URL), timeout=15
+    )
+    try:
+        token = client.login_from_identity(identity_file)
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas deployer cannot authenticate while provisioning the administrator"
+        ) from exc
+    secret_path = f"auth/local/users/{username}"
+    try:
+        try:
+            existing = client.kv_read(token, secret_path, mount="atlas")
+        except OpenBaoNotFound:
+            existing = None
+        if existing is None:
+            client.kv_write(token, secret_path, record, mount="atlas", cas=0)
+        elif existing != record:
+            raise RuntimeError(
+                f"Administrator '{username}' already exists with different data; "
+                "refusing to overwrite it"
+            )
+
+        marker.parent.mkdir(parents=True, exist_ok=True)
+        os.chmod(marker.parent, 0o700)
+        temporary = marker.with_name(f".{marker.name}.{secrets.token_hex(8)}.tmp")
+        descriptor = os.open(temporary, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        try:
+            with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+                handle.write(json.dumps({"schema_version": 1, "username": username}) + "\n")
+                handle.flush()
+                os.fsync(handle.fileno())
+            os.replace(temporary, marker)
+            os.chmod(marker, 0o600)
+        finally:
+            try:
+                temporary.unlink()
+            except FileNotFoundError:
+                pass
+        bootstrap.unlink()
+    except OpenBaoError as exc:
+        raise RuntimeError("Unable to store the Atlas administrator in OpenBao") from exc
+    finally:
+        try:
+            client.revoke_self(token)
+        except OpenBaoError as exc:
+            raise RuntimeError(
+                "Administrator was reconciled, but the deployment token could not be revoked"
+            ) from exc
+    return marker
+
+
+def verify_admin_backend_access(root=ROOT, client=None):
+    """Fail with an actionable message when an upgraded policy is still stale."""
+    root = Path(root).resolve()
+    marker = root / ADMIN_MARKER_PATH
+    if not marker.is_file():
+        return
+    try:
+        marker_data = json.loads(marker.read_text(encoding="utf-8"))
+        username = marker_data["username"]
+    except (OSError, json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise RuntimeError("Administrator configured marker is invalid") from exc
+    client = client or OpenBaoClient(
+        os.environ.get("OPENBAO_URL", OPENBAO_URL), timeout=15
+    )
+    identity = root / ".runtime/openbao-backend.json"
+    try:
+        token = client.login_from_identity(identity)
+        client.kv_read(token, f"auth/local/users/{username}", mount="atlas")
+    except OpenBaoAuthenticationError as exc:
+        raise RuntimeError(
+            "Atlas backend policy cannot read administrator identities. Run "
+            "'sudo atlasctl openbao', reconcile Atlas backend roles with the "
+            "required unseal shares, then deploy again"
+        ) from exc
+    except OpenBaoError as exc:
+        raise RuntimeError("Unable to verify Atlas administrator access") from exc
+    finally:
+        if "token" in locals():
+            try:
+                client.revoke_self(token)
+            except OpenBaoError as exc:
+                raise RuntimeError(
+                    "Administrator access was verified, but the backend token "
+                    "could not be revoked"
+                ) from exc
+
+
 def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     root = Path(root).resolve()
     backend = config["backend"]
@@ -669,6 +795,8 @@ def main():
     config = load_config()
     proxy_config = load_proxy_config()
     sync_backend_operator_token()
+    sync_admin_bootstrap()
+    verify_admin_backend_access()
     selection = load_components()
     compose_file = prepare_runtime(
         config,

@@ -37,15 +37,25 @@ def install_request_middleware(app: FastAPI) -> None:
             raise
 
         response.headers["X-Request-ID"] = request_id
+        principal = getattr(request.state, "principal", None)
+        details = {
+            "event": "request.completed",
+            "request_id": request_id,
+            "method": request.method,
+            "path": request.url.path,
+            "status_code": response.status_code,
+            "duration_ms": round((time.perf_counter() - started) * 1000, 3),
+        }
+        if principal is not None:
+            details.update(
+                {
+                    "actor": principal.username,
+                    "actor_role": principal.role,
+                    "authentication": principal.authentication,
+                }
+            )
         logger.info(
             "request.completed",
-            extra={
-                "event": "request.completed",
-                "request_id": request_id,
-                "method": request.method,
-                "path": request.url.path,
-                "status_code": response.status_code,
-                "duration_ms": round((time.perf_counter() - started) * 1000, 3),
-            },
+            extra=details,
         )
         return response

@@ -22,6 +22,8 @@ usage() {
     cat <<'EOF'
 Usage:
   sudo atlasctl configure [--site-file FILE] [--check] [--force]
+  sudo atlasctl login|logout|whoami
+  sudo atlasctl admin bootstrap
   sudo atlasctl components show
   sudo atlasctl components add oxidized|zabbix
   sudo atlasctl deploy [deploy_atlas.py options]
@@ -48,6 +50,10 @@ Usage:
   sudo atlasctl proxy logs [docker compose logs options]
 
 Commands:
+  login                 Start a short-lived personal administrator session.
+  logout                Revoke the current local administrator session.
+  whoami                Show the authenticated Atlas administrator.
+  admin bootstrap       Create the one-time administrator bootstrap on upgrades.
   configure             Create proxy, TLS and monitoring site configuration.
   components show       Show the fixed core and installed optional components.
   components add        Permanently add an optional component.
@@ -77,6 +83,18 @@ require_install() {
     id "$ATLAS_USER" >/dev/null 2>&1 || die "Atlas service account does not exist"
     [[ -x "$PYTHON" ]] || die "Atlas virtual environment is missing"
     [[ -d "$ATLAS_ROOT" ]] || die "Atlas installation is missing"
+}
+
+admin_auth() {
+    local action=$1
+    local caller=${SUDO_USER:-root}
+    cd "$ATLAS_ROOT"
+    if [[ "$caller" == "root" ]]; then
+        "$PYTHON" "${ATLAS_ROOT}/scripts/admin_auth_cli.py" "$action"
+    else
+        runuser -u "$caller" -- \
+            "$PYTHON" "${ATLAS_ROOT}/scripts/admin_auth_cli.py" "$action"
+    fi
 }
 
 atlas_env() {
@@ -354,6 +372,21 @@ main() {
 
     local command=${1:-}
     case "$command" in
+        components|inventory|oxidized|zabbix|integrations|backend|prophylaxis|proxy)
+            admin_auth require
+            ;;
+    esac
+    case "$command" in
+        login|logout|whoami)
+            [[ $# -eq 1 ]] || die "${command} accepts no options"
+            admin_auth "$command"
+            ;;
+        admin)
+            shift
+            [[ "${1:-}" == "bootstrap" && $# -eq 1 ]] || \
+                die "admin requires the bootstrap command"
+            configure_site --admin-only
+            ;;
         configure)
             shift
             configure_site "$@"

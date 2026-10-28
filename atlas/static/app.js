@@ -23,6 +23,8 @@ const state = {
   credentialPlan: null,
   credentialBusy: false,
   credentialSelectedDeviceIds: new Set(),
+  authenticated: false,
+  principal: null,
 };
 
 const elements = {
@@ -148,6 +150,13 @@ const elements = {
   credentialPlanOperations: document.querySelector("#credential-plan-operations"),
   credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
   credentialApply: document.querySelector("#credential-apply"),
+  adminSessionButton: document.querySelector("#admin-session-button"),
+  adminLoginDialog: document.querySelector("#admin-login-dialog"),
+  adminLoginForm: document.querySelector("#admin-login-form"),
+  adminUsername: document.querySelector("#admin-username"),
+  adminPassword: document.querySelector("#admin-password"),
+  adminLoginError: document.querySelector("#admin-login-error"),
+  adminLoginSubmit: document.querySelector("#admin-login-submit"),
 };
 
 const MONITORING_TERMINAL = new Set(["COMPLETED", "FAILED", "PARTIAL"]);
@@ -166,11 +175,16 @@ class ApiError extends Error {
 async function apiRequest(path, options = {}) {
   let response;
   try {
+    const method = options.method || "GET";
+    const csrf = document.cookie.split("; ").find((value) => value.startsWith("atlas_csrf="));
     response = await fetch(path, {
-      method: options.method || "GET",
+      method,
       headers: {
         Accept: "application/json",
         ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(!["GET", "HEAD", "OPTIONS"].includes(method) && csrf
+          ? { "X-CSRF-Token": decodeURIComponent(csrf.split("=").slice(1).join("=")) }
+          : {}),
         ...(options.headers || {}),
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
@@ -200,14 +214,17 @@ async function apiRequest(path, options = {}) {
 }
 
 function monitoringHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.monitoringToken}` };
 }
 
 function operatorHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.operatorToken}` };
 }
 
 function requireOperatorToken() {
+  if (state.authenticated) return true;
   const token = elements.operatorToken.value.trim();
   if (!token) {
     toast("Enter the operator token.", "warning");
@@ -220,6 +237,68 @@ function requireOperatorToken() {
   elements.monitoringToken.value = token;
   setPill(elements.operatorStatus, "healthy", "Ready");
   return true;
+}
+
+function renderAdminSession() {
+  if (state.authenticated) {
+    elements.adminSessionButton.textContent = `${state.principal.username} · Sign out`;
+    setPill(elements.operatorStatus, "healthy", `Admin: ${state.principal.username}`);
+  } else {
+    elements.adminSessionButton.textContent = "Sign in";
+    setPill(elements.operatorStatus, "neutral", "Login required");
+  }
+}
+
+async function refreshAdminSession({ prompt = false } = {}) {
+  try {
+    state.principal = await apiRequest("/api/auth/me");
+    state.authenticated = true;
+  } catch (_error) {
+    state.principal = null;
+    state.authenticated = false;
+  }
+  renderAdminSession();
+  if (prompt && !state.authenticated && !elements.adminLoginDialog.open) {
+    elements.adminLoginDialog.showModal();
+    elements.adminUsername.focus();
+  }
+  return state.authenticated;
+}
+
+async function submitAdminLogin(event) {
+  event.preventDefault();
+  elements.adminLoginSubmit.disabled = true;
+  elements.adminLoginError.hidden = true;
+  try {
+    const principal = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: { username: elements.adminUsername.value, password: elements.adminPassword.value },
+    });
+    state.principal = principal;
+    state.authenticated = true;
+    elements.adminPassword.value = "";
+    elements.adminLoginDialog.close();
+    renderAdminSession();
+    toast(`Signed in as ${principal.username}.`, "success");
+  } catch (error) {
+    elements.adminLoginError.textContent = error.safeMessage || "Sign in failed.";
+    elements.adminLoginError.hidden = false;
+  } finally {
+    elements.adminLoginSubmit.disabled = false;
+  }
+}
+
+async function toggleAdminSession() {
+  if (!state.authenticated) {
+    elements.adminLoginDialog.showModal();
+    elements.adminUsername.focus();
+    return;
+  }
+  try { await apiRequest("/api/auth/logout", { method: "POST" }); } catch (_error) { /* local state still clears */ }
+  state.authenticated = false;
+  state.principal = null;
+  renderAdminSession();
+  toast("Administrator session ended.", "info");
 }
 
 async function testCiscoIntegration() {
@@ -1061,8 +1140,8 @@ function renderMonitoringBulkPreview(entries, mode) {
 }
 
 async function loadMonitoringDevices() {
-  state.monitoringToken = elements.monitoringToken.value.trim();
-  if (!state.monitoringToken) {
+  state.monitoringToken = state.authenticated ? "" : elements.monitoringToken.value.trim();
+  if (!state.authenticated && !state.monitoringToken) {
     toast("Enter the monitoring operator token.", "warning");
     return;
   }
@@ -1693,6 +1772,7 @@ async function loadDashboard() {
 }
 
 function prophylaxisHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.prophylaxisToken}` };
 }
 
@@ -1718,12 +1798,16 @@ async function pollProphylaxisRun() {
 }
 
 async function launchProphylaxisRun() {
+  if (state.authenticated) {
+    state.prophylaxisToken = "";
+  } else {
   const token = elements.prophylaxisToken.value.trim();
   if (!token) {
     toast("Enter the operator token.", "warning");
     return;
   }
   state.prophylaxisToken = token;
+  }
   elements.prophylaxisRun.disabled = true;
   try {
     state.prophylaxisRun = await apiRequest("/api/prophylaxis/runs", {
@@ -1791,6 +1875,8 @@ async function queueBackup(device) {
 }
 
 elements.refreshButton.addEventListener("click", loadDashboard);
+elements.adminSessionButton.addEventListener("click", toggleAdminSession);
+elements.adminLoginForm.addEventListener("submit", submitAdminLogin);
 elements.syncButton.addEventListener("click", synchronizeInventory);
 elements.deviceFilter.addEventListener("input", renderDevices);
 elements.deviceSort.addEventListener("change", renderDevices);
@@ -1898,4 +1984,4 @@ for (const input of [elements.inventoryTable, elements.inventoryTenant, elements
   input.addEventListener("input", resetInventoryPlan);
 }
 
-loadDashboard();
+refreshAdminSession({ prompt: true }).finally(loadDashboard);

@@ -41,6 +41,11 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 '}\n\n'
                 'path "atlas/data/integrations/cisco/support-api" {\n'
                 '  capabilities = ["read"]\n'
+                '}\n\n'
+                '# Authenticate Atlas administrators. Password hashes remain in OpenBao and are\n'
+                '# never materialized into the backend container filesystem.\n'
+                'path "atlas/data/auth/local/users/*" {\n'
+                '  capabilities = ["read"]\n'
                 '}'
             ),
         )

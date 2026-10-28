@@ -2,8 +2,10 @@
 """Create Atlas site runtime configuration from one validated input."""
 
 import argparse
+import getpass
 import grp
 import ipaddress
+import json
 import os
 from pathlib import Path
 import pwd
@@ -20,6 +22,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from atlas.deployment import write_private  # noqa: E402
+from atlas.auth import ROLE_ADMIN, hash_password, normalize_username  # noqa: E402
 from atlas.components import load_components  # noqa: E402
 from atlas.inventory.config import normalize_inventory_config  # noqa: E402
 from atlas.inventory.importer import slugify  # noqa: E402
@@ -30,6 +33,8 @@ from scripts.import_site_config import import_config as import_proxy_config  # n
 
 PRIVATE_NETWORKS = ["10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16"]
 SERVICES = ("netbox", "oxidized", "zabbix")
+ADMIN_BOOTSTRAP = Path(".runtime/auth/bootstrap-admin.json")
+ADMIN_MARKER = Path(".runtime/auth/admin-configured")
 
 
 def _mapping(value, label):
@@ -490,6 +495,49 @@ def _prompt(label, default=None):
     return value or default
 
 
+def _collect_admin_bootstrap(target_root):
+    bootstrap = target_root / ADMIN_BOOTSTRAP
+    marker = target_root / ADMIN_MARKER
+    if marker.is_file() or bootstrap.is_file():
+        return None
+    print("\nAtlas local administrator")
+    print("This account protects the Operations UI and privileged atlasctl commands.")
+    username = normalize_username(_prompt("Administrator username", "admin"))
+    password = getpass.getpass("Administrator password (minimum 14 characters): ")
+    confirmation = getpass.getpass("Confirm administrator password: ")
+    if password != confirmation:
+        raise ValueError("Administrator passwords do not match")
+    return {
+        "schema_version": 1,
+        "username": username,
+        "role": ROLE_ADMIN,
+        "active": True,
+        "password_hash": hash_password(password),
+    }
+
+
+def _write_admin_bootstrap(target_root, owner, group, record):
+    if record is None:
+        return None
+    uid = pwd.getpwnam(owner).pw_uid
+    gid = grp.getgrnam(group).gr_gid
+    directory = target_root / ADMIN_BOOTSTRAP.parent
+    target = target_root / ADMIN_BOOTSTRAP
+    if directory.is_symlink() or target.is_symlink():
+        raise RuntimeError("Administrator bootstrap path must not be a symlink")
+    directory.mkdir(parents=True, exist_ok=True, mode=0o700)
+    os.chmod(directory, 0o700)
+    os.chown(directory, uid, gid)
+    write_private(
+        target,
+        json.dumps(record, sort_keys=True) + "\n",
+        mode=0o600,
+        group_id=gid,
+    )
+    os.chown(target, uid, gid)
+    return target
+
+
 def interactive_site(service_names=SERVICES):
     print("Atlas first-boot site configuration")
     print("Values are validated before runtime files are written.\n")
@@ -567,6 +615,7 @@ def parse_args():
     parser.add_argument("--group", default="atlas")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--check", action="store_true")
+    parser.add_argument("--admin-only", action="store_true")
     return parser.parse_args()
 
 
@@ -574,6 +623,22 @@ def main():
     args = parse_args()
     if os.geteuid() != 0 and not args.check:
         raise RuntimeError("Run configuration writes as root or use --check")
+    if args.admin_only:
+        if args.check or args.site_file or args.force:
+            raise ValueError("--admin-only cannot be combined with other configuration modes")
+        record = _collect_admin_bootstrap(args.target_root)
+        target = _write_admin_bootstrap(
+            args.target_root, args.owner, args.group, record
+        )
+        if target is None:
+            print("[OK] Atlas administrator bootstrap is already configured")
+        else:
+            print(f"[OK] Prepared one-time administrator bootstrap: {target}")
+            print(
+                "[INFO] On an existing OpenBao instance, first run 'sudo atlasctl "
+                "openbao' and reconcile Atlas backend roles, then deploy"
+            )
+        return
     selection = load_components(args.target_root / ".runtime/components.yaml")
     service_names = selection.ingress_services
     if args.site_file:
@@ -601,11 +666,17 @@ def main():
     if args.check:
         print("[OK] Check completed; no files were written")
         return
+    admin_bootstrap = _collect_admin_bootstrap(args.target_root)
     proxy_target, monitoring_target = install_site(
         site, args.target_root, args.owner, args.group, force=args.force
     )
+    bootstrap_target = _write_admin_bootstrap(
+        args.target_root, args.owner, args.group, admin_bootstrap
+    )
     print(f"[OK] Wrote protected proxy configuration: {proxy_target}")
     print(f"[OK] Wrote protected monitoring configuration: {monitoring_target}")
+    if bootstrap_target:
+        print(f"[OK] Prepared one-time administrator bootstrap: {bootstrap_target}")
     if site["tls"]["mode"] == "lab_generated":
         print("[WARN] LAB TLS was generated; distribute the installed ca.crt only to lab clients")
     print("[OK] Site configuration is ready; run sudo atlasctl deploy")
