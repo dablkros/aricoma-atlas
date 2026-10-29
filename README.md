@@ -28,6 +28,28 @@ sudo atlasctl configure
 sudo atlasctl deploy
 ```
 
+Konfigurátor sa pri prvom spustení opýta aj na lokálne Atlas admin meno a
+heslo. Do dočasného runtime bootstrapu s právami `0600` zapíše Argon2id hash aj
+recovery heslo. Prvý deploy uloží hash do
+`atlas/auth/local/users/<username>`, čitateľné heslo oddelene do
+`atlas/auth/recovery/users/<username>` a lokálny bootstrap odstráni. Backend má
+prístup iba k prihlasovaciemu hashu; recovery secret sa dá zobraziť iba cez
+quorum-controlled OpenBao operáciu. Čitateľná recovery hodnota je vedomý
+bezpečnostný kompromis pre prípad zabudnutého hesla.
+Interaktívne zadaný zákazník/Tenant sa pri deploymente idempotentne vytvorí,
+ak chýba, alebo znovu použije, ak už v NetBoxe existuje s rovnakou identitou.
+Pokročilý deklaratívny site YAML môže automatické vytvorenie explicitne zakázať
+pomocou `inventory.default_tenant.provision: false`.
+Na existujúcej inštalácii po upgrade použi:
+
+```bash
+sudo atlasctl admin bootstrap
+sudo atlasctl admin show-password
+sudo atlasctl openbao  # existing VM: reconcile Atlas backend roles (3 shares)
+sudo atlasctl deploy
+sudo atlasctl login
+```
+
 `install.sh` pripraví nainštalovaný strom v `/opt/aricoma-atlas`, privátny runtime a administračný wrapper. `deploy.sh` následne spustí deployment z nainštalovaného stromu. Po inštalácii sa bežná prevádzka vykonáva cez:
 
 ```bash
@@ -421,6 +443,8 @@ Typický nainštalovaný runtime:
 │   └── trust/
 ├── proxy/
 │   └── oxidized.htpasswd
+├── auth/
+│   └── admin-configured       # 0600 marker; password hash remains in OpenBao
 ├── openbao-approle.json
 ├── openbao-operator.json
 ├── openbao-backend.json
@@ -822,6 +846,13 @@ zoznam kvôli kompatibilite so staršími odpoveďami a testovacími fixtures.
 
 `atlasctl deploy` a `atlasctl openbao` nemajú UI ani API ekvivalent.
 
+Privilegované GUI a `atlasctl` operácie používajú osobnú, krátkodobú Atlas
+admin reláciu. Spoločný runtime operator token zostáva iba kompatibilným
+machine-to-machine mechanizmom. Browser používa `Secure`, `HttpOnly`,
+`SameSite=Strict` session cookie a samostatnú CSRF kontrolu; CLI ukladá opaque
+session token s právami `0600` pod `/run/user/<uid>/atlas/`. Autorizované API
+udalosti obsahujú identitu aktéra a rolu, nikdy nie heslo alebo session token.
+
 ### Bezpečný manuálny prístup
 
 Backend zostáva publikovaný iba na `127.0.0.1:8081`; Atlas hostname ani route sa do Nginx nepridáva. Na VM možno overiť liveness:
@@ -842,7 +873,12 @@ Potom otvor:
 http://127.0.0.1:8081/
 ```
 
-Tunnel sprístupní loopback port iba lokálnemu prehliadaču na workstation. Používateľská autentifikácia, RBAC a Nginx HTTPS ingress pre Atlas UI patria do Milestone 5.
+Tunnel sprístupní loopback port iba lokálnemu prehliadaču na workstation.
+Operations UI vyžaduje Atlas administrátora vytvoreného pri konfigurácii.
+Aktuálna iterácia má jednu rolu `admin`; dátový model je pripravený na neskoršie
+rozšírenie rolí. Root na Atlas VM zostáva technicky schopný čítať host runtime
+a ovládať Docker, preto táto vrstva chráni bežnú obsluhu, nie kompromitovaný
+root účet.
 
 ---
 
@@ -1152,6 +1188,8 @@ sudo ./update.sh --verbose
 
 ```text
 sudo atlasctl configure [--site-file FILE] [--check] [--force]
+sudo atlasctl admin bootstrap|show-password
+sudo atlasctl login|logout|whoami
 sudo atlasctl deploy [deploy_atlas.py options]
 sudo atlasctl status
 sudo atlasctl openbao
@@ -1172,6 +1210,11 @@ Význam:
 | Príkaz | Úloha |
 |---|---|
 | `sudo atlasctl configure` | Interaktívne vytvorí chránenú proxy, TLS a monitoring site konfiguráciu. |
+| `sudo atlasctl admin bootstrap` | Na existujúcej inštalácii pripraví jednorazový admin login a recovery bootstrap pre nasledujúci deploy. |
+| `sudo atlasctl admin show-password` | Po zadaní OpenBao quorum share kľúčov zobrazí čitateľné heslo lokálneho Atlas administrátora. |
+| `sudo atlasctl login` | Vytvorí predvolene hodinovú osobnú reláciu pre chránené prevádzkové príkazy. |
+| `sudo atlasctl logout` | Revokuje lokálnu CLI reláciu. |
+| `sudo atlasctl whoami` | Zobrazí meno a rolu aktuálnej CLI relácie. |
 | `sudo atlasctl configure --site-file FILE --check` | Overí deklaratívny site vstup a TLS bez zápisu. |
 | `sudo atlasctl configure --site-file FILE --force` | Po explicitnej kontrole nahradí iba konfigurátorom spravované site súbory. |
 | `sudo atlasctl deploy` | Nasadí alebo zosúladí celý Atlas stack. |
@@ -1662,6 +1705,7 @@ Helper aktuálne podporuje napríklad:
 
 - vytvorenie krátkodobého Atlas deployer tokenu,
 - zosúladenie `atlas-backend` policy, AppRole a lokálnej machine identity na existujúcej inštalácii,
+- jednorazové uloženie a quorum-controlled zobrazenie Atlas admin recovery hesla,
 - quorum-based temporary root workflow,
 - revoke tokenu,
 - inspect tokenu.

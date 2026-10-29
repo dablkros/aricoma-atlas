@@ -23,6 +23,9 @@ const state = {
   credentialPlan: null,
   credentialBusy: false,
   credentialSelectedDeviceIds: new Set(),
+  authenticated: false,
+  principal: null,
+  adminExpiryTimer: null,
 };
 
 const elements = {
@@ -110,6 +113,7 @@ const elements = {
   inventoryDeviceTypeModel: document.querySelector("#inventory-device-type-model"),
   inventoryDeviceTypeFilename: document.querySelector("#inventory-device-type-filename"),
   inventoryDeviceTypeYaml: document.querySelector("#inventory-device-type-yaml"),
+  inventoryDeviceTypeError: document.querySelector("#inventory-device-type-error"),
   inventoryDeviceTypeReplace: document.querySelector("#inventory-device-type-replace"),
   inventoryDeviceTypeUpload: document.querySelector("#inventory-device-type-upload"),
   inventoryRetry: document.querySelector("#inventory-retry"),
@@ -148,6 +152,14 @@ const elements = {
   credentialPlanOperations: document.querySelector("#credential-plan-operations"),
   credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
   credentialApply: document.querySelector("#credential-apply"),
+  adminSessionButton: document.querySelector("#admin-session-button"),
+  adminSessionIdentity: document.querySelector("#admin-session-identity"),
+  adminLoginDialog: document.querySelector("#admin-login-dialog"),
+  adminLoginForm: document.querySelector("#admin-login-form"),
+  adminUsername: document.querySelector("#admin-username"),
+  adminPassword: document.querySelector("#admin-password"),
+  adminLoginError: document.querySelector("#admin-login-error"),
+  adminLoginSubmit: document.querySelector("#admin-login-submit"),
 };
 
 const MONITORING_TERMINAL = new Set(["COMPLETED", "FAILED", "PARTIAL"]);
@@ -166,11 +178,16 @@ class ApiError extends Error {
 async function apiRequest(path, options = {}) {
   let response;
   try {
+    const method = options.method || "GET";
+    const csrf = document.cookie.split("; ").find((value) => value.startsWith("atlas_csrf="));
     response = await fetch(path, {
-      method: options.method || "GET",
+      method,
       headers: {
         Accept: "application/json",
         ...(options.body ? { "Content-Type": "application/json" } : {}),
+        ...(!["GET", "HEAD", "OPTIONS"].includes(method) && csrf
+          ? { "X-CSRF-Token": decodeURIComponent(csrf.split("=").slice(1).join("=")) }
+          : {}),
         ...(options.headers || {}),
       },
       body: options.body ? JSON.stringify(options.body) : undefined,
@@ -200,14 +217,17 @@ async function apiRequest(path, options = {}) {
 }
 
 function monitoringHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.monitoringToken}` };
 }
 
 function operatorHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.operatorToken}` };
 }
 
 function requireOperatorToken() {
+  if (state.authenticated) return true;
   const token = elements.operatorToken.value.trim();
   if (!token) {
     toast("Enter the operator token.", "warning");
@@ -220,6 +240,89 @@ function requireOperatorToken() {
   elements.monitoringToken.value = token;
   setPill(elements.operatorStatus, "healthy", "Ready");
   return true;
+}
+
+function renderAdminSession() {
+  if (state.authenticated) {
+    elements.adminSessionIdentity.textContent = state.principal.username;
+    elements.adminSessionIdentity.hidden = false;
+    elements.adminSessionButton.textContent = "Log out";
+    setPill(elements.operatorStatus, "healthy", `Admin: ${state.principal.username}`);
+  } else {
+    elements.adminSessionIdentity.textContent = "";
+    elements.adminSessionIdentity.hidden = true;
+    elements.adminSessionButton.textContent = "Sign in";
+    setPill(elements.operatorStatus, "neutral", "Login required");
+  }
+}
+
+function scheduleAdminExpiry(expiresIn) {
+  if (state.adminExpiryTimer) window.clearTimeout(state.adminExpiryTimer);
+  state.adminExpiryTimer = null;
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) return;
+  state.adminExpiryTimer = window.setTimeout(() => {
+    state.authenticated = false;
+    state.principal = null;
+    state.adminExpiryTimer = null;
+    renderAdminSession();
+    toast("Administrator session expired. Sign in again to continue.", "warning");
+  }, expiresIn * 1000);
+}
+
+async function refreshAdminSession({ prompt = false } = {}) {
+  try {
+    state.principal = await apiRequest("/api/auth/me");
+    state.authenticated = true;
+    scheduleAdminExpiry(state.principal.expires_in);
+  } catch (_error) {
+    scheduleAdminExpiry(0);
+    state.principal = null;
+    state.authenticated = false;
+  }
+  renderAdminSession();
+  if (prompt && !state.authenticated && !elements.adminLoginDialog.open) {
+    elements.adminLoginDialog.showModal();
+    elements.adminUsername.focus();
+  }
+  return state.authenticated;
+}
+
+async function submitAdminLogin(event) {
+  event.preventDefault();
+  elements.adminLoginSubmit.disabled = true;
+  elements.adminLoginError.hidden = true;
+  try {
+    const principal = await apiRequest("/api/auth/login", {
+      method: "POST",
+      body: { username: elements.adminUsername.value, password: elements.adminPassword.value },
+    });
+    state.principal = principal;
+    state.authenticated = true;
+    scheduleAdminExpiry(principal.expires_in);
+    elements.adminPassword.value = "";
+    elements.adminLoginDialog.close();
+    renderAdminSession();
+    toast(`Signed in as ${principal.username}.`, "success");
+  } catch (error) {
+    elements.adminLoginError.textContent = error.safeMessage || "Sign in failed.";
+    elements.adminLoginError.hidden = false;
+  } finally {
+    elements.adminLoginSubmit.disabled = false;
+  }
+}
+
+async function toggleAdminSession() {
+  if (!state.authenticated) {
+    elements.adminLoginDialog.showModal();
+    elements.adminUsername.focus();
+    return;
+  }
+  try { await apiRequest("/api/auth/logout", { method: "POST" }); } catch (_error) { /* local state still clears */ }
+  state.authenticated = false;
+  state.principal = null;
+  scheduleAdminExpiry(0);
+  renderAdminSession();
+  toast("Administrator session ended.", "info");
 }
 
 async function testCiscoIntegration() {
@@ -568,6 +671,12 @@ function updateInventoryDeviceTypeFilename() {
   );
 }
 
+function setInventoryDeviceTypeError(message = "") {
+  elements.inventoryDeviceTypeError.textContent = message;
+  elements.inventoryDeviceTypeError.hidden = !message;
+  elements.inventoryDeviceTypeYaml.setAttribute("aria-invalid", message ? "true" : "false");
+}
+
 function inventoryStatusTone(status) {
   if (["CREATE", "UNCHANGED"].includes(status)) return "healthy";
   if (status === "INVALID") return "degraded";
@@ -741,9 +850,11 @@ async function uploadInventoryDeviceType() {
   const filename = elements.inventoryDeviceTypeFilename.value.trim();
   const yamlContent = elements.inventoryDeviceTypeYaml.value;
   if (!filename || !yamlContent.trim()) {
+    setInventoryDeviceTypeError("Enter the YAML filename and content.");
     toast("Enter the YAML filename and content.", "warning");
     return;
   }
+  setInventoryDeviceTypeError();
   setInventoryBusy(true);
   startInventoryActivity("upload");
   try {
@@ -760,7 +871,10 @@ async function uploadInventoryDeviceType() {
     elements.inventoryDeviceTypeYaml.value = "";
     elements.inventoryDeviceTypeReplace.checked = false;
   } catch (error) {
-    toast(error.safeMessage || "Device Type YAML upload failed.", "error");
+    const message = error.safeMessage || "Device Type YAML upload failed.";
+    setInventoryDeviceTypeError(message);
+    elements.inventoryDeviceTypeYaml.focus();
+    toast("Device Type YAML is invalid. Review the message below the editor.", "error");
     stopInventoryActivity();
     setInventoryBusy(false);
     return;
@@ -1061,8 +1175,8 @@ function renderMonitoringBulkPreview(entries, mode) {
 }
 
 async function loadMonitoringDevices() {
-  state.monitoringToken = elements.monitoringToken.value.trim();
-  if (!state.monitoringToken) {
+  state.monitoringToken = state.authenticated ? "" : elements.monitoringToken.value.trim();
+  if (!state.authenticated && !state.monitoringToken) {
     toast("Enter the monitoring operator token.", "warning");
     return;
   }
@@ -1693,6 +1807,7 @@ async function loadDashboard() {
 }
 
 function prophylaxisHeaders() {
+  if (state.authenticated) return {};
   return { Authorization: `Bearer ${state.prophylaxisToken}` };
 }
 
@@ -1718,12 +1833,16 @@ async function pollProphylaxisRun() {
 }
 
 async function launchProphylaxisRun() {
+  if (state.authenticated) {
+    state.prophylaxisToken = "";
+  } else {
   const token = elements.prophylaxisToken.value.trim();
   if (!token) {
     toast("Enter the operator token.", "warning");
     return;
   }
   state.prophylaxisToken = token;
+  }
   elements.prophylaxisRun.disabled = true;
   try {
     state.prophylaxisRun = await apiRequest("/api/prophylaxis/runs", {
@@ -1791,6 +1910,8 @@ async function queueBackup(device) {
 }
 
 elements.refreshButton.addEventListener("click", loadDashboard);
+elements.adminSessionButton.addEventListener("click", toggleAdminSession);
+elements.adminLoginForm.addEventListener("submit", submitAdminLogin);
 elements.syncButton.addEventListener("click", synchronizeInventory);
 elements.deviceFilter.addEventListener("input", renderDevices);
 elements.deviceSort.addEventListener("change", renderDevices);
@@ -1880,6 +2001,7 @@ elements.inventoryClear.addEventListener("click", () => {
   elements.inventoryTenant.value = "";
   elements.inventorySite.value = "";
   elements.inventoryDeviceTypeYaml.value = "";
+  setInventoryDeviceTypeError();
   elements.inventoryDeviceTypeReplace.checked = false;
   resetInventoryPlan();
   elements.inventoryTable.focus();
@@ -1888,6 +2010,7 @@ elements.inventoryPlanButton.addEventListener("click", planInventory);
 elements.inventoryRetry.addEventListener("click", planInventory);
 elements.inventoryDeviceTypeUpload.addEventListener("click", uploadInventoryDeviceType);
 elements.inventoryDeviceTypeModel.addEventListener("change", updateInventoryDeviceTypeFilename);
+elements.inventoryDeviceTypeYaml.addEventListener("input", () => setInventoryDeviceTypeError());
 elements.inventoryApplyConfirm.addEventListener("change", () => {
   elements.inventoryApply.disabled = state.inventoryBusy
     || !state.inventoryPlan?.apply_allowed
@@ -1898,4 +2021,4 @@ for (const input of [elements.inventoryTable, elements.inventoryTenant, elements
   input.addEventListener("input", resetInventoryPlan);
 }
 
-loadDashboard();
+refreshAdminSession({ prompt: true }).finally(loadDashboard);

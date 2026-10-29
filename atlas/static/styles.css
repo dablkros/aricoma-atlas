@@ -273,6 +273,9 @@ h2 {
 
 .operator-token-field { min-width: 0; }
 
+.admin-login-dialog { width: min(520px, calc(100% - 2rem)); }
+.admin-login-fields { display: grid; gap: 1rem; }
+
 .inventory-dialog {
   width: min(1180px, calc(100% - 2rem));
   max-height: calc(100vh - 2rem);
@@ -1219,12 +1222,31 @@ tbody tr:hover td {
   box-shadow: 0 14px 32px rgba(28, 47, 76, 0.18);
   font-size: 0.8rem;
   line-height: 1.4;
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
 }
 
 .toast-success { border-left-color: var(--healthy); }
 .toast-info { border-left-color: var(--navy); }
 .toast-warning { border-left-color: var(--warning); }
 .toast-error { border-left-color: var(--danger); }
+
+.field-error {
+  margin: 0;
+  padding: 0.65rem 0.75rem;
+  color: #8c2031;
+  background: #fff2f3;
+  border: 1px solid #e8b9c0;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+textarea[aria-invalid="true"] {
+  border-color: var(--danger);
+  box-shadow: 0 0 0 2px rgba(180, 52, 70, 0.12);
+}
 
 .visually-hidden {
   position: absolute;

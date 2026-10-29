@@ -41,6 +41,11 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 '}\n\n'
                 'path "atlas/data/integrations/cisco/support-api" {\n'
                 '  capabilities = ["read"]\n'
+                '}\n\n'
+                '# Authenticate Atlas administrators. Password hashes remain in OpenBao and are\n'
+                '# never materialized into the backend container filesystem.\n'
+                'path "atlas/data/auth/local/users/*" {\n'
+                '  capabilities = ["read"]\n'
                 '}'
             ),
         )
@@ -88,6 +93,22 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         self.assertIn(
             ".runtime/",
             (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
+        )
+
+    def test_deployer_cannot_read_admin_recovery_password(self):
+        policy = (
+            ROOT
+            / "deployment"
+            / "openbao"
+            / "policies"
+            / "atlas-deployer.hcl"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'path "atlas/data/auth/recovery/users/*" {\n'
+            '  capabilities = ["create"]\n'
+            '}',
+            policy,
         )
 
     def test_monitoring_provisioner_policy_has_narrow_secret_permissions(self):

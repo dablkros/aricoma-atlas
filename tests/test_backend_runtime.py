@@ -1,3 +1,4 @@
+import json
 import os
 import tempfile
 import unittest
@@ -313,6 +314,97 @@ class AtlasOperatorTokenTests(unittest.TestCase):
             deploy_backend.sync_backend_operator_token(self.root, self.client)
 
         self.client.login_from_identity.assert_not_called()
+
+
+class AtlasAdminBootstrapTests(unittest.TestCase):
+    def setUp(self):
+        self.temporary = tempfile.TemporaryDirectory()
+        self.root = Path(self.temporary.name)
+        runtime = self.root / ".runtime"
+        runtime.mkdir()
+        (runtime / "openbao-approle.json").write_text("{}\n", encoding="utf-8")
+        self.bootstrap = runtime / "auth/bootstrap-admin.json"
+        self.bootstrap.parent.mkdir()
+        self.record = {
+            "schema_version": 1,
+            "username": "admin",
+            "role": "admin",
+            "active": True,
+            "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$fixture$fixture",
+            "recovery_password": "a readable recovery password",
+        }
+        self.login_record = {
+            key: value
+            for key, value in self.record.items()
+            if key != "recovery_password"
+        }
+        self.bootstrap.write_text(json.dumps(self.record), encoding="utf-8")
+        self.client = Mock()
+        self.client.login_from_identity.return_value = "deployment-token"
+        self.client.kv_read.side_effect = OpenBaoNotFound("missing")
+
+    def tearDown(self):
+        self.temporary.cleanup()
+
+    def test_bootstrap_is_written_once_then_removed(self):
+        marker = deploy_backend.sync_admin_bootstrap(self.root, self.client)
+
+        self.assertEqual(
+            self.client.kv_write.call_args_list,
+            [
+                call(
+                    "deployment-token",
+                    "auth/local/users/admin",
+                    self.login_record,
+                    mount="atlas",
+                    cas=0,
+                ),
+                call(
+                    "deployment-token",
+                    "auth/recovery/users/admin",
+                    {
+                        "schema_version": 1,
+                        "username": "admin",
+                        "password": "a readable recovery password",
+                    },
+                    mount="atlas",
+                    cas=0,
+                ),
+            ],
+        )
+        self.assertFalse(self.bootstrap.exists())
+        self.assertEqual(os.stat(marker).st_mode & 0o777, 0o600)
+        self.assertEqual(json.loads(marker.read_text())["username"], "admin")
+        self.client.revoke_self.assert_called_once_with("deployment-token")
+
+    def test_existing_different_user_record_is_not_overwritten(self):
+        self.client.kv_read.side_effect = None
+        self.client.kv_read.return_value = {**self.login_record, "active": False}
+
+        with self.assertRaisesRegex(RuntimeError, "refusing to overwrite"):
+            deploy_backend.sync_admin_bootstrap(self.root, self.client)
+
+        self.assertTrue(self.bootstrap.exists())
+        self.client.kv_write.assert_not_called()
+
+    def test_upgrade_without_bootstrap_does_not_block_deploy(self):
+        self.bootstrap.unlink()
+
+        self.assertIsNone(deploy_backend.sync_admin_bootstrap(self.root, self.client))
+        self.client.login_from_identity.assert_not_called()
+
+    def test_stale_backend_policy_has_actionable_error(self):
+        self.bootstrap.unlink()
+        marker = self.root / ".runtime/auth/admin-configured"
+        marker.write_text('{"schema_version": 1, "username": "admin"}\n')
+        self.client.kv_read.side_effect = OpenBaoAuthenticationError(
+            "forbidden", status_code=403
+        )
+
+        with self.assertRaisesRegex(RuntimeError, "reconcile Atlas backend roles"):
+            deploy_backend.verify_admin_backend_access(self.root, self.client)
+
+        self.client.revoke_self.assert_called_once_with("deployment-token")
 
 
 class BackendRuntimeTests(unittest.TestCase):

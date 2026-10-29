@@ -13,3 +13,9 @@ path "atlas/data/zabbix/api" {
 path "atlas/data/integrations/cisco/support-api" {
   capabilities = ["read"]
 }
+
+# Authenticate Atlas administrators. Password hashes remain in OpenBao and are
+# never materialized into the backend container filesystem.
+path "atlas/data/auth/local/users/*" {
+  capabilities = ["read"]
+}

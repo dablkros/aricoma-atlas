@@ -25,6 +25,7 @@ class Settings(BaseSettings):
         ".runtime/openbao-credential-writer.json"
     )
     monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
+    admin_session_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
     app_name: str = Field(default="Aricoma Atlas", min_length=1, max_length=100)
     app_version: str = Field(default=__version__, min_length=1, max_length=50)
     environment: Literal["development", "test", "production"] = "development"

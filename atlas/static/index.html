@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261026-3">
-    <script src="/static/app.js?v=20261026-3" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261029-1">
+    <script src="/static/app.js?v=20261029-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -21,6 +21,8 @@
       </div>
       <div class="topbar-meta">
         <span class="environment-label">Operations console</span>
+        <span id="admin-session-identity" class="environment-label" hidden></span>
+        <button id="admin-session-button" class="button button-secondary button-compact" type="button">Sign in</button>
         <span id="connection-state" class="connection-state" role="status">
           <span class="status-dot status-unknown" aria-hidden="true"></span>
           Connecting
@@ -109,11 +111,11 @@
             <p class="section-kicker">Authorized operations</p>
             <h2 id="operator-heading">Operator tools</h2>
           </div>
-          <span id="operator-status" class="status-pill status-pill-neutral">Token required</span>
+          <span id="operator-status" class="status-pill status-pill-neutral">Login required</span>
         </div>
-        <p class="panel-description">One runtime token authorizes explicit Atlas operations. It stays only in this browser tab.</p>
+        <p class="panel-description">A personal, short-lived administrator session authorizes explicit Atlas operations and provides an audit identity.</p>
         <div class="operator-toolbar">
-          <div class="field-group operator-token-field">
+          <div class="field-group operator-token-field" hidden>
             <label for="operator-token">Operator token</label>
             <input id="operator-token" type="password" autocomplete="off" placeholder="Runtime operator token">
           </div>
@@ -534,6 +536,7 @@
             <div class="field-group inventory-paste-field">
               <label for="inventory-device-type-yaml">Device Type YAML</label>
               <textarea id="inventory-device-type-yaml" rows="9" spellcheck="false" placeholder="manufacturer: Cisco&#10;model: ...&#10;slug: ..."></textarea>
+              <p id="inventory-device-type-error" class="field-error" role="alert" hidden></p>
             </div>
             <label class="confirmation-row">
               <input id="inventory-device-type-replace" type="checkbox">
@@ -567,6 +570,33 @@
       <p>Atlas Operations UI · loopback-only beta</p>
       <p>Profylaxia results are stored locally on the Atlas VM.</p>
     </footer>
+
+    <dialog id="admin-login-dialog" class="inventory-dialog admin-login-dialog">
+      <form id="admin-login-form" class="dialog-shell" method="dialog">
+        <div class="dialog-heading">
+          <div>
+            <p class="section-kicker">Atlas administration</p>
+            <h2>Administrator sign in</h2>
+            <p>Use the account created during the first Atlas configuration.</p>
+          </div>
+        </div>
+        <div class="admin-login-fields">
+          <div class="field-group">
+            <label for="admin-username">Username</label>
+            <input id="admin-username" name="username" type="text" autocomplete="username" required maxlength="64">
+          </div>
+          <div class="field-group">
+            <label for="admin-password">Password</label>
+            <input id="admin-password" name="password" type="password" autocomplete="current-password" required maxlength="1024">
+          </div>
+        </div>
+        <p id="admin-login-error" class="operator-result" role="alert" hidden></p>
+        <p class="operator-result">Forgotten password: run <code>sudo atlasctl admin show-password</code> on the Atlas VM. OpenBao quorum shares are required.</p>
+        <div class="dialog-actions">
+          <button id="admin-login-submit" class="button button-primary" type="submit">Sign in</button>
+        </div>
+      </form>
+    </dialog>
 
     <div id="toast-region" class="toast-region" aria-live="polite" aria-atomic="true"></div>
   </body>

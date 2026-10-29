@@ -29,6 +29,24 @@ TRUST_MOUNTED_CATALOG = os.environ.get("ATLAS_INVENTORY_TRUST_MOUNTED_CATALOG") 
 logger = logging.getLogger("atlas.inventory")
 
 
+def _yaml_error_message(exc: yaml.YAMLError) -> str:
+    """Return a stable, human-readable YAML syntax location."""
+    mark = getattr(exc, "problem_mark", None)
+    problem = getattr(exc, "problem", None)
+    description = (
+        str(problem).strip()
+        if isinstance(problem, str)
+        else "invalid YAML syntax"
+    )
+    if mark is None:
+        return f"Invalid Device Type YAML: {description}"
+    return (
+        f"Invalid Device Type YAML at line {mark.line + 1}, "
+        f"column {mark.column + 1}: {description}. "
+        "Check that every key starts on its own line."
+    )
+
+
 def authorized(request: Request) -> None:
     require_operator(request, scope="inventory")
 
@@ -154,7 +172,13 @@ def upload_device_type(body: DeviceTypeUploadRequest) -> dict:
         errors = provision_netbox.validate_item(item)
         if errors:
             raise ValueError("; ".join(errors))
-    except (ValueError, yaml.YAMLError) as exc:
+    except yaml.YAMLError as exc:
+        raise AtlasError(
+            422,
+            "device_type_yaml_invalid",
+            _yaml_error_message(exc),
+        ) from None
+    except ValueError as exc:
         raise AtlasError(422, "device_type_yaml_invalid", str(exc)) from None
     if DEVICE_TYPES.is_symlink():
         raise AtlasError(409, "device_type_directory_invalid", "Device Type directory is invalid")
