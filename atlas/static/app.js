@@ -113,6 +113,7 @@ const elements = {
   inventoryDeviceTypeModel: document.querySelector("#inventory-device-type-model"),
   inventoryDeviceTypeFilename: document.querySelector("#inventory-device-type-filename"),
   inventoryDeviceTypeYaml: document.querySelector("#inventory-device-type-yaml"),
+  inventoryDeviceTypeError: document.querySelector("#inventory-device-type-error"),
   inventoryDeviceTypeReplace: document.querySelector("#inventory-device-type-replace"),
   inventoryDeviceTypeUpload: document.querySelector("#inventory-device-type-upload"),
   inventoryRetry: document.querySelector("#inventory-retry"),
@@ -670,6 +671,12 @@ function updateInventoryDeviceTypeFilename() {
   );
 }
 
+function setInventoryDeviceTypeError(message = "") {
+  elements.inventoryDeviceTypeError.textContent = message;
+  elements.inventoryDeviceTypeError.hidden = !message;
+  elements.inventoryDeviceTypeYaml.setAttribute("aria-invalid", message ? "true" : "false");
+}
+
 function inventoryStatusTone(status) {
   if (["CREATE", "UNCHANGED"].includes(status)) return "healthy";
   if (status === "INVALID") return "degraded";
@@ -843,9 +850,11 @@ async function uploadInventoryDeviceType() {
   const filename = elements.inventoryDeviceTypeFilename.value.trim();
   const yamlContent = elements.inventoryDeviceTypeYaml.value;
   if (!filename || !yamlContent.trim()) {
+    setInventoryDeviceTypeError("Enter the YAML filename and content.");
     toast("Enter the YAML filename and content.", "warning");
     return;
   }
+  setInventoryDeviceTypeError();
   setInventoryBusy(true);
   startInventoryActivity("upload");
   try {
@@ -862,7 +871,10 @@ async function uploadInventoryDeviceType() {
     elements.inventoryDeviceTypeYaml.value = "";
     elements.inventoryDeviceTypeReplace.checked = false;
   } catch (error) {
-    toast(error.safeMessage || "Device Type YAML upload failed.", "error");
+    const message = error.safeMessage || "Device Type YAML upload failed.";
+    setInventoryDeviceTypeError(message);
+    elements.inventoryDeviceTypeYaml.focus();
+    toast("Device Type YAML is invalid. Review the message below the editor.", "error");
     stopInventoryActivity();
     setInventoryBusy(false);
     return;
@@ -1989,6 +2001,7 @@ elements.inventoryClear.addEventListener("click", () => {
   elements.inventoryTenant.value = "";
   elements.inventorySite.value = "";
   elements.inventoryDeviceTypeYaml.value = "";
+  setInventoryDeviceTypeError();
   elements.inventoryDeviceTypeReplace.checked = false;
   resetInventoryPlan();
   elements.inventoryTable.focus();
@@ -1997,6 +2010,7 @@ elements.inventoryPlanButton.addEventListener("click", planInventory);
 elements.inventoryRetry.addEventListener("click", planInventory);
 elements.inventoryDeviceTypeUpload.addEventListener("click", uploadInventoryDeviceType);
 elements.inventoryDeviceTypeModel.addEventListener("change", updateInventoryDeviceTypeFilename);
+elements.inventoryDeviceTypeYaml.addEventListener("input", () => setInventoryDeviceTypeError());
 elements.inventoryApplyConfirm.addEventListener("change", () => {
   elements.inventoryApply.disabled = state.inventoryBusy
     || !state.inventoryPlan?.apply_allowed
