@@ -21,7 +21,7 @@ from atlas.api.schemas.inventory import (
 from atlas.inventory.config import load_inventory_config
 from atlas.inventory.connections import ConnectionMappingError, ConnectionResolver
 from atlas.inventory.importer import (
-    InventoryConflict, InventoryImporter, InventoryInvalid, related_id,
+    InventoryConflict, InventoryImporter, InventoryInvalid, related_id, slugify,
 )
 from atlas.inventory.parser import parse_inventory_table
 from atlas.services.errors import DependencyError
@@ -145,16 +145,33 @@ def _tenant_operation(body: TenantRequest, request: Request, *, apply: bool) -> 
     if apply and body.plan_hash != expected:
         raise AtlasError(409, "inventory_plan_stale", "Tenant input changed; create a new plan")
     try:
-        tenant, operation = _importer(request).ensure_tenant(
-            values["name"], slug=values["slug"], group=values["group"], apply=apply,
+        importer = _importer(request)
+        tenant, tenant_operation, vrf, vrf_operation = (
+            importer.ensure_tenant_with_management_vrf(
+                values["name"],
+                slug=values["slug"],
+                group=values["group"],
+                apply=apply,
+            )
         )
     except (InventoryInvalid, InventoryConflict, DependencyError) as exc:
         raise _inventory_error(exc) from None
     return {
         "plan_hash": expected,
         "kind": "tenant",
-        "operation": operation,
+        "operation": (
+            "CREATE"
+            if "CREATE" in {tenant_operation, vrf_operation}
+            else "UNCHANGED"
+        ),
         "object": tenant or values,
+        "management_vrf": vrf or {
+            "name": f"{values['slug'] or slugify(values['name'])}-mgmt",
+        },
+        "operations": {
+            "tenant": tenant_operation,
+            "management_vrf": vrf_operation,
+        },
     }
 
 

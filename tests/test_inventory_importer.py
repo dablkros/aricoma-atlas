@@ -88,11 +88,18 @@ class InventoryImporterTests(unittest.TestCase):
             "id": 20, "model": "C9500-48Y4C", "default_platform": self.platform,
         }
         self.role = {"id": 40, "name": "Network Device", "slug": "network-device"}
+        self.default_vrf = {
+            "id": 50,
+            "name": "acme-slovakia-mgmt",
+            "tenant": {"id": 1},
+            "enforce_unique": True,
+        }
         self.client.objects["/api/tenancy/tenants/"].append(self.tenant)
         self.client.objects["/api/dcim/sites/"].extend([self.site_br, self.site_za])
         self.client.objects["/api/dcim/platforms/"].append(self.platform)
         self.client.objects["/api/dcim/device-types/"].append(self.device_type)
         self.client.objects["/api/dcim/device-roles/"].append(self.role)
+        self.client.objects["/api/ipam/vrfs/"].append(self.default_vrf)
         self.config = normalize_inventory_config({
             "default_tenant": {
                 "name": "ACME Slovakia", "slug": "acme-slovakia", "provision": True,
@@ -125,6 +132,40 @@ class InventoryImporterTests(unittest.TestCase):
         tenant, operation = self.importer.ensure_tenant("ACME Slovakia", apply=True)
         self.assertEqual((tenant["id"], operation), (1, "UNCHANGED"))
         self.assertEqual(self.client.writes, [])
+
+    def test_tenant_bundle_creates_default_management_vrf(self):
+        self.client.objects["/api/tenancy/tenants/"].clear()
+        self.client.objects["/api/ipam/vrfs/"].clear()
+
+        tenant, tenant_operation, vrf, vrf_operation = (
+            self.importer.ensure_tenant_with_management_vrf(
+                "Customer A", apply=True,
+            )
+        )
+
+        self.assertEqual((tenant_operation, vrf_operation), ("CREATE", "CREATE"))
+        self.assertEqual(vrf["name"], "customer-a-mgmt")
+        self.assertEqual(vrf["tenant"], tenant["id"])
+        self.assertTrue(vrf["enforce_unique"])
+
+    def test_tenant_bundle_is_idempotent(self):
+        tenant, tenant_operation, vrf, vrf_operation = (
+            self.importer.ensure_tenant_with_management_vrf(
+                "ACME Slovakia", apply=True,
+            )
+        )
+
+        self.assertEqual((tenant_operation, vrf_operation), ("UNCHANGED", "UNCHANGED"))
+        self.assertEqual((tenant["id"], vrf["id"]), (1, self.default_vrf["id"]))
+        self.assertEqual(self.client.writes, [])
+
+    def test_import_without_tenant_management_vrf_never_uses_global(self):
+        self.client.objects["/api/ipam/vrfs/"].clear()
+
+        report = self.importer.import_rows([self.row()])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.INVALID)
+        self.assertEqual(report.rows[0].reason, "vrf_not_found")
 
     def test_optional_tenant_group_is_created_idempotently(self):
         self.client.objects["/api/tenancy/tenants/"].clear()
@@ -351,11 +392,13 @@ class InventoryImporterTests(unittest.TestCase):
         address = self.client.objects["/api/ipam/ip-addresses/"][0]
         device = self.client.objects["/api/dcim/devices/"][0]
         self.assertEqual(address["address"], "10.0.0.10/32")
+        self.assertEqual(address["vrf"], self.default_vrf["id"])
+        self.assertEqual(address["tenant"], self.tenant["id"])
         self.assertEqual(device["primary_ip4"], address["id"])
 
     def test_15_assigned_ip_conflict_is_detected_in_dry_run(self):
         self.client.objects["/api/ipam/ip-addresses/"].append({
-            "id": 77, "address": "10.0.0.10/32", "vrf": None,
+            "id": 77, "address": "10.0.0.10/32", "vrf": self.default_vrf["id"],
             "assigned_object_type": "dcim.interface", "assigned_object_id": 999,
         })
         report = self.importer.import_rows([self.row()])

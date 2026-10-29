@@ -292,8 +292,11 @@ class ApiTests(unittest.TestCase):
 
     def test_tenant_plan_and_apply_use_exact_plan_hash(self):
         importer = SimpleNamespace(
-            ensure_tenant=lambda name, slug, group, apply: (
+            ensure_tenant_with_management_vrf=lambda name, slug, group, apply: (
                 {"id": 7, "name": name, "slug": slug or "customer-a"}
+                if apply else None,
+                "CREATE",
+                {"id": 8, "name": "customer-a-mgmt", "tenant": 7}
                 if apply else None,
                 "CREATE",
             )
@@ -317,6 +320,7 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(planned.status_code, 200)
         self.assertEqual(applied.status_code, 200)
         self.assertEqual(applied.json()["object"]["slug"], "customer-a")
+        self.assertEqual(applied.json()["management_vrf"]["name"], "customer-a-mgmt")
 
     def test_tenant_apply_rejects_changed_plan(self):
         response = self.client.post(

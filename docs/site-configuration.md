@@ -94,6 +94,9 @@ material according to the customer PKI process.
 
 The optional `inventory.default_tenant` stores the first customer's name,
 slug and whether deployment should provision it after the NetBox baseline.
+Provisioning a tenant also creates or reuses its tenant-owned management VRF
+named `<tenant-slug>-mgmt`. Device imports use this VRF when the row and import
+request do not explicitly select another tenant-owned VRF.
 Omitting the section preserves the existing workflow. Import policy also
 defines the management interface name (`mgmt0`), default IPv4 prefix (`/32`),
 default Device Role and explicit model aliases/role mappings. See

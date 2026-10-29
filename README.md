@@ -38,6 +38,9 @@ quorum-controlled OpenBao operáciu. Čitateľná recovery hodnota je vedomý
 bezpečnostný kompromis pre prípad zabudnutého hesla.
 Interaktívne zadaný zákazník/Tenant sa pri deploymente idempotentne vytvorí,
 ak chýba, alebo znovu použije, ak už v NetBoxe existuje s rovnakou identitou.
+Atlas spolu s ním vytvorí alebo znovu použije management VRF
+`<tenant-slug>-mgmt`. Importované management IP bez explicitnej VRF sa ukladajú
+do tejto tenant-owned VRF, nie do globálnej routing tabuľky.
 Pokročilý deklaratívny site YAML môže automatické vytvorenie explicitne zakázať
 pomocou `inventory.default_tenant.provision: false`.
 Na existujúcej inštalácii po upgrade použi:

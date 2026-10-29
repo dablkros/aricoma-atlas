@@ -740,7 +740,10 @@ async function runInventoryStructure(apply) {
     });
     state.inventoryStructurePlan = result;
     const target = result.object?.slug || result.object?.name || payload.name;
-    elements.inventoryStructureResult.textContent = `${titleCase(result.operation)} ${kind}: ${target}`;
+    const managementVrf = kind === "tenant" ? result.management_vrf?.name : null;
+    elements.inventoryStructureResult.textContent = managementVrf
+      ? `${titleCase(result.operation)} ${kind}: ${target}; management VRF: ${managementVrf}`
+      : `${titleCase(result.operation)} ${kind}: ${target}`;
     elements.inventoryStructureConfirm.checked = false;
     elements.inventoryStructureConfirm.disabled = apply;
     if (apply) {

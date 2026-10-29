@@ -122,6 +122,38 @@ class InventoryImporter:
             "/api/tenancy/tenant-groups/", {"name": clean_name, "slug": group_slug},
         ), "CREATE"
 
+    @staticmethod
+    def management_vrf_name(tenant: dict) -> str:
+        """Return the conventional tenant-owned management routing domain."""
+        tenant_slug = str(tenant.get("slug", "")).strip()
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", tenant_slug):
+            raise InventoryInvalid("tenant_slug_invalid_for_management_vrf")
+        return f"{tenant_slug}-mgmt"
+
+    def ensure_tenant_with_management_vrf(
+        self,
+        name: str,
+        *,
+        apply: bool,
+        slug: str | None = None,
+        group: str | None = None,
+    ) -> tuple[dict | None, str, dict | None, str]:
+        """Create or reuse a tenant and its default management IPAM VRF."""
+        tenant, tenant_operation = self.ensure_tenant(
+            name, apply=apply, slug=slug, group=group,
+        )
+        planned_tenant = tenant or {
+            "id": -1,
+            "name": " ".join(name.split()),
+            "slug": slug or slugify(name),
+        }
+        vrf, vrf_operation = self.ensure_vrf(
+            planned_tenant,
+            self.management_vrf_name(planned_tenant),
+            apply=apply,
+        )
+        return tenant, tenant_operation, vrf, vrf_operation
+
     def resolve_tenant(self, value: str) -> dict:
         clean = " ".join(value.split())
         candidate_slug = clean if re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", clean) else slugify(clean)
@@ -328,6 +360,13 @@ class InventoryImporter:
         vrf = matches[0]
         if related_id(vrf.get("tenant")) != tenant.get("id"):
             raise InventoryConflict("vrf_belongs_to_different_tenant")
+        return vrf
+
+    def resolve_vrf(self, value: str, tenant: dict) -> dict:
+        """Resolve one explicit tenant-owned VRF for operational callers."""
+        vrf = self._resolve_vrf(value, tenant)
+        if vrf is None:
+            raise InventoryInvalid("vrf_not_found")
         return vrf
 
     def _address(self, value: str) -> str:
@@ -584,7 +623,8 @@ class InventoryImporter:
                 )
                 platform = self._resolve_platform(row, device_type)
                 role = self._resolve_role(row, device_type, platform)
-                vrf = self._resolve_vrf(row.vrf or vrf_override, tenant)
+                vrf_label = row.vrf or vrf_override or self.management_vrf_name(tenant)
+                vrf = self._resolve_vrf(vrf_label, tenant)
                 payload = self._device_payload(hostname, tenant, site, device_type, role, platform)
                 device = self._existing_device(hostname, tenant, site)
                 created = device is None

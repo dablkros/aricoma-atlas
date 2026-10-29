@@ -160,13 +160,27 @@ def provision_defaults(importer: InventoryImporter, config: dict, *, apply: bool
         print("[INFO] Default tenant was not configured; tenant provisioning skipped")
         return 0
     if tenant.get("provision") is True:
-        resolved, operation = importer.ensure_tenant(
-            tenant["name"], apply=apply, slug=tenant["slug"], group=tenant.get("group")
+        resolved, operation, resolved_vrf, vrf_operation = (
+            importer.ensure_tenant_with_management_vrf(
+                tenant["name"],
+                apply=apply,
+                slug=tenant["slug"],
+                group=tenant.get("group"),
+            )
         )
     else:
         resolved = importer.resolve_tenant(tenant["slug"])
         operation = "UNCHANGED"
+        resolved_vrf = importer.resolve_vrf(
+            importer.management_vrf_name(resolved), resolved,
+        )
+        vrf_operation = "UNCHANGED"
     print(f"[{operation}] Tenant {tenant['name']} ({tenant['slug']})")
+    vrf_name = importer.management_vrf_name(
+        resolved or {"slug": tenant["slug"]}
+    )
+    vrf_identifier = resolved_vrf.get("id") if resolved_vrf else "planned"
+    print(f"[{vrf_operation}] VRF {vrf_name} ({vrf_identifier})")
     site = config.get("default_site")
     if site and site.get("provision") is True:
         resolved_tenant = resolved or {
@@ -608,11 +622,18 @@ def main() -> int:
 
     if args.command == "tenant":
         importer = InventoryImporter(client, config)
-        tenant, operation = importer.ensure_tenant(
-            args.name, apply=apply, group=args.group
+        tenant, operation, vrf, vrf_operation = (
+            importer.ensure_tenant_with_management_vrf(
+                args.name, apply=apply, group=args.group,
+            )
         )
         slug = tenant.get("slug") if tenant else "planned"
         print(f"[{operation}] Tenant {args.name} ({slug})")
+        vrf_name = importer.management_vrf_name(
+            tenant or {"slug": slugify(args.name)}
+        )
+        vrf_identifier = vrf.get("id") if vrf else "planned"
+        print(f"[{vrf_operation}] VRF {vrf_name} ({vrf_identifier})")
         return 0
 
     if args.command == "site":
