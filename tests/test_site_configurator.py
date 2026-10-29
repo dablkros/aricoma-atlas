@@ -1,10 +1,13 @@
 import importlib.util
+import io
 import grp
 import os
 import pwd
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
+from unittest.mock import patch
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -94,6 +97,28 @@ class SiteConfiguratorTests(unittest.TestCase):
         self.assertEqual(site["inventory"]["default_tenant"]["slug"], "acme-slovakia")
         self.assertEqual(site["inventory"]["default_site"]["slug"], "bratislava-dc")
         self.assertEqual(site["inventory"]["management_interface"], "mgmt0")
+
+    def test_interactive_tenant_is_always_created_or_reused(self):
+        answers = [
+            "10.20.30.40",
+            "atlas.example.internal",
+            "lab_generated",
+            "ACME Slovakia",
+            "acme-slovakia",
+            "Bratislava DC",
+            "10.20.30.40",
+            "443",
+            "10.20.30.0/24",
+            "30",
+        ]
+        output = io.StringIO()
+
+        with patch.object(self.module, "_prompt", side_effect=answers), redirect_stdout(output):
+            site = self.module.interactive_site(("netbox", "zabbix"))
+
+        self.assertTrue(site["inventory"]["default_tenant"]["provision"])
+        self.assertIn("reuse this NetBox Tenant", output.getvalue())
+        self.assertNotIn("Create Tenant?", output.getvalue())
 
     def test_site_input_supports_network_specific_egress_profiles(self):
         raw = self.site()

@@ -549,14 +549,15 @@ def interactive_site(service_names=SERVICES):
     if tenant_name:
         default_slug = slugify(tenant_name)
         tenant_slug = _prompt("Tenant slug", default_slug)
-        create_tenant = _prompt("Create Tenant? (Y/n)", "Y")
-        if str(create_tenant).strip().casefold() not in {"y", "yes", "n", "no"}:
-            raise ValueError("Create Tenant must be answered with Y or n")
         inventory["default_tenant"] = {
             "name": tenant_name,
             "slug": tenant_slug,
-            "provision": str(create_tenant).strip().casefold() in {"y", "yes"},
+            "provision": True,
         }
+        print(
+            "[INFO] Atlas will reuse this NetBox Tenant when it exists or create "
+            "it during deployment when it is missing."
+        )
         site_name = _prompt("Default inventory Site name (optional)", "")
         if site_name:
             inventory["default_site"] = {

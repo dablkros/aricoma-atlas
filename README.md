@@ -31,6 +31,10 @@ sudo atlasctl deploy
 Konfigurátor sa pri prvom spustení opýta aj na lokálne Atlas admin meno a
 heslo. Do runtime zapíše iba Argon2id hash. Prvý deploy ho jednorazovo prenesie
 do `atlas/auth/local/users/<username>` v OpenBao a lokálny bootstrap odstráni.
+Interaktívne zadaný zákazník/Tenant sa pri deploymente idempotentne vytvorí,
+ak chýba, alebo znovu použije, ak už v NetBoxe existuje s rovnakou identitou.
+Pokročilý deklaratívny site YAML môže automatické vytvorenie explicitne zakázať
+pomocou `inventory.default_tenant.provision: false`.
 Na existujúcej inštalácii po upgrade použi:
 
 ```bash
