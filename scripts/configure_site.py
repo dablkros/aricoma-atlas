@@ -513,6 +513,7 @@ def _collect_admin_bootstrap(target_root):
         "role": ROLE_ADMIN,
         "active": True,
         "password_hash": hash_password(password),
+        "recovery_password": password,
     }
 
 

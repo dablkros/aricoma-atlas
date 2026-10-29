@@ -95,6 +95,22 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
         )
 
+    def test_deployer_cannot_read_admin_recovery_password(self):
+        policy = (
+            ROOT
+            / "deployment"
+            / "openbao"
+            / "policies"
+            / "atlas-deployer.hcl"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            'path "atlas/data/auth/recovery/users/*" {\n'
+            '  capabilities = ["create"]\n'
+            '}',
+            policy,
+        )
+
     def test_monitoring_provisioner_policy_has_narrow_secret_permissions(self):
         spec = deploy_openbao.RUNTIME_ROLES["atlas-monitoring-provisioner"]
         policy = spec["policy_file"].read_text(encoding="utf-8")

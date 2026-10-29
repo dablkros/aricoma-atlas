@@ -61,8 +61,10 @@ class AtlasAuthenticationTests(unittest.TestCase):
         self.assertGreaterEqual(len(token), 32)
         self.assertGreaterEqual(len(csrf), 32)
         self.assertEqual(service.authenticate(token)[0], principal)
+        self.assertEqual(service.remaining_ttl(token), 300)
         now[0] = 401.0
         self.assertIsNone(service.authenticate(token))
+        self.assertEqual(service.remaining_ttl(token), 0)
 
     def test_unknown_user_and_wrong_password_share_safe_error(self):
         service = AdminSessionService(SecretReader({}))
@@ -106,7 +108,9 @@ class AtlasAuthenticationTests(unittest.TestCase):
                 )
                 self.assertEqual(login.status_code, 200)
                 self.assertNotIn("access_token", login.json())
-                self.assertEqual(client.get("/api/auth/me").status_code, 200)
+                current = client.get("/api/auth/me")
+                self.assertEqual(current.status_code, 200)
+                self.assertGreater(current.json()["expires_in"], 0)
                 self.assertEqual(client.post("/api/auth/logout").status_code, 403)
                 csrf = client.cookies.get("atlas_csrf")
                 self.assertEqual(

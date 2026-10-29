@@ -25,6 +25,7 @@ const state = {
   credentialSelectedDeviceIds: new Set(),
   authenticated: false,
   principal: null,
+  adminExpiryTimer: null,
 };
 
 const elements = {
@@ -151,6 +152,7 @@ const elements = {
   credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
   credentialApply: document.querySelector("#credential-apply"),
   adminSessionButton: document.querySelector("#admin-session-button"),
+  adminSessionIdentity: document.querySelector("#admin-session-identity"),
   adminLoginDialog: document.querySelector("#admin-login-dialog"),
   adminLoginForm: document.querySelector("#admin-login-form"),
   adminUsername: document.querySelector("#admin-username"),
@@ -241,19 +243,38 @@ function requireOperatorToken() {
 
 function renderAdminSession() {
   if (state.authenticated) {
-    elements.adminSessionButton.textContent = `${state.principal.username} · Sign out`;
+    elements.adminSessionIdentity.textContent = state.principal.username;
+    elements.adminSessionIdentity.hidden = false;
+    elements.adminSessionButton.textContent = "Log out";
     setPill(elements.operatorStatus, "healthy", `Admin: ${state.principal.username}`);
   } else {
+    elements.adminSessionIdentity.textContent = "";
+    elements.adminSessionIdentity.hidden = true;
     elements.adminSessionButton.textContent = "Sign in";
     setPill(elements.operatorStatus, "neutral", "Login required");
   }
+}
+
+function scheduleAdminExpiry(expiresIn) {
+  if (state.adminExpiryTimer) window.clearTimeout(state.adminExpiryTimer);
+  state.adminExpiryTimer = null;
+  if (!Number.isFinite(expiresIn) || expiresIn <= 0) return;
+  state.adminExpiryTimer = window.setTimeout(() => {
+    state.authenticated = false;
+    state.principal = null;
+    state.adminExpiryTimer = null;
+    renderAdminSession();
+    toast("Administrator session expired. Sign in again to continue.", "warning");
+  }, expiresIn * 1000);
 }
 
 async function refreshAdminSession({ prompt = false } = {}) {
   try {
     state.principal = await apiRequest("/api/auth/me");
     state.authenticated = true;
+    scheduleAdminExpiry(state.principal.expires_in);
   } catch (_error) {
+    scheduleAdminExpiry(0);
     state.principal = null;
     state.authenticated = false;
   }
@@ -276,6 +297,7 @@ async function submitAdminLogin(event) {
     });
     state.principal = principal;
     state.authenticated = true;
+    scheduleAdminExpiry(principal.expires_in);
     elements.adminPassword.value = "";
     elements.adminLoginDialog.close();
     renderAdminSession();
@@ -297,6 +319,7 @@ async function toggleAdminSession() {
   try { await apiRequest("/api/auth/logout", { method: "POST" }); } catch (_error) { /* local state still clears */ }
   state.authenticated = false;
   state.principal = null;
+  scheduleAdminExpiry(0);
   renderAdminSession();
   toast("Administrator session ended.", "info");
 }

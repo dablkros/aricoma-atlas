@@ -29,8 +29,13 @@ sudo atlasctl deploy
 ```
 
 Konfigurátor sa pri prvom spustení opýta aj na lokálne Atlas admin meno a
-heslo. Do runtime zapíše iba Argon2id hash. Prvý deploy ho jednorazovo prenesie
-do `atlas/auth/local/users/<username>` v OpenBao a lokálny bootstrap odstráni.
+heslo. Do dočasného runtime bootstrapu s právami `0600` zapíše Argon2id hash aj
+recovery heslo. Prvý deploy uloží hash do
+`atlas/auth/local/users/<username>`, čitateľné heslo oddelene do
+`atlas/auth/recovery/users/<username>` a lokálny bootstrap odstráni. Backend má
+prístup iba k prihlasovaciemu hashu; recovery secret sa dá zobraziť iba cez
+quorum-controlled OpenBao operáciu. Čitateľná recovery hodnota je vedomý
+bezpečnostný kompromis pre prípad zabudnutého hesla.
 Interaktívne zadaný zákazník/Tenant sa pri deploymente idempotentne vytvorí,
 ak chýba, alebo znovu použije, ak už v NetBoxe existuje s rovnakou identitou.
 Pokročilý deklaratívny site YAML môže automatické vytvorenie explicitne zakázať
@@ -39,6 +44,7 @@ Na existujúcej inštalácii po upgrade použi:
 
 ```bash
 sudo atlasctl admin bootstrap
+sudo atlasctl admin show-password
 sudo atlasctl openbao  # existing VM: reconcile Atlas backend roles (3 shares)
 sudo atlasctl deploy
 sudo atlasctl login
@@ -1182,7 +1188,7 @@ sudo ./update.sh --verbose
 
 ```text
 sudo atlasctl configure [--site-file FILE] [--check] [--force]
-sudo atlasctl admin bootstrap
+sudo atlasctl admin bootstrap|show-password
 sudo atlasctl login|logout|whoami
 sudo atlasctl deploy [deploy_atlas.py options]
 sudo atlasctl status
@@ -1204,8 +1210,9 @@ Význam:
 | Príkaz | Úloha |
 |---|---|
 | `sudo atlasctl configure` | Interaktívne vytvorí chránenú proxy, TLS a monitoring site konfiguráciu. |
-| `sudo atlasctl admin bootstrap` | Na existujúcej inštalácii pripraví jednorazový admin hash pre nasledujúci deploy. |
-| `sudo atlasctl login` | Vytvorí 15-minútovú osobnú reláciu pre chránené prevádzkové príkazy. |
+| `sudo atlasctl admin bootstrap` | Na existujúcej inštalácii pripraví jednorazový admin login a recovery bootstrap pre nasledujúci deploy. |
+| `sudo atlasctl admin show-password` | Po zadaní OpenBao quorum share kľúčov zobrazí čitateľné heslo lokálneho Atlas administrátora. |
+| `sudo atlasctl login` | Vytvorí predvolene hodinovú osobnú reláciu pre chránené prevádzkové príkazy. |
 | `sudo atlasctl logout` | Revokuje lokálnu CLI reláciu. |
 | `sudo atlasctl whoami` | Zobrazí meno a rolu aktuálnej CLI relácie. |
 | `sudo atlasctl configure --site-file FILE --check` | Overí deklaratívny site vstup a TLS bez zápisu. |
@@ -1698,6 +1705,7 @@ Helper aktuálne podporuje napríklad:
 
 - vytvorenie krátkodobého Atlas deployer tokenu,
 - zosúladenie `atlas-backend` policy, AppRole a lokálnej machine identity na existujúcej inštalácii,
+- jednorazové uloženie a quorum-controlled zobrazenie Atlas admin recovery hesla,
 - quorum-based temporary root workflow,
 - revoke tokenu,
 - inspect tokenu.

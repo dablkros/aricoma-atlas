@@ -95,7 +95,11 @@ def me(request: Request) -> dict:
     principal = authenticated_principal(request, enforce_csrf=False)
     if principal is None:
         raise AtlasError(401, "authentication_required", "Administrator login required")
-    return {"username": principal.username, "role": principal.role}
+    return {
+        "username": principal.username,
+        "role": principal.role,
+        "expires_in": request.app.state.auth.remaining_ttl(_session_token(request)),
+    }
 
 
 @router.post("/logout", status_code=204)

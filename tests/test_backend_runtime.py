@@ -331,6 +331,12 @@ class AtlasAdminBootstrapTests(unittest.TestCase):
             "role": "admin",
             "active": True,
             "password_hash": "$argon2id$v=19$m=65536,t=3,p=4$fixture$fixture",
+            "recovery_password": "a readable recovery password",
+        }
+        self.login_record = {
+            key: value
+            for key, value in self.record.items()
+            if key != "recovery_password"
         }
         self.bootstrap.write_text(json.dumps(self.record), encoding="utf-8")
         self.client = Mock()
@@ -343,12 +349,28 @@ class AtlasAdminBootstrapTests(unittest.TestCase):
     def test_bootstrap_is_written_once_then_removed(self):
         marker = deploy_backend.sync_admin_bootstrap(self.root, self.client)
 
-        self.client.kv_write.assert_called_once_with(
-            "deployment-token",
-            "auth/local/users/admin",
-            self.record,
-            mount="atlas",
-            cas=0,
+        self.assertEqual(
+            self.client.kv_write.call_args_list,
+            [
+                call(
+                    "deployment-token",
+                    "auth/local/users/admin",
+                    self.login_record,
+                    mount="atlas",
+                    cas=0,
+                ),
+                call(
+                    "deployment-token",
+                    "auth/recovery/users/admin",
+                    {
+                        "schema_version": 1,
+                        "username": "admin",
+                        "password": "a readable recovery password",
+                    },
+                    mount="atlas",
+                    cas=0,
+                ),
+            ],
         )
         self.assertFalse(self.bootstrap.exists())
         self.assertEqual(os.stat(marker).st_mode & 0o777, 0o600)
@@ -357,7 +379,7 @@ class AtlasAdminBootstrapTests(unittest.TestCase):
 
     def test_existing_different_user_record_is_not_overwritten(self):
         self.client.kv_read.side_effect = None
-        self.client.kv_read.return_value = {**self.record, "active": False}
+        self.client.kv_read.return_value = {**self.login_record, "active": False}
 
         with self.assertRaisesRegex(RuntimeError, "refusing to overwrite"):
             deploy_backend.sync_admin_bootstrap(self.root, self.client)

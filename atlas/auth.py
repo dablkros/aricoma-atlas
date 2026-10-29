@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import hashlib
+import math
 import re
 import secrets
 from threading import Lock
@@ -75,7 +76,7 @@ class _Session:
 class AdminSessionService:
     """Authenticate OpenBao-backed users and keep opaque sessions in memory."""
 
-    def __init__(self, secret_reader, *, ttl_seconds: int = 900, clock=time.monotonic):
+    def __init__(self, secret_reader, *, ttl_seconds: int = 3600, clock=time.monotonic):
         self.secret_reader = secret_reader
         self.ttl_seconds = ttl_seconds
         self.clock = clock
@@ -161,6 +162,16 @@ class AdminSessionService:
             if session is None:
                 return None
             return session.principal, session.csrf_token
+
+    def remaining_ttl(self, token: str) -> int:
+        if not isinstance(token, str) or len(token) < 32:
+            return 0
+        with self._lock:
+            self._purge_locked()
+            session = self._sessions.get(self._session_key(token))
+            if session is None:
+                return 0
+            return max(0, math.ceil(session.expires_at - self.clock()))
 
     def logout(self, token: str) -> None:
         if isinstance(token, str) and token:

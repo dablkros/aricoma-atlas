@@ -23,7 +23,7 @@ usage() {
 Usage:
   sudo atlasctl configure [--site-file FILE] [--check] [--force]
   sudo atlasctl login|logout|whoami
-  sudo atlasctl admin bootstrap
+  sudo atlasctl admin bootstrap|show-password
   sudo atlasctl components show
   sudo atlasctl components add oxidized|zabbix
   sudo atlasctl deploy [deploy_atlas.py options]
@@ -54,6 +54,7 @@ Commands:
   logout                Revoke the current local administrator session.
   whoami                Show the authenticated Atlas administrator.
   admin bootstrap       Create the one-time administrator bootstrap on upgrades.
+  admin show-password   Read the stored administrator password using OpenBao quorum.
   configure             Create proxy, TLS and monitoring site configuration.
   components show       Show the fixed core and installed optional components.
   components add        Permanently add an optional component.
@@ -95,6 +96,17 @@ admin_auth() {
         runuser -u "$caller" -- \
             "$PYTHON" "${ATLAS_ROOT}/scripts/admin_auth_cli.py" "$action"
     fi
+}
+
+show_admin_password() {
+    local -a env_args=()
+    while IFS= read -r -d '' item; do
+        env_args+=("$item")
+    done < <(atlas_env)
+
+    cd "$ATLAS_ROOT"
+    runuser -u "$ATLAS_USER" -- env "${env_args[@]}" \
+        "$PYTHON" "${ATLAS_ROOT}/scripts/openbao_access.py" --show-admin-password
 }
 
 atlas_env() {
@@ -383,9 +395,19 @@ main() {
             ;;
         admin)
             shift
-            [[ "${1:-}" == "bootstrap" && $# -eq 1 ]] || \
-                die "admin requires the bootstrap command"
-            configure_site --admin-only
+            case "${1:-}" in
+                bootstrap)
+                    [[ $# -eq 1 ]] || die "admin bootstrap accepts no options"
+                    configure_site --admin-only
+                    ;;
+                show-password)
+                    [[ $# -eq 1 ]] || die "admin show-password accepts no options"
+                    show_admin_password
+                    ;;
+                *)
+                    die "admin requires bootstrap or show-password"
+                    ;;
+            esac
             ;;
         configure)
             shift

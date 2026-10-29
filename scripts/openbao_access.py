@@ -19,7 +19,9 @@ if str(ROOT) not in sys.path:
 from atlas.openbao_client import (  # noqa: E402
     OpenBaoClient,
     OpenBaoError,
+    OpenBaoNotFound,
 )
+from atlas.auth import normalize_username  # noqa: E402
 from scripts import deploy_openbao as openbao_deployment  # noqa: E402
 
 
@@ -518,6 +520,50 @@ def reconcile_backend_policy(client):
     return True
 
 
+def show_admin_recovery_password(client):
+    """Read one recovery password through a quorum-controlled root token."""
+    header("ATLAS ADMINISTRATOR RECOVERY PASSWORD")
+    username = normalize_username(input("Administrator username [admin]: ").strip() or "admin")
+
+    def show(root_token):
+        try:
+            record = client.kv_read(
+                root_token,
+                f"auth/recovery/users/{username}",
+                mount="atlas",
+            )
+        except OpenBaoNotFound:
+            raise OpenBaoError(
+                "No readable recovery password is stored for this administrator"
+            ) from None
+        if (
+            not isinstance(record, dict)
+            or record.get("schema_version") != 1
+            or record.get("username") != username
+            or not isinstance(record.get("password"), str)
+            or not record["password"]
+        ):
+            raise OpenBaoError("Atlas administrator recovery record is invalid")
+        print()
+        print("=" * 78)
+        print("RECOVERED ATLAS ADMINISTRATOR CREDENTIAL")
+        print("=" * 78)
+        print(f"Username: {username}")
+        print(f"Password: {record['password']}")
+        print()
+        print("[WARN] This terminal now contains the plaintext administrator password")
+
+    applied = generate_temporary_root(
+        client,
+        action=show,
+        requested_ttl="15m",
+    )
+    if not applied:
+        print("[INFO] Administrator password recovery was cancelled")
+        return False
+    return True
+
+
 # ===========================================================================
 # Revoke
 # ===========================================================================
@@ -633,16 +679,19 @@ def menu():
             "2. Reconcile Atlas backend roles"
         )
         print(
-            "3. Generate temporary root token"
+            "3. Show Atlas administrator recovery password"
         )
         print(
-            "4. Revoke token"
+            "4. Generate temporary root token"
         )
         print(
-            "5. Inspect token"
+            "5. Revoke token"
         )
         print(
-            "6. Exit"
+            "6. Inspect token"
+        )
+        print(
+            "7. Exit"
         )
         print()
 
@@ -662,21 +711,26 @@ def menu():
                 )
 
             elif choice == "3":
-                generate_temporary_root(
+                show_admin_recovery_password(
                     client
                 )
 
             elif choice == "4":
-                revoke_token(
+                generate_temporary_root(
                     client
                 )
 
             elif choice == "5":
-                inspect_token(
+                revoke_token(
                     client
                 )
 
             elif choice == "6":
+                inspect_token(
+                    client
+                )
+
+            elif choice == "7":
                 return
 
             else:
@@ -684,7 +738,7 @@ def menu():
                     "[ERROR] Invalid selection"
                 )
 
-        except OpenBaoError as exc:
+        except (OpenBaoError, ValueError) as exc:
             error(
                 str(exc)
             )
@@ -703,6 +757,13 @@ def menu():
 
 def main():
     try:
+        if sys.argv[1:] == ["--show-admin-password"]:
+            client = OpenBaoClient(OPENBAO_URL)
+            if not show_admin_recovery_password(client):
+                raise SystemExit(1)
+            return
+        if sys.argv[1:]:
+            raise SystemExit("Usage: openbao_access.py [--show-admin-password]")
         menu()
 
     except KeyboardInterrupt:
@@ -711,6 +772,8 @@ def main():
             0
         )
 
+    except (OpenBaoError, ValueError) as exc:
+        raise SystemExit(f"[ERROR] {exc}") from None
 
 if __name__ == "__main__":
     main()

@@ -378,7 +378,7 @@ def sync_backend_operator_token(root=ROOT, client=None):
 
 
 def sync_admin_bootstrap(root=ROOT, client=None):
-    """Move the one-time administrator hash into OpenBao, then remove it."""
+    """Move one-time administrator login and recovery records into OpenBao."""
     root = Path(root).resolve()
     bootstrap = root / ADMIN_BOOTSTRAP_PATH
     marker = root / ADMIN_MARKER_PATH
@@ -406,8 +406,21 @@ def sync_admin_bootstrap(root=ROOT, client=None):
         or record.get("active") is not True
         or not isinstance(record.get("password_hash"), str)
         or not record["password_hash"].startswith("$argon2id$")
+        or not isinstance(record.get("recovery_password"), str)
+        or len(record["recovery_password"]) < 14
     ):
         raise RuntimeError("Administrator bootstrap schema is invalid")
+
+    login_record = {
+        key: value
+        for key, value in record.items()
+        if key != "recovery_password"
+    }
+    recovery_record = {
+        "schema_version": 1,
+        "username": username,
+        "password": record["recovery_password"],
+    }
 
     identity_file = root / ".runtime/openbao-approle.json"
     client = client or OpenBaoClient(
@@ -426,12 +439,20 @@ def sync_admin_bootstrap(root=ROOT, client=None):
         except OpenBaoNotFound:
             existing = None
         if existing is None:
-            client.kv_write(token, secret_path, record, mount="atlas", cas=0)
-        elif existing != record:
+            client.kv_write(token, secret_path, login_record, mount="atlas", cas=0)
+        elif existing != login_record:
             raise RuntimeError(
                 f"Administrator '{username}' already exists with different data; "
                 "refusing to overwrite it"
             )
+
+        client.kv_write(
+            token,
+            f"auth/recovery/users/{username}",
+            recovery_record,
+            mount="atlas",
+            cas=0,
+        )
 
         marker.parent.mkdir(parents=True, exist_ok=True)
         os.chmod(marker.parent, 0o700)

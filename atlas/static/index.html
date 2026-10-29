@@ -21,6 +21,7 @@
       </div>
       <div class="topbar-meta">
         <span class="environment-label">Operations console</span>
+        <span id="admin-session-identity" class="environment-label" hidden></span>
         <button id="admin-session-button" class="button button-secondary button-compact" type="button">Sign in</button>
         <span id="connection-state" class="connection-state" role="status">
           <span class="status-dot status-unknown" aria-hidden="true"></span>
@@ -589,6 +590,7 @@
           </div>
         </div>
         <p id="admin-login-error" class="operator-result" role="alert" hidden></p>
+        <p class="operator-result">Forgotten password: run <code>sudo atlasctl admin show-password</code> on the Atlas VM. OpenBao quorum shares are required.</p>
         <div class="dialog-actions">
           <button id="admin-login-submit" class="button button-primary" type="submit">Sign in</button>
         </div>
