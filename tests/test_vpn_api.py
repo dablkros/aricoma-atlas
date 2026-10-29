@@ -134,10 +134,18 @@ class VPNApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json()["total"], 1)
         self.assertEqual(response.json()["items"][0]["runtime_status"], "not_deployed")
-        rendered = response.text.lower()
-        self.assertNotIn("password", rendered)
-        self.assertNotIn("private_key", rendered)
-        self.assertNotIn("psk", rendered)
+        item = response.json()["items"][0]
+        forbidden_secret_fields = {
+            "username",
+            "password",
+            "private_key",
+            "psk",
+            "api_token",
+            "token",
+            "secret_value",
+        }
+        self.assertTrue(forbidden_secret_fields.isdisjoint(item))
+        self.assertNotIn("never-return-me", response.text)
 
     def test_create_rejects_secret_material_before_calling_service(self):
         payload = {
