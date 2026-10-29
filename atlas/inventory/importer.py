@@ -68,6 +68,7 @@ class InventoryImporter:
         *,
         apply: bool,
         slug: str | None = None,
+        group: str | None = None,
     ) -> tuple[dict | None, str]:
         clean_name = " ".join(name.split())
         tenant_slug = slug or slugify(clean_name)
@@ -80,12 +81,45 @@ class InventoryImporter:
             tenant = matches[0]
             if normalized_name(str(tenant.get("name", ""))) != normalized_name(clean_name):
                 raise InventoryConflict("tenant_slug_identity_conflict")
+            if group:
+                groups = self._all("/api/tenancy/tenant-groups/", {"slug": slugify(group)})
+                if len(groups) != 1:
+                    raise InventoryInvalid(
+                        "tenant_group_not_found" if not groups else "tenant_group_ambiguous"
+                    )
+                if related_id(tenant.get("group")) != groups[0].get("id"):
+                    raise InventoryConflict("tenant_group_conflict")
             return tenant, "UNCHANGED"
         if not apply:
             return None, "CREATE"
+        tenant_group = self.ensure_tenant_group(group, apply=True)[0] if group else None
+        payload = {"name": clean_name, "slug": tenant_slug}
+        if tenant_group is not None:
+            payload["group"] = tenant_group["id"]
         return self.client.post(
             "/api/tenancy/tenants/",
-            {"name": clean_name, "slug": tenant_slug},
+            payload,
+        ), "CREATE"
+
+    def ensure_tenant_group(
+        self, name: str, *, apply: bool
+    ) -> tuple[dict | None, str]:
+        clean_name = " ".join(name.split())
+        group_slug = slugify(clean_name)
+        if not group_slug:
+            raise InventoryInvalid("tenant_group_name_invalid")
+        matches = self._all("/api/tenancy/tenant-groups/", {"slug": group_slug})
+        if len(matches) > 1:
+            raise InventoryConflict("tenant_group_ambiguous")
+        if matches:
+            current = matches[0]
+            if normalized_name(str(current.get("name", ""))) != normalized_name(clean_name):
+                raise InventoryConflict("tenant_group_identity_conflict")
+            return current, "UNCHANGED"
+        if not apply:
+            return None, "CREATE"
+        return self.client.post(
+            "/api/tenancy/tenant-groups/", {"name": clean_name, "slug": group_slug},
         ), "CREATE"
 
     def resolve_tenant(self, value: str) -> dict:
@@ -107,7 +141,9 @@ class InventoryImporter:
         apply: bool,
     ) -> tuple[dict | None, str]:
         clean_name = " ".join(name.split())
-        site_slug = slugify(clean_name)
+        tenant_slug = str(tenant.get("slug", "")).strip()
+        local_slug = slugify(clean_name)
+        site_slug = slugify(f"{tenant_slug}-{local_slug}")
         if not site_slug:
             raise InventoryInvalid("site_name_invalid")
         matches = self._all("/api/dcim/sites/", {"slug": site_slug})
@@ -124,15 +160,61 @@ class InventoryImporter:
             site for site in self._all("/api/dcim/sites/", {"name": clean_name})
             if normalized_name(str(site.get("name", ""))) == normalized_name(clean_name)
         ]
-        if name_matches:
+        owned_name_matches = [
+            site for site in name_matches
+            if related_id(site.get("tenant")) == tenant.get("id")
+        ]
+        if len(owned_name_matches) == 1:
+            return owned_name_matches[0], "UNCHANGED"
+        if len(owned_name_matches) > 1:
             raise InventoryConflict(
-                "site_name_ambiguous" if len(name_matches) > 1 else "site_name_slug_conflict"
+                "site_name_ambiguous"
             )
         if not apply:
             return None, "CREATE"
         return self.client.post(
             "/api/dcim/sites/",
             {"name": clean_name, "slug": site_slug, "tenant": tenant["id"], "status": "active"},
+        ), "CREATE"
+
+    def ensure_vrf(
+        self,
+        tenant: dict,
+        name: str,
+        *,
+        apply: bool,
+        enforce_unique: bool = True,
+    ) -> tuple[dict | None, str]:
+        clean_name = " ".join(name.split())
+        if not clean_name:
+            raise InventoryInvalid("vrf_name_invalid")
+        matches = [
+            item
+            for item in self._all("/api/ipam/vrfs/", {"name": clean_name})
+            if normalized_name(str(item.get("name", ""))) == normalized_name(clean_name)
+        ]
+        owned = [
+            item for item in matches
+            if related_id(item.get("tenant")) == tenant.get("id")
+        ]
+        if len(owned) > 1:
+            raise InventoryConflict("vrf_ambiguous")
+        if owned:
+            current = owned[0]
+            if bool(current.get("enforce_unique")) != enforce_unique:
+                raise InventoryConflict("vrf_enforce_unique_conflict")
+            return current, "UNCHANGED"
+        if matches:
+            raise InventoryConflict("vrf_belongs_to_different_tenant")
+        if not apply:
+            return None, "CREATE"
+        return self.client.post(
+            "/api/ipam/vrfs/",
+            {
+                "name": clean_name,
+                "tenant": tenant["id"],
+                "enforce_unique": enforce_unique,
+            },
         ), "CREATE"
 
     def _resolve_site(self, tenant: dict, value: str) -> dict:
@@ -226,7 +308,7 @@ class InventoryImporter:
             raise InventoryInvalid("device_role_not_found" if not candidates else "device_role_ambiguous")
         return candidates[0]
 
-    def _resolve_vrf(self, value: str | None) -> dict | None:
+    def _resolve_vrf(self, value: str | None, tenant: dict) -> dict | None:
         if not value:
             return None
         clean = value.strip()
@@ -243,7 +325,10 @@ class InventoryImporter:
             ]
         if len(matches) != 1:
             raise InventoryInvalid("vrf_not_found" if not matches else "vrf_ambiguous")
-        return matches[0]
+        vrf = matches[0]
+        if related_id(vrf.get("tenant")) != tenant.get("id"):
+            raise InventoryConflict("vrf_belongs_to_different_tenant")
+        return vrf
 
     def _address(self, value: str) -> str:
         candidate = value.strip()
@@ -305,7 +390,9 @@ class InventoryImporter:
             return "existing_device_status_conflict"
         return None
 
-    def _validate_planned_management(self, address: str, vrf: dict | None) -> None:
+    def _validate_planned_management(
+        self, address: str, vrf: dict | None, tenant: dict
+    ) -> None:
         """Validate a new device IP in dry-run without creating placeholder objects."""
         host = str(ipaddress.ip_interface(address).ip)
         vrf_id = vrf["id"] if vrf else None
@@ -318,6 +405,9 @@ class InventoryImporter:
         if not matches:
             return
         existing = matches[0]
+        ip_tenant = related_id(existing.get("tenant"))
+        if ip_tenant not in (None, tenant.get("id")):
+            raise InventoryConflict("management_ip_belongs_to_different_tenant")
         if existing.get("address") != address:
             raise InventoryConflict("management_ip_prefix_conflict")
         assigned_id = existing.get("assigned_object_id") or related_id(
@@ -326,7 +416,45 @@ class InventoryImporter:
         if assigned_id is not None:
             raise InventoryConflict("management_ip_assigned_elsewhere")
 
-    def _management_state(self, device: dict, address: str, vrf: dict | None, *, apply: bool):
+    def _ensure_management_prefix(
+        self,
+        address: str,
+        vrf: dict | None,
+        tenant: dict,
+        *,
+        apply: bool,
+    ) -> dict | None:
+        interface = ipaddress.ip_interface(address)
+        if interface.network.prefixlen == interface.max_prefixlen:
+            return None
+        prefix = str(interface.network)
+        vrf_id = vrf["id"] if vrf else None
+        matches = self._all("/api/ipam/prefixes/", {"prefix": prefix})
+        contextual = [item for item in matches if related_id(item.get("vrf")) == vrf_id]
+        if len(contextual) > 1:
+            raise InventoryConflict("management_prefix_ambiguous_in_vrf")
+        if contextual:
+            current = contextual[0]
+            prefix_tenant = related_id(current.get("tenant"))
+            if prefix_tenant not in (None, tenant.get("id")):
+                raise InventoryConflict("management_prefix_belongs_to_different_tenant")
+            return current
+        if not apply:
+            return None
+        payload = {"prefix": prefix, "status": "active", "tenant": tenant["id"]}
+        if vrf_id is not None:
+            payload["vrf"] = vrf_id
+        return self.client.post("/api/ipam/prefixes/", payload)
+
+    def _management_state(
+        self,
+        device: dict,
+        address: str,
+        vrf: dict | None,
+        tenant: dict,
+        *,
+        apply: bool,
+    ):
         interface_name = self.config["management_interface"]
         interfaces = self._all(
             "/api/dcim/interfaces/", {"device_id": device["id"], "name": interface_name}
@@ -351,6 +479,9 @@ class InventoryImporter:
             raise InventoryConflict("management_ip_ambiguous_in_vrf")
         ip_object = contextual[0] if contextual else None
         if ip_object is not None:
+            ip_tenant = related_id(ip_object.get("tenant"))
+            if ip_tenant not in (None, tenant.get("id")):
+                raise InventoryConflict("management_ip_belongs_to_different_tenant")
             assigned_type = ip_object.get("assigned_object_type")
             assigned_id = ip_object.get("assigned_object_id") or related_id(ip_object.get("assigned_object"))
             if assigned_id is not None and (assigned_type != "dcim.interface" or not interface or assigned_id != interface["id"]):
@@ -366,6 +497,7 @@ class InventoryImporter:
                 payload = {
                     "address": address,
                     "status": "active",
+                    "tenant": tenant["id"],
                     "assigned_object_type": "dcim.interface",
                     "assigned_object_id": interface["id"],
                 }
@@ -452,7 +584,7 @@ class InventoryImporter:
                 )
                 platform = self._resolve_platform(row, device_type)
                 role = self._resolve_role(row, device_type, platform)
-                vrf = self._resolve_vrf(row.vrf or vrf_override)
+                vrf = self._resolve_vrf(row.vrf or vrf_override, tenant)
                 payload = self._device_payload(hostname, tenant, site, device_type, role, platform)
                 device = self._existing_device(hostname, tenant, site)
                 created = device is None
@@ -463,7 +595,10 @@ class InventoryImporter:
                 elif apply:
                     device = self.client.post("/api/dcim/devices/", payload)
                 if device is None:
-                    self._validate_planned_management(address, vrf)
+                    self._ensure_management_prefix(
+                        address, vrf, tenant, apply=False,
+                    )
+                    self._validate_planned_management(address, vrf, tenant)
                     operation = (
                         "CREATE_DEVICE_TYPE_DEVICE_AND_MANAGEMENT"
                         if device_type_planned
@@ -475,7 +610,12 @@ class InventoryImporter:
                         status=ImportStatus.CREATE,
                     ))
                     continue
-                changed, ids = self._management_state(device, address, vrf, apply=apply)
+                self._ensure_management_prefix(
+                    address, vrf, tenant, apply=apply,
+                )
+                changed, ids = self._management_state(
+                    device, address, vrf, tenant, apply=apply
+                )
                 status = ImportStatus.CREATE if created or changed else ImportStatus.UNCHANGED
                 results.append(RowResult(
                     **base,

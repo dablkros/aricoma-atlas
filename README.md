@@ -85,6 +85,8 @@ diagnostiku.
 Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
 `--dry-run`/`--apply` postup sú popísané v
 [dokumentácii Inventory Importera](docs/inventory-import.md).
+Izolačné pravidlá Tenant/Site/VRF/IP a budúce connection mapping sú popísané v
+[multi-tenant NetBox dokumentácii](docs/multi-tenant-netbox.md).
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
 chýbajúci validný Device Type YAML, zopakuje plán a explicitne potvrdí Apply.
@@ -717,6 +719,10 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
 | `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
+| `GET /api/inventory/tenants` | Autorizovaný zoznam Tenantov pre Operations UI. |
+| `POST /api/inventory/tenants/plan`, `/apply` | Idempotentný plan/apply Tenant operácie viazaný na presný odtlačok. |
+| `POST /api/inventory/sites/plan`, `/apply` | Idempotentný plan/apply tenant-owned Site operácie viazaný na presný odtlačok. |
+| `GET /api/inventory/devices/{id}/connection` | Resolve Device ID na Tenant, Site, management IP/VRF a explicitný connection profil. |
 | `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
 | `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
 | `GET /api/credentials/options` | Autorizovaný zoznam aktívnych zariadení a podporovaných platformových možností bez secretov. |

@@ -19,6 +19,7 @@ const state = {
   inventoryActivityTimer: null,
   inventoryActivityStarted: 0,
   inventoryActivityKind: null,
+  inventoryStructurePlan: null,
   credentialOptions: null,
   credentialPlan: null,
   credentialBusy: false,
@@ -119,6 +120,21 @@ const elements = {
   inventoryRetry: document.querySelector("#inventory-retry"),
   inventoryApplyConfirm: document.querySelector("#inventory-apply-confirm"),
   inventoryApply: document.querySelector("#inventory-apply"),
+  inventoryStructureOpen: document.querySelector("#inventory-structure-open"),
+  inventoryStructureDialog: document.querySelector("#inventory-structure-dialog"),
+  inventoryStructureClose: document.querySelector("#inventory-structure-close"),
+  inventoryStructureKind: document.querySelector("#inventory-structure-kind"),
+  inventoryStructureTenantField: document.querySelector("#inventory-structure-tenant-field"),
+  inventoryStructureTenant: document.querySelector("#inventory-structure-tenant"),
+  inventoryStructureName: document.querySelector("#inventory-structure-name"),
+  inventoryStructureSlugField: document.querySelector("#inventory-structure-slug-field"),
+  inventoryStructureSlug: document.querySelector("#inventory-structure-slug"),
+  inventoryStructureGroupField: document.querySelector("#inventory-structure-group-field"),
+  inventoryStructureGroup: document.querySelector("#inventory-structure-group"),
+  inventoryStructureResult: document.querySelector("#inventory-structure-result"),
+  inventoryStructureConfirm: document.querySelector("#inventory-structure-confirm"),
+  inventoryStructurePlan: document.querySelector("#inventory-structure-plan"),
+  inventoryStructureApply: document.querySelector("#inventory-structure-apply"),
   credentialOpen: document.querySelector("#credential-onboarding-open"),
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
@@ -652,6 +668,91 @@ function resetInventoryPlan() {
   elements.inventoryApplyConfirm.checked = false;
   elements.inventoryApplyConfirm.disabled = true;
   elements.inventoryApply.disabled = true;
+}
+
+function resetInventoryStructurePlan() {
+  state.inventoryStructurePlan = null;
+  elements.inventoryStructureResult.textContent = "No plan created.";
+  elements.inventoryStructureConfirm.checked = false;
+  elements.inventoryStructureConfirm.disabled = true;
+  elements.inventoryStructureApply.disabled = true;
+}
+
+function inventoryStructurePayload() {
+  const kind = elements.inventoryStructureKind.value;
+  const payload = { name: elements.inventoryStructureName.value.trim() };
+  if (kind === "tenant") {
+    const slug = elements.inventoryStructureSlug.value.trim();
+    if (slug) payload.slug = slug;
+    const group = elements.inventoryStructureGroup.value.trim();
+    if (group) payload.group = group;
+  } else {
+    payload.tenant = elements.inventoryStructureTenant.value;
+  }
+  return payload;
+}
+
+function renderInventoryStructureFields() {
+  const site = elements.inventoryStructureKind.value === "site";
+  elements.inventoryStructureTenantField.hidden = !site;
+  elements.inventoryStructureSlugField.hidden = site;
+  elements.inventoryStructureGroupField.hidden = site;
+  resetInventoryStructurePlan();
+}
+
+async function loadInventoryTenants() {
+  const tenants = await apiRequest("/api/inventory/tenants", {
+    headers: operatorHeaders(),
+  });
+  elements.inventoryStructureTenant.replaceChildren(...tenants.map((tenant) => {
+    const option = document.createElement("option");
+    option.value = tenant.slug;
+    option.textContent = `${tenant.name} (${tenant.slug})`;
+    return option;
+  }));
+}
+
+async function openInventoryStructure() {
+  if (!requireOperatorToken()) return;
+  try {
+    await loadInventoryTenants();
+    elements.inventoryStructureDialog.showModal();
+    elements.inventoryStructureName.focus();
+  } catch (error) {
+    toast(error.safeMessage || "Tenant list is unavailable.", "error");
+  }
+}
+
+async function runInventoryStructure(apply) {
+  if (!requireOperatorToken()) return;
+  const kind = elements.inventoryStructureKind.value;
+  const payload = inventoryStructurePayload();
+  if (!payload.name || (kind === "site" && !payload.tenant)) {
+    toast("Enter the required name and tenant.", "warning");
+    return;
+  }
+  elements.inventoryStructurePlan.disabled = true;
+  elements.inventoryStructureApply.disabled = true;
+  try {
+    if (apply) payload.plan_hash = state.inventoryStructurePlan?.plan_hash;
+    const result = await apiRequest(`/api/inventory/${kind}s/${apply ? "apply" : "plan"}`, {
+      method: "POST", headers: operatorHeaders(), body: payload,
+    });
+    state.inventoryStructurePlan = result;
+    const target = result.object?.slug || result.object?.name || payload.name;
+    elements.inventoryStructureResult.textContent = `${titleCase(result.operation)} ${kind}: ${target}`;
+    elements.inventoryStructureConfirm.checked = false;
+    elements.inventoryStructureConfirm.disabled = apply;
+    if (apply) {
+      toast(`${titleCase(kind)} operation applied.`, "success");
+      await loadInventoryTenants();
+    }
+  } catch (error) {
+    resetInventoryStructurePlan();
+    toast(error.safeMessage || `${titleCase(kind)} operation failed.`, "error");
+  } finally {
+    elements.inventoryStructurePlan.disabled = false;
+  }
 }
 
 function inventoryFilename(model) {
@@ -1930,6 +2031,21 @@ elements.operatorToken.addEventListener("input", () => {
 });
 elements.ciscoTest.addEventListener("click", testCiscoIntegration);
 elements.zabbixSync.addEventListener("click", synchronizeZabbix);
+elements.inventoryStructureOpen.addEventListener("click", openInventoryStructure);
+elements.inventoryStructureClose.addEventListener("click", () => {
+  elements.inventoryStructureDialog.close();
+});
+elements.inventoryStructureKind.addEventListener("change", renderInventoryStructureFields);
+elements.inventoryStructureName.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureSlug.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureGroup.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureTenant.addEventListener("change", resetInventoryStructurePlan);
+elements.inventoryStructurePlan.addEventListener("click", () => runInventoryStructure(false));
+elements.inventoryStructureApply.addEventListener("click", () => runInventoryStructure(true));
+elements.inventoryStructureConfirm.addEventListener("change", () => {
+  elements.inventoryStructureApply.disabled = !state.inventoryStructurePlan
+    || !elements.inventoryStructureConfirm.checked;
+});
 elements.credentialOpen.addEventListener("click", openCredentialOnboarding);
 elements.credentialClose.addEventListener("click", () => {
   clearCredentialSecrets();

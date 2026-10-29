@@ -226,14 +226,15 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261029-1", page.text)
-        self.assertIn("/static/styles.css?v=20261029-1", page.text)
+        self.assertIn("/static/app.js?v=20261029-2", page.text)
+        self.assertIn("/static/styles.css?v=20261029-2", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
         self.assertIn('id="monitoring-activity"', page.text)
         self.assertIn('id="monitoring-bulk-preview"', page.text)
         self.assertIn('id="monitoring-bulk-apply"', page.text)
         self.assertIn('id="inventory-import-dialog"', page.text)
+        self.assertIn('id="inventory-structure-dialog"', page.text)
         self.assertIn('id="inventory-activity"', page.text)
         self.assertIn('id="credential-onboarding-dialog"', page.text)
         self.assertIn('id="credential-device-list"', page.text)
@@ -244,6 +245,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn("renderMonitoringBulkPreview", script.text)
         self.assertIn("applyAllMonitoringPlans", script.text)
         self.assertIn("/api/inventory/import/plan", script.text)
+        self.assertIn("/api/inventory/${kind}s/", script.text)
         self.assertIn("startInventoryActivity", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
         self.assertNotIn("subprocess", script.text)
@@ -287,6 +289,43 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), planned)
+
+    def test_tenant_plan_and_apply_use_exact_plan_hash(self):
+        importer = SimpleNamespace(
+            ensure_tenant=lambda name, slug, group, apply: (
+                {"id": 7, "name": name, "slug": slug or "customer-a"}
+                if apply else None,
+                "CREATE",
+            )
+        )
+        with patch("atlas.api.routes.inventory._importer", return_value=importer):
+            planned = self.client.post(
+                "/api/inventory/tenants/plan",
+                headers=OPERATOR_HEADERS,
+                json={"name": "Customer A", "slug": "customer-a"},
+            )
+            applied = self.client.post(
+                "/api/inventory/tenants/apply",
+                headers=OPERATOR_HEADERS,
+                json={
+                    "name": "Customer A",
+                    "slug": "customer-a",
+                    "plan_hash": planned.json()["plan_hash"],
+                },
+            )
+
+        self.assertEqual(planned.status_code, 200)
+        self.assertEqual(applied.status_code, 200)
+        self.assertEqual(applied.json()["object"]["slug"], "customer-a")
+
+    def test_tenant_apply_rejects_changed_plan(self):
+        response = self.client.post(
+            "/api/inventory/tenants/apply",
+            headers=OPERATOR_HEADERS,
+            json={"name": "Customer B", "plan_hash": "0" * 64},
+        )
+        self.assertEqual(response.status_code, 409)
+        self.assertEqual(response.json()["error"]["code"], "inventory_plan_stale")
 
     def test_inventory_apply_rejects_changed_input_before_dependencies(self):
         response = self.client.post(

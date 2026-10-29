@@ -108,3 +108,17 @@ custom_fields:
     default: null
     validation_regex: '^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$'
     is_cloneable: false
+
+  - name: "atlas_connection_id"
+    object_types:
+      - "dcim.site"
+      - "dcim.device"
+    type: "text"
+    label: "Atlas connection ID"
+    group_name: "Atlas"
+    description: "Stable reference to an Atlas connection profile; contains no credentials"
+    required: false
+    unique: false
+    default: null
+    validation_regex: '^[a-z0-9]+(?:-[a-z0-9]+)*$'
+    is_cloneable: false

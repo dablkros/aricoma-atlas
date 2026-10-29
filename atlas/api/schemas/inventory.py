@@ -18,4 +18,23 @@ class DeviceTypeUploadRequest(BaseModel):
     replace: bool = False
 
 
-__all__ = ["InventoryTableRequest", "DeviceTypeUploadRequest"]
+class TenantRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    name: str = Field(min_length=1, max_length=100)
+    slug: str | None = Field(
+        default=None, max_length=100, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$"
+    )
+    group: str | None = Field(default=None, min_length=1, max_length=100)
+    plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+class SiteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    tenant: str = Field(min_length=1, max_length=100)
+    name: str = Field(min_length=1, max_length=100)
+    plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+
+__all__ = [
+    "InventoryTableRequest", "DeviceTypeUploadRequest", "SiteRequest", "TenantRequest",
+]

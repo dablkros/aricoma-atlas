@@ -12,9 +12,17 @@ import yaml
 
 from atlas.api.errors import AtlasError
 from atlas.api.operator_auth import require_operator
-from atlas.api.schemas.inventory import DeviceTypeUploadRequest, InventoryTableRequest
+from atlas.api.schemas.inventory import (
+    DeviceTypeUploadRequest,
+    InventoryTableRequest,
+    SiteRequest,
+    TenantRequest,
+)
 from atlas.inventory.config import load_inventory_config
-from atlas.inventory.importer import InventoryConflict, InventoryImporter, InventoryInvalid
+from atlas.inventory.connections import ConnectionMappingError, ConnectionResolver
+from atlas.inventory.importer import (
+    InventoryConflict, InventoryImporter, InventoryInvalid, related_id,
+)
 from atlas.inventory.parser import parse_inventory_table
 from atlas.services.errors import DependencyError
 from atlas.platforms import load_platform_config
@@ -57,6 +65,136 @@ def _hash(body: InventoryTableRequest) -> str:
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _object_hash(kind: str, values: dict) -> str:
+    canonical = json.dumps(
+        {"kind": kind, **values}, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    )
+    return hashlib.sha256(canonical.encode()).hexdigest()
+
+
+def _importer(request: Request) -> InventoryImporter:
+    return InventoryImporter(
+        request.app.state.dependencies.netbox,
+        load_inventory_config(CONFIG),
+    )
+
+
+def _inventory_error(exc: Exception) -> AtlasError:
+    if isinstance(exc, DependencyError):
+        return AtlasError(
+            503, "inventory_dependency_unavailable", "Inventory dependency is unavailable"
+        )
+    return AtlasError(422, "inventory_invalid", str(exc))
+
+
+@router.get("/tenants", dependencies=[Depends(authorized)])
+def tenants(request: Request) -> list[dict]:
+    try:
+        values = request.app.state.dependencies.netbox.get_all("/api/tenancy/tenants/")
+    except DependencyError as exc:
+        raise _inventory_error(exc) from None
+    return [
+        {"id": item.get("id"), "name": item.get("name"), "slug": item.get("slug")}
+        for item in values if isinstance(item, dict)
+    ]
+
+
+@router.get("/sites", dependencies=[Depends(authorized)])
+def sites(request: Request, tenant: str) -> list[dict]:
+    try:
+        importer = _importer(request)
+        owner = importer.resolve_tenant(tenant)
+        values = request.app.state.dependencies.netbox.get_all(
+            "/api/dcim/sites/", params={"tenant_id": owner["id"]},
+        )
+    except (InventoryInvalid, InventoryConflict, DependencyError) as exc:
+        raise _inventory_error(exc) from None
+    return [
+        {"id": item.get("id"), "name": item.get("name"), "slug": item.get("slug")}
+        for item in values if isinstance(item, dict)
+        and related_id(item.get("tenant")) == owner["id"]
+    ]
+
+
+@router.get("/devices/{device_id}/connection", dependencies=[Depends(authorized)])
+def device_connection(
+    device_id: int, request: Request, tenant: str | None = None,
+) -> dict:
+    try:
+        return ConnectionResolver(
+            request.app.state.dependencies.netbox,
+            load_inventory_config(CONFIG),
+        ).resolve(device_id, expected_tenant=tenant)
+    except ConnectionMappingError as exc:
+        raise AtlasError(409, "inventory_connection_invalid", str(exc)) from None
+    except DependencyError:
+        raise AtlasError(
+            503, "inventory_dependency_unavailable", "Inventory dependency is unavailable"
+        ) from None
+
+
+def _tenant_operation(body: TenantRequest, request: Request, *, apply: bool) -> dict:
+    values = {
+        "name": " ".join(body.name.split()),
+        "slug": body.slug,
+        "group": " ".join(body.group.split()) if body.group else None,
+    }
+    expected = _object_hash("tenant", values)
+    if apply and body.plan_hash != expected:
+        raise AtlasError(409, "inventory_plan_stale", "Tenant input changed; create a new plan")
+    try:
+        tenant, operation = _importer(request).ensure_tenant(
+            values["name"], slug=values["slug"], group=values["group"], apply=apply,
+        )
+    except (InventoryInvalid, InventoryConflict, DependencyError) as exc:
+        raise _inventory_error(exc) from None
+    return {
+        "plan_hash": expected,
+        "kind": "tenant",
+        "operation": operation,
+        "object": tenant or values,
+    }
+
+
+@router.post("/tenants/plan", dependencies=[Depends(authorized)])
+def tenant_plan(body: TenantRequest, request: Request) -> dict:
+    return _tenant_operation(body, request, apply=False)
+
+
+@router.post("/tenants/apply", dependencies=[Depends(authorized)])
+def tenant_apply(body: TenantRequest, request: Request) -> dict:
+    return _tenant_operation(body, request, apply=True)
+
+
+def _site_operation(body: SiteRequest, request: Request, *, apply: bool) -> dict:
+    values = {"tenant": body.tenant.strip(), "name": " ".join(body.name.split())}
+    expected = _object_hash("site", values)
+    if apply and body.plan_hash != expected:
+        raise AtlasError(409, "inventory_plan_stale", "Site input changed; create a new plan")
+    try:
+        importer = _importer(request)
+        owner = importer.resolve_tenant(values["tenant"])
+        site, operation = importer.ensure_site(owner, values["name"], apply=apply)
+    except (InventoryInvalid, InventoryConflict, DependencyError) as exc:
+        raise _inventory_error(exc) from None
+    return {
+        "plan_hash": expected,
+        "kind": "site",
+        "operation": operation,
+        "object": site or values,
+    }
+
+
+@router.post("/sites/plan", dependencies=[Depends(authorized)])
+def site_plan(body: SiteRequest, request: Request) -> dict:
+    return _site_operation(body, request, apply=False)
+
+
+@router.post("/sites/apply", dependencies=[Depends(authorized)])
+def site_apply(body: SiteRequest, request: Request) -> dict:
+    return _site_operation(body, request, apply=True)
 
 
 def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> dict:

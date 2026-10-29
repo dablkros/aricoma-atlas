@@ -38,9 +38,10 @@ Usage:
   sudo atlasctl zabbix credentials
   sudo atlasctl zabbix logs [docker compose logs options]
   sudo atlasctl integrations cisco test
-  sudo atlasctl inventory tenant add --name NAME [--dry-run]
+  sudo atlasctl inventory tenant add --name NAME [--group GROUP] [--dry-run]
   sudo atlasctl inventory site add --tenant TENANT --name NAME [--dry-run]
   sudo atlasctl inventory site set-default --tenant TENANT --name NAME [--dry-run|--apply]
+  sudo atlasctl inventory vrf add --tenant TENANT --name NAME [--dry-run|--apply]
   sudo atlasctl inventory upload FILE [--name NAME.csv|NAME.xlsx] [--force]
   sudo atlasctl inventory device-type search MODEL [--json]
   sudo atlasctl inventory device-type add MODEL [--dry-run|--apply]

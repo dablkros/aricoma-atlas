@@ -51,6 +51,7 @@ def normalize_inventory_config(raw: object) -> dict:
         "default_device_role",
         "device_type_aliases",
         "role_mappings",
+        "connection_profiles",
     }
     if set(data) - allowed:
         raise ValueError("inventory contains unknown fields")
@@ -59,11 +60,12 @@ def normalize_inventory_config(raw: object) -> dict:
     tenant = data.get("default_tenant")
     if tenant is not None:
         tenant = _mapping(tenant, "inventory.default_tenant")
-        if set(tenant) - {"name", "slug", "provision"}:
+        if set(tenant) - {"name", "slug", "group", "provision"}:
             raise ValueError("inventory.default_tenant contains unknown fields")
         name = tenant.get("name")
         slug = tenant.get("slug")
         provision = tenant.get("provision", True)
+        group = tenant.get("group")
         if not isinstance(name, str) or not name.strip():
             raise ValueError("inventory.default_tenant.name is required")
         if not isinstance(slug, str) or not re.fullmatch(
@@ -72,7 +74,13 @@ def normalize_inventory_config(raw: object) -> dict:
             raise ValueError("inventory.default_tenant.slug is invalid")
         if type(provision) is not bool:
             raise ValueError("inventory.default_tenant.provision must be boolean")
-        tenant = {"name": " ".join(name.split()), "slug": slug, "provision": provision}
+        if group is not None and (not isinstance(group, str) or not group.strip()):
+            raise ValueError("inventory.default_tenant.group is invalid")
+        tenant = {
+            "name": " ".join(name.split()), "slug": slug,
+            "group": " ".join(group.split()) if group else None,
+            "provision": provision,
+        }
 
     site = data.get("default_site")
     if site is not None:
@@ -124,6 +132,54 @@ def normalize_inventory_config(raw: object) -> dict:
         for key, value in mapping.items()
     ):
         raise ValueError("inventory aliases and role mappings must be non-empty strings")
+
+    profiles = _mapping(data.get("connection_profiles"), "inventory.connection_profiles")
+    normalized_profiles = {}
+    for connection_id, raw_profile in profiles.items():
+        if not isinstance(connection_id, str) or not re.fullmatch(
+            r"[a-z0-9]+(?:-[a-z0-9]+)*", connection_id
+        ):
+            raise ValueError("inventory.connection_profiles contains an invalid ID")
+        profile = _mapping(
+            raw_profile,
+            f"inventory.connection_profiles.{connection_id}",
+        )
+        if set(profile) - {"tenant", "status", "vrf", "transport"}:
+            raise ValueError(
+                f"inventory.connection_profiles.{connection_id} contains unknown fields"
+            )
+        tenant_slug = profile.get("tenant")
+        status = profile.get("status", "planned")
+        vrf = profile.get("vrf")
+        transport = profile.get("transport")
+        if not isinstance(tenant_slug, (str, int)) or isinstance(tenant_slug, bool) or (
+            isinstance(tenant_slug, str)
+            and not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", tenant_slug)
+        ):
+            raise ValueError(
+                f"inventory.connection_profiles.{connection_id}.tenant is invalid"
+            )
+        if status not in {"planned", "active", "disabled"}:
+            raise ValueError(
+                f"inventory.connection_profiles.{connection_id}.status is invalid"
+            )
+        if not isinstance(vrf, (str, int)) or isinstance(vrf, bool) or not str(vrf).strip():
+            raise ValueError(
+                f"inventory.connection_profiles.{connection_id}.vrf is required"
+            )
+        if transport is not None and (
+            not isinstance(transport, str)
+            or not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", transport)
+        ):
+            raise ValueError(
+                f"inventory.connection_profiles.{connection_id}.transport is invalid"
+            )
+        normalized_profiles[connection_id] = {
+            "tenant": str(tenant_slug),
+            "status": status,
+            "vrf": str(vrf).strip(),
+            "transport": transport,
+        }
     return {
         "version": 1,
         "default_tenant": tenant,
@@ -133,6 +189,7 @@ def normalize_inventory_config(raw: object) -> dict:
         "default_device_role": role.strip() if isinstance(role, str) else None,
         "device_type_aliases": dict(aliases),
         "role_mappings": normalized_mappings,
+        "connection_profiles": normalized_profiles,
     }
 
 
