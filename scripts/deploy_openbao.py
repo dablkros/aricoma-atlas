@@ -61,6 +61,21 @@ DEVICE_CREDENTIALS_POLICY_FILE = (
 )
 
 RUNTIME_ROLES = {
+    "atlas-credential-writer": {
+        "policy_file": (
+            ROOT
+            / "deployment"
+            / "openbao"
+            / "policies"
+            / "atlas-credential-writer.hcl"
+        ),
+        "identity_file": (
+            ROOT
+            / ".runtime"
+            / "openbao-credential-writer.json"
+        ),
+        "additional_policies": [],
+    },
     "atlas-monitoring-provisioner": {
         "policy_file": (
             ROOT
@@ -1713,7 +1728,11 @@ def main():
                 )
 
                 validate_runtime_identities(
-                    optional_roles={"atlas-backend", "atlas-monitoring-provisioner"},
+                    optional_roles={
+                        "atlas-backend",
+                        "atlas-monitoring-provisioner",
+                        "atlas-credential-writer",
+                    },
                 )
 
             else:

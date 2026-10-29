@@ -672,6 +672,9 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
   viditeľný priebeh s uplynutým časom, riadkové chyby, validovaný runtime
   Device Type YAML, retry a explicitný Apply,
+- riadený device credential onboarding: hromadný výber zariadení jedného
+  výrobcu, jedna explicitná platforma a spoločný profil, výber spotrebiteľov,
+  secret-free dry-run a explicitný OpenBao/NetBox Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -692,6 +695,9 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
 | `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
 | `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
+| `GET /api/credentials/options` | Autorizovaný zoznam aktívnych zariadení a podporovaných platformových možností bez secretov. |
+| `POST /api/credentials/plan` | Overí účelové credentials, existujúce OpenBao verzie a NetBox zmeny; odpoveď neobsahuje secret values. |
+| `POST /api/credentials/apply` | Aplikuje HMAC-viazaný potvrdený plán s KV v2 CAS ochranou a aktualizuje explicitné NetBox polia. |
 | `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
 | `POST /api/oxidized/devices/{name}/backup` | Zaradí existujúci runtime node na prioritné spracovanie v Oxidized; `202 accepted` nepotvrdzuje dokončený backup. |
 | `GET /api/prophylaxis/devices` | Vráti bezpečný zoznam aktívnych zariadení oprávnených na CPU kontrolu. |
@@ -1455,6 +1461,7 @@ atlas/
 │           └── <credential_profile>/
 │               ├── admin
 │               ├── automation
+│               ├── prophylaxis
 │               ├── oxidized
 │               └── snmp
 │
@@ -1514,6 +1521,14 @@ credentials pod `atlas/data/devices/credentials/*`. Neposkytuje `list`, zápis,
 mazanie, root operácie ani prístup k admin, PostgreSQL, Redis alebo deployer
 secretom.
 
+## `atlas-credential-writer`
+
+Runtime identita určená iba pre potvrdený credential onboarding. Jej policy
+povoľuje `create`, `read` a `update` výhradne na presných listoch
+`prophylaxis`, `oxidized` a `snmp` pod
+`atlas/data/devices/credentials/+/+/`. Nepovoľuje listovanie profilov,
+mazanie ani prístup k iným OpenBao stromom.
+
 Cisco Support API credentials sa vkladajú manuálne do KV v2 mountu `atlas` na
 relatívnu cestu `integrations/cisco/support-api`:
 
@@ -1539,7 +1554,7 @@ entitlementy, nepokrytý PID alebo nedostupné Cisco API vracajú `UNKNOWN` a
 nemenia úspešný zber zariadenia na connection failure. CBS softvérový EoX
 posiela release bez OS typu, pretože Cisco EoX samostatný CBS typ neuvádza.
 
-Fresh OpenBao bootstrap túto policy, AppRole a machine identity vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile atlas-backend policy`. Operácia vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
+Fresh OpenBao bootstrap tieto policies, AppRoles a machine identities vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile Atlas backend roles`. Operácia zosúladí `atlas-backend`, `atlas-monitoring-provisioner` a `atlas-credential-writer`; vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
 
 ## `netbox-runtime`
 
@@ -1958,6 +1973,12 @@ SSH platformy očakávajú `username`, `password` a voliteľný
 `enable_password`. FortiOS so službou `fortios-api` očakáva `api_token`;
 FortiOS bez nej očakáva `username` a `password`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
+
+Operations UI obsahuje bezpečný plan/apply onboarding device credentials.
+Platforma, profil a spotrebitelia sa vyberajú z kontrolovaných možností; heslá,
+API tokeny a SNMP community sa ukladajú iba do OpenBao. Podrobný kontrakt,
+účelové cesty, CAS ochranu a FortiOS API/SSH voľbu opisuje
+[Device credential onboarding](docs/credential-onboarding.md).
 Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Existujúca uptime politika vracia `WARNING` pri hodnote pod 3 dni alebo
 nad 365 dní na platformách s hodnotiacim kontraktom. FortiOS je collection-first

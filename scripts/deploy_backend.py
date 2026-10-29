@@ -414,6 +414,17 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
             "Atlas monitoring provisioner AppRole identity is missing or is not a regular file"
         )
 
+    credential_writer_identity_file = (
+        root / ".runtime/openbao-credential-writer.json"
+    )
+    if (
+        credential_writer_identity_file.is_symlink()
+        or not credential_writer_identity_file.is_file()
+    ):
+        raise RuntimeError(
+            "Atlas credential writer AppRole identity is missing or is not a regular file"
+        )
+
     monitoring_directory = root / ".runtime/monitoring"
     if monitoring_directory.is_symlink():
         raise RuntimeError("Monitoring runtime cannot be a symlink")
@@ -515,6 +526,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     volumes = [
         f"{identity_file}:/run/secrets/atlas-backend.json:ro",
         f"{monitoring_identity_file}:/run/secrets/atlas-monitoring.json:ro",
+        f"{credential_writer_identity_file}:/run/secrets/atlas-credential-writer.json:ro",
         f"{monitoring_config}:/run/secrets/atlas-monitoring-config.yaml:ro",
         f"{monitoring_operator_token}:/run/secrets/atlas-monitoring-operator-token:ro",
         f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
@@ -540,6 +552,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
         "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
+        "ATLAS_CREDENTIAL_WRITER_IDENTITY_FILE": "/run/secrets/atlas-credential-writer.json",
         "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
         "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
         "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",

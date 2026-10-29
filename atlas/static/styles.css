@@ -344,6 +344,68 @@ h2 {
   gap: 1rem;
 }
 
+.credential-purpose-grid {
+  display: grid;
+  gap: 1rem;
+  margin: 1rem 0;
+}
+
+.credential-device-picker {
+  margin-top: 1rem;
+}
+
+.credential-device-picker > input {
+  width: 100%;
+  margin: .45rem 0 .65rem;
+}
+
+.credential-device-list {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: .45rem .75rem;
+  max-height: 220px;
+  overflow: auto;
+  padding: .7rem;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+
+.credential-device-option {
+  display: flex;
+  align-items: center;
+  gap: .55rem;
+  min-width: 0;
+  padding: .45rem .55rem;
+  background: var(--surface);
+  border: 1px solid transparent;
+  border-radius: 8px;
+  font-size: .78rem;
+}
+
+.credential-device-option:has(input:checked) {
+  border-color: var(--line-strong);
+  box-shadow: 0 0 0 1px rgba(41, 80, 126, .08);
+}
+
+.credential-device-option span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.credential-purpose {
+  align-items: start;
+}
+
+.credential-secret-fields {
+  display: grid;
+  gap: .65rem;
+  min-width: min(30rem, 100%);
+}
+
+.credential-secret-fields[hidden] { display: none; }
+
 .field-optional,
 .field-help {
   color: var(--ink-soft);
@@ -1144,6 +1206,10 @@ tbody tr:hover td {
   width: min(380px, calc(100% - 2.5rem));
 }
 
+.inventory-dialog .toast-region {
+  z-index: 2;
+}
+
 .toast {
   padding: 0.85rem 1rem;
   background: white;
@@ -1187,6 +1253,10 @@ tbody tr:hover td {
 }
 
 @media (max-width: 640px) {
+  .credential-device-list {
+    grid-template-columns: 1fr;
+  }
+
   .topbar {
     align-items: flex-start;
     padding: 1rem 1.1rem;

@@ -11,6 +11,7 @@ from fastapi.staticfiles import StaticFiles
 from atlas.api.errors import register_error_handlers
 from atlas.api.middleware import install_request_middleware
 from atlas.api.routes import (
+    credentials,
     health,
     inventory,
     integrations,
@@ -74,6 +75,7 @@ def create_app(
         application.include_router(oxidized.router, prefix=settings.api_prefix)
     application.include_router(prophylaxis.router, prefix=settings.api_prefix)
     application.include_router(inventory.router, prefix=settings.api_prefix)
+    application.include_router(credentials.router, prefix=settings.api_prefix)
     application.include_router(integrations.router, prefix=settings.api_prefix)
     if settings.zabbix_enabled:
         application.include_router(zabbix.router, prefix=settings.api_prefix)

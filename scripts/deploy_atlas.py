@@ -55,6 +55,11 @@ OPENBAO_MONITORING_IDENTITY_FILE = (
     / ".runtime"
     / "openbao-monitoring.json"
 )
+OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE = (
+    ROOT
+    / ".runtime"
+    / "openbao-credential-writer.json"
+)
 
 OPENBAO_URL = os.environ.get(
     "OPENBAO_URL",
@@ -296,9 +301,28 @@ def verify_openbao_ready():
             "'2. Reconcile Atlas backend roles', then deploy again."
         ) from exc
 
+    if not OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE.exists():
+        raise RuntimeError(
+            "Atlas credential writer OpenBao identity is missing. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile Atlas backend roles', then deploy again."
+        )
+
+    try:
+        writer_token = client.login_from_identity(
+            OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE
+        )
+        client.revoke_self(writer_token)
+    except OpenBaoError as exc:
+        raise RuntimeError(
+            "Atlas credential writer cannot authenticate to OpenBao. Run "
+            "'sudo atlasctl openbao' and select "
+            "'2. Reconcile Atlas backend roles', then deploy again."
+        ) from exc
+
     ok(
         "OpenBao is initialized, unsealed "
-        "and Atlas deployer/backend AppRole authentication works"
+        "and Atlas deployer/runtime AppRole authentication works"
     )
 
 

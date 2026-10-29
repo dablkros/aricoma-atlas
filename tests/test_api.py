@@ -61,6 +61,7 @@ class SettingsTests(unittest.TestCase):
             {
                 "ATLAS_OPENBAO_URL": "https://bao.example.test:8200",
                 "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
+                "ATLAS_CREDENTIAL_WRITER_IDENTITY_FILE": "/run/secrets/atlas-credential-writer.json",
                 "ATLAS_NETBOX_URL": "https://netbox.example.test",
                 "ATLAS_OXIDIZED_URL": "http://atlas-oxidized:8888",
                 "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
@@ -88,6 +89,10 @@ class SettingsTests(unittest.TestCase):
         self.assertEqual(
             settings.openbao_identity_file,
             Path("/run/secrets/atlas-backend.json"),
+        )
+        self.assertEqual(
+            settings.credential_writer_identity_file,
+            Path("/run/secrets/atlas-credential-writer.json"),
         )
         self.assertEqual(str(settings.netbox_url), "https://netbox.example.test/")
         self.assertEqual(str(settings.oxidized_url), "http://atlas-oxidized:8888/")
@@ -221,8 +226,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261026-1", page.text)
-        self.assertIn("/static/styles.css?v=20261026-1", page.text)
+        self.assertIn("/static/app.js?v=20261026-3", page.text)
+        self.assertIn("/static/styles.css?v=20261026-3", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
         self.assertIn('id="monitoring-activity"', page.text)
@@ -230,6 +235,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn('id="monitoring-bulk-apply"', page.text)
         self.assertIn('id="inventory-import-dialog"', page.text)
         self.assertIn('id="inventory-activity"', page.text)
+        self.assertIn('id="credential-onboarding-dialog"', page.text)
+        self.assertIn('id="credential-device-list"', page.text)
+        self.assertIn("/api/credentials/plan", script.text)
         self.assertIn("/api/prophylaxis/runs", script.text)
         self.assertIn("Waiting for SNMP data", script.text)
         self.assertIn("MONITORING_VERIFICATION_TIMEOUT_MS", script.text)
@@ -250,6 +258,15 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "inventory_unauthorized")
+
+    def test_credential_options_require_operator_token(self):
+        response = self.client.get("/api/credentials/options")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(
+            response.json()["error"]["code"],
+            "credential_onboarding_unauthorized",
+        )
 
     def test_inventory_plan_endpoint_is_registered(self):
         planned = {

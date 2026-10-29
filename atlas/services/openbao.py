@@ -121,6 +121,20 @@ class OpenBaoService:
             )
         )
 
+    def write_secret(self, path: str, data: dict, *, cas: int) -> None:
+        """Write one KV v2 value using an explicit compare-and-set version."""
+        if isinstance(cas, bool) or not isinstance(cas, int) or cas < 0:
+            raise ValueError("cas must be a non-negative integer")
+        self._authenticated(
+            lambda token: self.client.kv_write(
+                token,
+                path,
+                data,
+                mount="atlas",
+                cas=cas,
+            )
+        )
+
     def get_netbox_api_token(self) -> str:
         secret = self.read_secret("netbox/api")
         token = secret.get("token") if isinstance(secret, dict) else None
