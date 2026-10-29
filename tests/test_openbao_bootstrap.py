@@ -42,6 +42,10 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 'path "atlas/data/integrations/cisco/support-api" {\n'
                 '  capabilities = ["read"]\n'
                 '}\n\n'
+                '# P1 validates only KV metadata. Secret data is reserved for a future worker.\n'
+                'path "atlas/metadata/vpn/connections/*" {\n'
+                '  capabilities = ["read"]\n'
+                '}\n\n'
                 '# Authenticate Atlas administrators. Password hashes remain in OpenBao and are\n'
                 '# never materialized into the backend container filesystem.\n'
                 'path "atlas/data/auth/local/users/*" {\n'
@@ -61,6 +65,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             "redis",
             "atlas-deployer",
             'atlas/data/integrations/*',
+            'atlas/data/vpn/connections',
         ):
             self.assertNotIn(forbidden, policy.lower())
 

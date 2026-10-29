@@ -14,13 +14,6 @@ inventory:
   role_mappings:
     models: {}
     platforms: {}
-  # Connection profiles contain routing ownership only, never VPN credentials.
-  connection_profiles:
-    aricoma-primary:
-      tenant: aricoma-systems
-      status: planned
-      vrf: aricoma-mgmt
-      transport: ipsec
 
 proxy:
   listen_address: 10.20.30.40

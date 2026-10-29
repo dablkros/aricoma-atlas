@@ -46,6 +46,7 @@ class Settings(BaseSettings):
         "/run/atlas/prophylaxis/results.sqlite3"
     )
     prophylaxis_runs_directory: Path = Path("/run/atlas/prophylaxis/runs")
+    vpn_registry_file: Path = Path("/run/atlas/vpn/connections.sqlite3")
     prophylaxis_concurrency: int = Field(default=4, ge=1, le=32)
     prophylaxis_result_retention: int = Field(
         default=10_000,
@@ -114,6 +115,7 @@ class Settings(BaseSettings):
         "openbao_identity_file",
         "oxidized_inventory_file",
         "prophylaxis_results_file",
+        "vpn_registry_file",
         "ansible_project_dir",
         "ssh_known_hosts_file",
     )

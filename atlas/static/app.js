@@ -138,6 +138,7 @@ const elements = {
   credentialOpen: document.querySelector("#credential-onboarding-open"),
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
+  credentialTenant: document.querySelector("#credential-tenant"),
   credentialManufacturer: document.querySelector("#credential-manufacturer"),
   credentialDeviceFilter: document.querySelector("#credential-device-filter"),
   credentialDeviceList: document.querySelector("#credential-device-list"),
@@ -388,6 +389,89 @@ function inventoryPayload() {
   };
 }
 
+function inventoryOption(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function resetInventorySiteOptions(label = "Select a tenant to override site") {
+  elements.inventorySite.replaceChildren(inventoryOption("", label));
+  elements.inventorySite.disabled = true;
+}
+
+async function loadInventoryImportSites(preferredSite = "") {
+  const tenant = elements.inventoryTenant.value;
+  if (!tenant) {
+    resetInventorySiteOptions();
+    return;
+  }
+  resetInventorySiteOptions("Loading sites…");
+  const sites = await apiRequest(
+    `/api/inventory/sites?tenant=${encodeURIComponent(tenant)}`,
+    { headers: operatorHeaders() },
+  );
+  const options = [inventoryOption("", "Use table or configured default")];
+  for (const site of sites.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  ).sort((left, right) => (
+    String(left.name || left.slug).localeCompare(String(right.name || right.slug))
+  ))) {
+    options.push(inventoryOption(site.slug, `${site.name} (${site.slug})`));
+  }
+  elements.inventorySite.replaceChildren(...options);
+  elements.inventorySite.disabled = false;
+  if ([...elements.inventorySite.options].some((option) => option.value === preferredSite)) {
+    elements.inventorySite.value = preferredSite;
+  } else if (preferredSite) {
+    resetInventoryPlan();
+  }
+}
+
+async function loadInventoryImportTenants() {
+  const preferredTenant = elements.inventoryTenant.value;
+  const preferredSite = elements.inventorySite.value;
+  elements.inventoryTenant.replaceChildren(inventoryOption("", "Loading tenants…"));
+  elements.inventoryTenant.disabled = true;
+  resetInventorySiteOptions("Select a tenant to override site");
+  const tenants = await apiRequest("/api/inventory/tenants", {
+    headers: operatorHeaders(),
+  });
+  const options = [inventoryOption("", "Use table or configured default")];
+  for (const tenant of tenants.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  ).sort((left, right) => (
+    String(left.name || left.slug).localeCompare(String(right.name || right.slug))
+  ))) {
+    options.push(inventoryOption(tenant.slug, `${tenant.name} (${tenant.slug})`));
+  }
+  elements.inventoryTenant.replaceChildren(...options);
+  elements.inventoryTenant.disabled = false;
+  if ([...elements.inventoryTenant.options].some((option) => option.value === preferredTenant)) {
+    elements.inventoryTenant.value = preferredTenant;
+  } else if (preferredTenant) {
+    resetInventoryPlan();
+  }
+  await loadInventoryImportSites(preferredSite);
+}
+
+async function openInventoryImport() {
+  if (!requireOperatorToken()) return;
+  elements.inventoryImportDialog.showModal();
+  elements.inventoryTable.focus();
+  try {
+    await loadInventoryImportTenants();
+  } catch (error) {
+    elements.inventoryTenant.replaceChildren(
+      inventoryOption("", "Tenant list unavailable"),
+    );
+    elements.inventoryTenant.disabled = true;
+    resetInventorySiteOptions("Site list unavailable");
+    toast(error.safeMessage || "Tenant and site lists are unavailable.", "error");
+  }
+}
+
 function clearCredentialSecrets() {
   for (const input of [
     elements.credentialProphylaxisPassword,
@@ -419,6 +503,34 @@ function selectedCredentialPlatform() {
   ) || null;
 }
 
+function renderCredentialManufacturerOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const manufacturers = [...new Set(
+    (state.credentialOptions?.devices || [])
+      .filter((device) => String(device.tenant?.id ?? "") === tenantId)
+      .map((device) => device.manufacturer?.name)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right));
+  elements.credentialManufacturer.replaceChildren(
+    new Option(tenantId ? "Select a manufacturer" : "Select a tenant first", ""),
+    ...manufacturers.map((manufacturer) => new Option(manufacturer, manufacturer)),
+  );
+  elements.credentialManufacturer.disabled = !tenantId;
+}
+
+function renderCredentialProfileOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const profiles = [...new Set(
+    (state.credentialOptions?.devices || [])
+      .filter((device) => String(device.tenant?.id ?? "") === tenantId)
+      .map((device) => device.credential_profile)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right));
+  elements.credentialProfileOptions.replaceChildren(
+    ...profiles.map((profile) => new Option(profile)),
+  );
+}
+
 function renderCredentialPlatformOptions() {
   const manufacturer = elements.credentialManufacturer.value;
   const devices = selectedCredentialDevices();
@@ -447,14 +559,22 @@ function renderCredentialPlatformOptions() {
 }
 
 function renderCredentialDeviceOptions() {
+  const tenantId = elements.credentialTenant.value;
   const manufacturer = elements.credentialManufacturer.value;
   const query = elements.credentialDeviceFilter.value.trim().toLocaleLowerCase();
   const selected = state.credentialSelectedDeviceIds;
   const devices = (state.credentialOptions?.devices || []).filter((device) => (
-    device.manufacturer?.name === manufacturer
+    String(device.tenant?.id ?? "") === tenantId
+    && device.manufacturer?.name === manufacturer
     && (!query || device.name.toLocaleLowerCase().includes(query))
   ));
-  if (!manufacturer) {
+  if (!tenantId) {
+    elements.credentialDeviceList.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "Select a tenant first.",
+      }),
+    );
+  } else if (!manufacturer) {
     elements.credentialDeviceList.replaceChildren(
       Object.assign(document.createElement("p"), {
         className: "field-help", textContent: "Select a manufacturer first.",
@@ -514,24 +634,20 @@ async function openCredentialOnboarding() {
     state.credentialOptions = await apiRequest("/api/credentials/options", {
       headers: operatorHeaders(),
     });
-    const manufacturers = [...new Set(
-      (state.credentialOptions.devices || [])
-        .map((device) => device.manufacturer?.name)
-        .filter(Boolean),
-    )].sort((left, right) => left.localeCompare(right));
-    elements.credentialManufacturer.replaceChildren(
-      new Option("Select a manufacturer", ""),
-      ...manufacturers.map((manufacturer) => new Option(manufacturer, manufacturer)),
+    elements.credentialTenant.replaceChildren(
+      new Option("Select a tenant", ""),
+      ...(state.credentialOptions.tenants || []).map(
+        (tenant) => new Option(tenant.name, String(tenant.id)),
+      ),
     );
+    renderCredentialManufacturerOptions();
+    renderCredentialProfileOptions();
     state.credentialSelectedDeviceIds.clear();
     elements.credentialDeviceFilter.value = "";
     renderCredentialDeviceOptions();
     renderCredentialPlatformOptions();
-    elements.credentialProfileOptions.replaceChildren(
-      ...(state.credentialOptions.profiles || []).map((profile) => new Option(profile)),
-    );
     elements.credentialDialog.showModal();
-    elements.credentialManufacturer.focus();
+    elements.credentialTenant.focus();
   } catch (error) {
     toast(error.safeMessage || "Could not load credential onboarding options.", "error");
   } finally {
@@ -586,7 +702,7 @@ function renderCredentialPlan(result) {
   elements.credentialPlanOperations.replaceChildren(...result.operations.map((operation) => {
     const row = document.createElement("tr");
     for (const value of [
-      operation.device?.name || "Shared profile",
+      operation.device?.name || `${result.tenant?.name || "Selected tenant"} — shared profile`,
       operation.target,
       operation.purpose || operation.object || "—",
       operation.action,
@@ -613,6 +729,10 @@ function setCredentialBusy(busy) {
 
 async function planCredentials() {
   if (!requireOperatorToken()) return;
+  if (!elements.credentialTenant.value) {
+    toast("Select a tenant for this credential batch.", "warning");
+    return;
+  }
   if (!selectedCredentialDevices().length) {
     toast("Select at least one device.", "warning");
     return;
@@ -2054,6 +2174,20 @@ elements.credentialClose.addEventListener("click", () => {
   clearCredentialSecrets();
   elements.credentialDialog.close();
 });
+elements.credentialTenant.addEventListener("change", () => {
+  state.credentialSelectedDeviceIds.clear();
+  elements.credentialDeviceFilter.value = "";
+  elements.credentialProfile.value = "";
+  elements.credentialProphylaxisUsername.value = "";
+  elements.credentialOxidizedUsername.value = "";
+  elements.credentialReplace.checked = false;
+  clearCredentialSecrets();
+  renderCredentialManufacturerOptions();
+  renderCredentialProfileOptions();
+  renderCredentialDeviceOptions();
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
+});
 elements.credentialManufacturer.addEventListener("change", () => {
   state.credentialSelectedDeviceIds.clear();
   elements.credentialDeviceFilter.value = "";
@@ -2100,10 +2234,7 @@ for (const input of [
   elements.credentialSnmpCommunity,
   elements.credentialReplace,
 ]) input.addEventListener("input", resetCredentialPlan);
-elements.inventoryImportOpen.addEventListener("click", () => {
-  elements.inventoryImportDialog.showModal();
-  elements.inventoryTable.focus();
-});
+elements.inventoryImportOpen.addEventListener("click", openInventoryImport);
 elements.inventoryImportClose.addEventListener("click", () => {
   elements.inventoryImportDialog.close();
 });
@@ -2118,7 +2249,7 @@ elements.inventoryExample.addEventListener("click", () => {
 elements.inventoryClear.addEventListener("click", () => {
   elements.inventoryTable.value = "";
   elements.inventoryTenant.value = "";
-  elements.inventorySite.value = "";
+  resetInventorySiteOptions();
   elements.inventoryDeviceTypeYaml.value = "";
   setInventoryDeviceTypeError();
   elements.inventoryDeviceTypeReplace.checked = false;
@@ -2136,8 +2267,16 @@ elements.inventoryApplyConfirm.addEventListener("change", () => {
     || !elements.inventoryApplyConfirm.checked;
 });
 elements.inventoryApply.addEventListener("click", applyInventory);
-for (const input of [elements.inventoryTable, elements.inventoryTenant, elements.inventorySite]) {
-  input.addEventListener("input", resetInventoryPlan);
-}
+elements.inventoryTable.addEventListener("input", resetInventoryPlan);
+elements.inventoryTenant.addEventListener("change", async () => {
+  resetInventoryPlan();
+  try {
+    await loadInventoryImportSites();
+  } catch (error) {
+    resetInventorySiteOptions("Site list unavailable");
+    toast(error.safeMessage || "Site list is unavailable for this tenant.", "error");
+  }
+});
+elements.inventorySite.addEventListener("change", resetInventoryPlan);
 
 refreshAdminSession({ prompt: true }).finally(loadDashboard);

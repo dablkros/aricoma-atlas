@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261029-2">
-    <script src="/static/app.js?v=20261029-2" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261029-4">
+    <script src="/static/app.js?v=20261029-4" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -345,15 +345,19 @@
           <div>
             <p class="section-kicker">OpenBao and NetBox</p>
             <h2 id="credential-onboarding-title">Onboard device credentials</h2>
-            <p>Select one or more devices from the same manufacturer, choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
+            <p>Select one tenant, then one or more devices from the same manufacturer. Choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
           </div>
           <button id="credential-onboarding-close" class="dialog-close" type="button" aria-label="Close credential window">×</button>
         </header>
 
         <div class="inventory-fields">
           <div class="field-group">
+            <label for="credential-tenant">Tenant</label>
+            <select id="credential-tenant"><option value="">Select a tenant</option></select>
+          </div>
+          <div class="field-group">
             <label for="credential-manufacturer">Manufacturer</label>
-            <select id="credential-manufacturer"><option value="">Select a manufacturer</option></select>
+            <select id="credential-manufacturer" disabled><option value="">Select a tenant first</option></select>
           </div>
           <div class="field-group">
             <label for="credential-platform">Platform</label>
@@ -376,8 +380,8 @@
             <span id="credential-device-count" class="field-help">0 selected</span>
           </div>
           <input id="credential-device-filter" type="search" autocomplete="off" placeholder="Filter devices by name">
-          <div id="credential-device-list" class="credential-device-list" role="group" aria-label="Devices from the selected manufacturer">
-            <p class="field-help">Select a manufacturer first.</p>
+          <div id="credential-device-list" class="credential-device-list" role="group" aria-label="Devices from the selected tenant and manufacturer">
+            <p class="field-help">Select a tenant first.</p>
           </div>
         </div>
 
@@ -467,11 +471,15 @@
         <div class="inventory-fields">
           <div class="field-group">
             <label for="inventory-tenant">Tenant override <span class="field-optional">optional</span></label>
-            <input id="inventory-tenant" type="text" maxlength="200" placeholder="Use table or configured default">
+            <select id="inventory-tenant">
+              <option value="">Use table or configured default</option>
+            </select>
           </div>
           <div class="field-group">
             <label for="inventory-site">Site override <span class="field-optional">optional</span></label>
-            <input id="inventory-site" type="text" maxlength="200" placeholder="Use table or configured default">
+            <select id="inventory-site" disabled>
+              <option value="">Select a tenant to override site</option>
+            </select>
           </div>
         </div>
 

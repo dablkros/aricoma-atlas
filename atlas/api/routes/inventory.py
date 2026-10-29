@@ -19,12 +19,12 @@ from atlas.api.schemas.inventory import (
     TenantRequest,
 )
 from atlas.inventory.config import load_inventory_config
-from atlas.inventory.connections import ConnectionMappingError, ConnectionResolver
 from atlas.inventory.importer import (
     InventoryConflict, InventoryImporter, InventoryInvalid, related_id, slugify,
 )
 from atlas.inventory.parser import parse_inventory_table
 from atlas.services.errors import DependencyError
+from atlas.vpn.service import VPNRegistryError
 from atlas.platforms import load_platform_config
 from scripts import provision_netbox
 from scripts.import_netbox_inventory import _device_type_item, prepare_import_device_types
@@ -123,15 +123,14 @@ def device_connection(
     device_id: int, request: Request, tenant: str | None = None,
 ) -> dict:
     try:
-        return ConnectionResolver(
-            request.app.state.dependencies.netbox,
-            load_inventory_config(CONFIG),
-        ).resolve(device_id, expected_tenant=tenant)
-    except ConnectionMappingError as exc:
-        raise AtlasError(409, "inventory_connection_invalid", str(exc)) from None
-    except DependencyError:
+        return request.app.state.dependencies.vpn.resolve_device(
+            device_id, expected_tenant=tenant,
+        )
+    except VPNRegistryError as exc:
         raise AtlasError(
-            503, "inventory_dependency_unavailable", "Inventory dependency is unavailable"
+            exc.status_code,
+            "inventory_connection_invalid",
+            exc.code,
         ) from None
 
 

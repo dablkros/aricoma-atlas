@@ -54,8 +54,9 @@ V Atlas Operations UI otvorí v časti **Operator tools** položku **Import
 devices** a vykoná tento kontrolovaný postup:
 
 1. vloží tabuľku skopírovanú z Excelu alebo obsah CSV;
-2. voliteľne určí spoločný Tenant a Site, inak sa použijú hodnoty z tabuľky
-   alebo predvolená runtime konfigurácia;
+2. voliteľne vyberie spoločný Tenant z NetBox dropdownu a následne Site
+   filtrovaný iba na lokality tohto Tenanta; prázdna voľba použije hodnoty z
+   tabuľky alebo predvolenú runtime konfiguráciu;
 3. spustí **Create dry-run plan** bez zápisu do NetBoxu;
 4. vyrieši všetky riadky `INVALID`, `CONFLICT` alebo `ERROR`;
 5. ak chýba Device Type, vloží jeho YAML priamo v okne; Atlas ho schémovo

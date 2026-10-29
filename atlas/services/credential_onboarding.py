@@ -43,10 +43,16 @@ class CredentialOnboardingService:
             device_type = device.get("device_type") or {}
             manufacturer = device_type.get("manufacturer") or {}
             platform = device.get("platform") or {}
+            tenant = device.get("tenant") or {}
             fields = device.get("custom_fields") or {}
             result_devices.append({
                 "id": device.get("id"),
                 "name": device.get("name"),
+                "tenant": {
+                    "id": tenant.get("id"),
+                    "name": tenant.get("name"),
+                    "slug": tenant.get("slug"),
+                },
                 "manufacturer": {
                     "name": manufacturer.get("name"),
                     "slug": manufacturer.get("slug"),
@@ -59,6 +65,20 @@ class CredentialOnboardingService:
                 "oxidized_enabled": fields.get("oxidized_enabled") is True,
                 "monitoring_enabled": fields.get("monitoring_enabled") is True,
             })
+        tenants = sorted(
+            {
+                (
+                    device["tenant"]["id"],
+                    device["tenant"]["name"],
+                    device["tenant"]["slug"],
+                )
+                for device in result_devices
+                if device["tenant"]["id"] is not None
+                and device["tenant"]["name"]
+                and device["tenant"]["slug"]
+            },
+            key=lambda item: str(item[1]).casefold(),
+        )
         platforms = []
         oxidized = self.platform_config.get("oxidized_platform_mapping", {})
         for slug, definition in sorted(self.platform_config["platforms"].items()):
@@ -76,9 +96,17 @@ class CredentialOnboardingService:
                 "prophylaxis_auth": sorted(set(auth)),
                 "oxidized_supported": slug in oxidized,
             })
-        return {"devices": result_devices, "platforms": platforms, "profiles": profiles}
+        return {
+            "devices": result_devices,
+            "tenants": [
+                {"id": tenant_id, "name": name, "slug": slug}
+                for tenant_id, name, slug in tenants
+            ],
+            "platforms": platforms,
+            "profiles": profiles,
+        }
 
-    def _devices(self, body: CredentialOnboardingRequest) -> tuple[list[dict], str]:
+    def _devices(self, body: CredentialOnboardingRequest) -> tuple[list[dict], str, dict]:
         devices = [
             self.netbox.get(f"/api/dcim/devices/{device_id}/")
             for device_id in body.device_ids
@@ -88,6 +116,20 @@ class CredentialOnboardingService:
             for device in devices
         ):
             raise CredentialOnboardingInvalid("Only active devices can be onboarded")
+        tenants = [device.get("tenant") or {} for device in devices]
+        if any(tenant.get("id") is None for tenant in tenants):
+            raise CredentialOnboardingInvalid(
+                "All selected devices must belong to a tenant"
+            )
+        tenant_pairs = {
+            (tenant.get("id"), tenant.get("slug"), tenant.get("name"))
+            for tenant in tenants
+        }
+        if len(tenant_pairs) != 1:
+            raise CredentialOnboardingInvalid(
+                "All selected devices must belong to the same tenant"
+            )
+        tenant_id, tenant_slug, tenant_name = tenant_pairs.pop()
         manufacturers = [
             ((device.get("device_type") or {}).get("manufacturer") or {})
             for device in devices
@@ -106,7 +148,11 @@ class CredentialOnboardingService:
             raise CredentialOnboardingInvalid("Device manufacturer or platform is missing")
         if str(vendor_name).casefold() != str(definition["manufacturer"]).casefold():
             raise CredentialOnboardingInvalid("Platform does not belong to the device manufacturer")
-        return devices, vendor
+        return devices, vendor, {
+            "id": tenant_id,
+            "slug": tenant_slug,
+            "name": tenant_name,
+        }
 
     def _requested_secrets(self, body: CredentialOnboardingRequest) -> list[tuple[str, dict]]:
         try:
@@ -167,7 +213,7 @@ class CredentialOnboardingService:
                 "action": "UPDATE", "version": version, "blocked": False}
 
     def plan(self, body: CredentialOnboardingRequest) -> dict:
-        devices, vendor = self._devices(body)
+        devices, vendor, tenant = self._devices(body)
         secrets = self._requested_secrets(body)
         operations = [
             self._secret_operation(
@@ -234,6 +280,7 @@ class CredentialOnboardingService:
                 for device in devices
             ],
             "manufacturer": vendor,
+            "tenant": tenant,
             "platform": body.platform,
             "credential_profile": body.credential_profile,
             "apply_allowed": not any(item.get("blocked") for item in operations),
@@ -244,7 +291,7 @@ class CredentialOnboardingService:
         preview = expected_plan
         if not preview["apply_allowed"]:
             raise CredentialOnboardingInvalid("Resolve credential conflicts before apply")
-        devices, vendor = self._devices(body)
+        devices, vendor, _tenant = self._devices(body)
         secret_values = dict(self._requested_secrets(body))
         secret_operations = {
             operation.get("purpose"): operation

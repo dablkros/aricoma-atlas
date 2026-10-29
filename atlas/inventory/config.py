@@ -42,6 +42,11 @@ def _mapping(value, label):
 
 def normalize_inventory_config(raw: object) -> dict:
     data = _mapping(raw, "inventory")
+    if "connection_profiles" in data:
+        raise ValueError(
+            "inventory.connection_profiles was replaced by the persistent VPN "
+            "Connection Registry; migrate profiles through /api/v1/vpn/connections"
+        )
     allowed = {
         "version",
         "default_tenant",
@@ -51,7 +56,6 @@ def normalize_inventory_config(raw: object) -> dict:
         "default_device_role",
         "device_type_aliases",
         "role_mappings",
-        "connection_profiles",
     }
     if set(data) - allowed:
         raise ValueError("inventory contains unknown fields")
@@ -133,53 +137,6 @@ def normalize_inventory_config(raw: object) -> dict:
     ):
         raise ValueError("inventory aliases and role mappings must be non-empty strings")
 
-    profiles = _mapping(data.get("connection_profiles"), "inventory.connection_profiles")
-    normalized_profiles = {}
-    for connection_id, raw_profile in profiles.items():
-        if not isinstance(connection_id, str) or not re.fullmatch(
-            r"[a-z0-9]+(?:-[a-z0-9]+)*", connection_id
-        ):
-            raise ValueError("inventory.connection_profiles contains an invalid ID")
-        profile = _mapping(
-            raw_profile,
-            f"inventory.connection_profiles.{connection_id}",
-        )
-        if set(profile) - {"tenant", "status", "vrf", "transport"}:
-            raise ValueError(
-                f"inventory.connection_profiles.{connection_id} contains unknown fields"
-            )
-        tenant_slug = profile.get("tenant")
-        status = profile.get("status", "planned")
-        vrf = profile.get("vrf")
-        transport = profile.get("transport")
-        if not isinstance(tenant_slug, (str, int)) or isinstance(tenant_slug, bool) or (
-            isinstance(tenant_slug, str)
-            and not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", tenant_slug)
-        ):
-            raise ValueError(
-                f"inventory.connection_profiles.{connection_id}.tenant is invalid"
-            )
-        if status not in {"planned", "active", "disabled"}:
-            raise ValueError(
-                f"inventory.connection_profiles.{connection_id}.status is invalid"
-            )
-        if not isinstance(vrf, (str, int)) or isinstance(vrf, bool) or not str(vrf).strip():
-            raise ValueError(
-                f"inventory.connection_profiles.{connection_id}.vrf is required"
-            )
-        if transport is not None and (
-            not isinstance(transport, str)
-            or not re.fullmatch(r"[a-z0-9]+(?:[-_][a-z0-9]+)*", transport)
-        ):
-            raise ValueError(
-                f"inventory.connection_profiles.{connection_id}.transport is invalid"
-            )
-        normalized_profiles[connection_id] = {
-            "tenant": str(tenant_slug),
-            "status": status,
-            "vrf": str(vrf).strip(),
-            "transport": transport,
-        }
     return {
         "version": 1,
         "default_tenant": tenant,
@@ -189,7 +146,6 @@ def normalize_inventory_config(raw: object) -> dict:
         "default_device_role": role.strip() if isinstance(role, str) else None,
         "device_type_aliases": dict(aliases),
         "role_mappings": normalized_mappings,
-        "connection_profiles": normalized_profiles,
     }
 
 

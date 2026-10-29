@@ -21,24 +21,15 @@ Tenanta. Cross-tenant väzba je konflikt.
 
 Baseline pridáva textové custom field `atlas_connection_id` na Site a Device.
 Device hodnota má prioritu, Site je predvolená hodnota. Identifikátor odkazuje
-na validovaný register `inventory.connection_profiles` v chránenej runtime
-konfigurácii. Register neobsahuje credentials.
+na perzistentný SQLite VPN Connection Registry. Inventory YAML nie je registrom
+spojení a neobsahuje paralelný zoznam profilov. Metadata a pravidlá resolvera
+sú opísané v [VPN Connection Registry](vpn-connection-registry.md).
 
-```yaml
-inventory:
-  connection_profiles:
-    customer-a-primary:
-      tenant: customer-a
-      status: planned
-      vrf: customer-a-mgmt
-      transport: ipsec
-```
-
-`ConnectionResolver` prijme Device ID a vráti Device, Tenant, Site, management
-IP, VRF, Connection ID, zdroj mapovania, stav a transport. Overuje Tenant na
-Site, IP, VRF aj profile. Chýbajúce mapovanie vracia `unmapped`; neexistujúci,
-cross-tenant alebo VRF-conflicting profil je validačná chyba. Resolver nikdy
-nevyberá iné dostupné spojenie ako fallback.
+Resolver prijme Device ID a vráti Device, Tenant, Site, management IP/VRF,
+Connection ID, zdroj mapovania a netajné metadata. Overuje Tenant na Site, IP,
+VRF aj registrovanom spojení. Chýbajúce mapovanie vracia `unmapped`;
+neexistujúce, cross-tenant alebo VRF-conflicting spojenie je validačná chyba.
+Resolver nikdy nevyberá iné dostupné spojenie ako fallback.
 
 ## Manuálna akceptácia na Ubuntu VM
 
@@ -51,9 +42,12 @@ nevyberá iné dostupné spojenie ako fallback.
    `--dry-run`, potom s `--apply`; opakovanie nesmie vytvoriť duplicitu.
 5. Pre dvoch Tenantov vytvorte odlišné VRF a importujte rovnakú management IP
    s príslušným VRF. NetBox musí uchovať dva IP objekty.
-6. Nastavte `atlas_connection_id` na Site, voliteľne iný override na Device,
-   a overte resolver pre Device ID. Cross-tenant profil musí byť odmietnutý.
-7. Overte, že existujúci Tenant `aricoma-systems`, Site `DCmartin` a hodnoty
+6. Vytvorte VPN Connection cez autorizované REST API a do OpenBao manuálne
+   vložte secret na presnej ceste `atlas/vpn/connections/<connection_id>`.
+7. Nastavte `atlas_connection_id` na Site, voliteľne iný override na Device,
+   a overte resolver cez `atlasctl vpn resolve --device-id ID`. Cross-tenant
+   spojenie musí byť odmietnuté.
+8. Overte, že existujúci Tenant `aricoma-systems`, Site `DCmartin` a hodnoty
    existujúcich custom fields zostali nezmenené.
 
 Táto etapa zámerne nevytvára VPN spojenia a nespúšťa sieťové úlohy cez profil

@@ -260,6 +260,20 @@ class InventoryImporterTests(unittest.TestCase):
                 }
             })
 
+    def test_legacy_connection_profiles_are_rejected_instead_of_silently_used(self):
+        with self.assertRaisesRegex(
+            ValueError, "replaced by the persistent VPN Connection Registry"
+        ):
+            normalize_inventory_config({
+                "connection_profiles": {
+                    "customer-a-primary": {
+                        "tenant": "customer-a",
+                        "status": "planned",
+                        "vrf": "customer-a-mgmt",
+                    }
+                }
+            })
+
     def test_default_role_mappings_are_present_and_operator_overrides_win(self):
         config = normalize_inventory_config({
             "role_mappings": {

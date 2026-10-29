@@ -636,6 +636,14 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     prophylaxis_directory.mkdir(parents=True, exist_ok=True)
     os.chmod(prophylaxis_directory, 0o700)
 
+    vpn_directory = root / ".runtime/vpn"
+    if vpn_directory.is_symlink():
+        raise RuntimeError("VPN registry runtime cannot be a symlink")
+    if runtime_base.resolve() not in vpn_directory.resolve().parents:
+        raise RuntimeError("VPN registry runtime escaped the protected runtime directory")
+    vpn_directory.mkdir(parents=True, exist_ok=True)
+    os.chmod(vpn_directory, 0o700)
+
     inventory_config = root / ".runtime/inventory.yaml"
     inventory_device_types = root / ".runtime/inventory/device-types"
     inventory_device_types.mkdir(parents=True, exist_ok=True)
@@ -679,6 +687,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         f"{monitoring_jobs}:/run/atlas/monitoring/jobs:rw",
         f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
+        f"{vpn_directory}:/run/atlas/vpn:rw",
         f"{inventory_device_types}:/run/atlas/inventory/device-types:rw",
         f"{built_catalog}:/app/build:ro",
         f"{upstream_device_types}:/app/devicetype-library/device-types:ro",
@@ -712,6 +721,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_ZABBIX_ENABLED": str(selection.enabled("zabbix")).lower(),
         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
         "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
+        "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(backend["prophylaxis_result_retention"]),
         "ATLAS_PROPHYLAXIS_CONCURRENCY": str(backend["prophylaxis_concurrency"]),
         "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",

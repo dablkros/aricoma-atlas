@@ -70,6 +70,7 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_ZABBIX_UI_URL": "https://zabbix.example.test",
                 "ATLAS_OXIDIZED_INVENTORY_FILE": "/run/atlas/oxidized/router.json",
                 "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
+                "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
                 "ATLAS_PROPHYLAXIS_RESULT_RETENTION": "5000",
                 "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
                 "ATLAS_ANSIBLE_JOB_TIMEOUT": "90",
@@ -112,6 +113,10 @@ class SettingsTests(unittest.TestCase):
             settings.prophylaxis_results_file,
             Path("/run/atlas/prophylaxis/results.sqlite3"),
         )
+        self.assertEqual(
+            settings.vpn_registry_file,
+            Path("/run/atlas/vpn/connections.sqlite3"),
+        )
         self.assertEqual(settings.prophylaxis_result_retention, 5000)
         self.assertEqual(settings.ansible_project_dir, Path("/app/automation"))
         self.assertEqual(settings.ansible_job_timeout, 90)
@@ -141,6 +146,7 @@ class SettingsTests(unittest.TestCase):
             {"openbao_identity_file": "../backend-identity.json"},
             {"oxidized_inventory_file": "../router.json"},
             {"prophylaxis_results_file": "../results.sqlite3"},
+            {"vpn_registry_file": "../connections.sqlite3"},
             {"prophylaxis_result_retention": 99},
             {"ansible_project_dir": "../automation"},
             {"ansible_job_timeout": 0},
@@ -162,6 +168,7 @@ class SettingsTests(unittest.TestCase):
         self.assertIn("ATLAS_OPENBAO_IDENTITY_FILE=", content)
         self.assertIn("ATLAS_NETBOX_URL=", content)
         self.assertIn("ATLAS_ZABBIX_UI_URL=", content)
+        self.assertIn("ATLAS_VPN_REGISTRY_FILE=", content)
         for forbidden in (
             "ATLAS_OPENBAO_TOKEN=",
             "ATLAS_NETBOX_TOKEN=",
@@ -226,18 +233,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(styles.status_code, 200)
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261029-2", page.text)
-        self.assertIn("/static/styles.css?v=20261029-2", page.text)
+        self.assertIn("/static/app.js?v=20261029-4", page.text)
+        self.assertIn("/static/styles.css?v=20261029-4", page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
         self.assertIn('id="monitoring-activity"', page.text)
         self.assertIn('id="monitoring-bulk-preview"', page.text)
         self.assertIn('id="monitoring-bulk-apply"', page.text)
         self.assertIn('id="inventory-import-dialog"', page.text)
+        self.assertIn('<select id="inventory-tenant">', page.text)
+        self.assertIn('<select id="inventory-site" disabled>', page.text)
         self.assertIn('id="inventory-structure-dialog"', page.text)
         self.assertIn('id="inventory-activity"', page.text)
         self.assertIn('id="credential-onboarding-dialog"', page.text)
+        self.assertIn('id="credential-tenant"', page.text)
         self.assertIn('id="credential-device-list"', page.text)
+        self.assertIn("renderCredentialManufacturerOptions", script.text)
+        self.assertIn("renderCredentialProfileOptions", script.text)
         self.assertIn("/api/credentials/plan", script.text)
         self.assertIn("/api/prophylaxis/runs", script.text)
         self.assertIn("Waiting for SNMP data", script.text)
@@ -245,6 +257,9 @@ class ApiTests(unittest.TestCase):
         self.assertIn("renderMonitoringBulkPreview", script.text)
         self.assertIn("applyAllMonitoringPlans", script.text)
         self.assertIn("/api/inventory/import/plan", script.text)
+        self.assertIn("/api/inventory/tenants", script.text)
+        self.assertIn("/api/inventory/sites?tenant=", script.text)
+        self.assertIn("loadInventoryImportTenants", script.text)
         self.assertIn("/api/inventory/${kind}s/", script.text)
         self.assertIn("startInventoryActivity", script.text)
         self.assertNotIn("docker.sock", page.text + script.text)
@@ -289,6 +304,42 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.json(), planned)
+
+    def test_inventory_tenant_options_come_from_netbox(self):
+        tenants = [
+            {"id": 7, "name": "Customer A", "slug": "customer-a"},
+            {"id": 8, "name": "Customer B", "slug": "customer-b"},
+        ]
+        with patch.object(
+            self.app.state.dependencies.netbox, "get_all", return_value=tenants,
+        ):
+            response = self.client.get(
+                "/api/inventory/tenants", headers=OPERATOR_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), tenants)
+
+    def test_inventory_site_options_are_filtered_by_selected_tenant(self):
+        importer = SimpleNamespace(
+            resolve_tenant=lambda value: {"id": 7, "slug": value},
+        )
+        sites = [
+            {"id": 10, "name": "Bratislava", "slug": "bratislava", "tenant": {"id": 7}},
+            {"id": 11, "name": "Other", "slug": "other", "tenant": {"id": 8}},
+        ]
+        with patch("atlas.api.routes.inventory._importer", return_value=importer), patch.object(
+            self.app.state.dependencies.netbox, "get_all", return_value=sites,
+        ):
+            response = self.client.get(
+                "/api/inventory/sites?tenant=customer-a", headers=OPERATOR_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(
+            response.json(),
+            [{"id": 10, "name": "Bratislava", "slug": "bratislava"}],
+        )
 
     def test_tenant_plan_and_apply_use_exact_plan_hash(self):
         importer = SimpleNamespace(

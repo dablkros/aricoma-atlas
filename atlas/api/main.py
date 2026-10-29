@@ -21,6 +21,7 @@ from atlas.api.routes import (
     prophylaxis,
     readiness,
     status,
+    vpn,
     zabbix,
 )
 from atlas.config import Settings, get_settings
@@ -84,6 +85,7 @@ def create_app(
     application.include_router(inventory.router, prefix=settings.api_prefix)
     application.include_router(credentials.router, prefix=settings.api_prefix)
     application.include_router(integrations.router, prefix=settings.api_prefix)
+    application.include_router(vpn.router, prefix=settings.api_prefix)
     if settings.zabbix_enabled:
         application.include_router(zabbix.router, prefix=settings.api_prefix)
     application.mount(

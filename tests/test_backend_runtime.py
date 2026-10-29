@@ -513,6 +513,10 @@ class BackendRuntimeTests(unittest.TestCase):
             "/run/atlas/prophylaxis/results.sqlite3",
         )
         self.assertEqual(
+            service["environment"]["ATLAS_VPN_REGISTRY_FILE"],
+            "/run/atlas/vpn/connections.sqlite3",
+        )
+        self.assertEqual(
             service["environment"]["ATLAS_INVENTORY_CONFIG"],
             "/run/atlas/inventory/config.yaml",
         )
@@ -587,6 +591,10 @@ class BackendRuntimeTests(unittest.TestCase):
             service["volumes"],
         )
         self.assertIn(
+            f"{(self.root / '.runtime/vpn').resolve()}:/run/atlas/vpn:rw",
+            service["volumes"],
+        )
+        self.assertIn(
             f"{(self.root / '.runtime/inventory/device-types').resolve()}:"
             "/run/atlas/inventory/device-types:rw",
             service["volumes"],
@@ -602,6 +610,10 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             os.stat(self.root / ".runtime/prophylaxis").st_mode & 0o777,
+            0o700,
+        )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/vpn").st_mode & 0o777,
             0o700,
         )
         self.assertIn(

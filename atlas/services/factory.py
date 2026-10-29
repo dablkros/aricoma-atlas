@@ -22,6 +22,8 @@ from atlas.services.oxidized_sync import FileInventoryStore, OxidizedSyncService
 from atlas.services.platform_status import PlatformStatusService
 from atlas.services.zabbix import ZabbixMonitoringService, ZabbixService
 from atlas.services.zabbix_sync import ZabbixSyncService
+from atlas.vpn.service import VPNRegistryService
+from atlas.vpn.store import SQLiteVPNConnectionStore
 
 
 @dataclass(frozen=True)
@@ -37,6 +39,7 @@ class DependencyServices:
     zabbix: ZabbixService
     zabbix_sync: ZabbixSyncService
     zabbix_monitoring: ZabbixMonitoringService
+    vpn: VPNRegistryService
     monitoring: MonitoringService = None
     cisco_support: CiscoSupportService = None
     credentials: CredentialOnboardingService = None
@@ -112,6 +115,11 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             netbox,
             credential_writer,
             credential_writer,
+        ),
+        vpn=VPNRegistryService(
+            SQLiteVPNConnectionStore(settings.vpn_registry_file),
+            netbox,
+            openbao,
         ),
         openbao=openbao,
         netbox=netbox,

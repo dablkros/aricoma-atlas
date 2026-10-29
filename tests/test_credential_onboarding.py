@@ -36,6 +36,7 @@ class FakeNetBox:
             "id": 7,
             "name": "forti-mt-2",
             "status": {"value": "active"},
+            "tenant": {"id": 3, "name": "Acme", "slug": "acme"},
             "device_type": {
                 "manufacturer": {"name": "Fortinet", "slug": "fortinet"},
             },
@@ -216,6 +217,34 @@ class CredentialOnboardingTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(CredentialOnboardingInvalid, "same manufacturer"):
             self.service.plan(api_request(device_ids=[7, 8]))
+
+    def test_options_include_tenants_and_device_tenant(self):
+        result = self.service.options()
+
+        self.assertEqual(
+            [{"id": 3, "name": "Acme", "slug": "acme"}],
+            result["tenants"],
+        )
+        self.assertEqual(result["tenants"][0], result["devices"][0]["tenant"])
+
+    def test_batch_requires_one_tenant(self):
+        second = {
+            **self.netbox.device,
+            "id": 8,
+            "name": "forti-other-customer",
+            "tenant": {"id": 4, "name": "Other", "slug": "other"},
+            "custom_fields": {},
+        }
+        self.netbox.devices[8] = second
+
+        with self.assertRaisesRegex(CredentialOnboardingInvalid, "same tenant"):
+            self.service.plan(api_request(device_ids=[7, 8]))
+
+    def test_batch_rejects_device_without_tenant(self):
+        self.netbox.device["tenant"] = None
+
+        with self.assertRaisesRegex(CredentialOnboardingInvalid, "belong to a tenant"):
+            self.service.plan(api_request())
 
 
 if __name__ == "__main__":

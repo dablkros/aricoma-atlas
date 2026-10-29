@@ -991,6 +991,12 @@ input::placeholder {
   color: #8995a5;
 }
 
+select:disabled {
+  cursor: not-allowed;
+  color: #7b8797;
+  background: #f2f4f8;
+}
+
 .table-wrap {
   overflow-x: auto;
   margin: 0 -1.35rem;
