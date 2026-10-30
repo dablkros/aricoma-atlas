@@ -63,6 +63,26 @@ Nepriradené zariadenie zostáva platným NetBox objektom a resolver vráti
 `resolution_status=unmapped`. Neexistuje automatický fallback na iné spojenie,
 Tenant ani VRF. Prekrývajúce sa IP adresy sú bezpečne oddelené Tenantom a VRF.
 
+### Operations UI assignment flow
+
+Operations UI používa Site ako predvolenú úroveň priradenia. Operátor vyberie
+Tenant, jedno tenant-owned VPN spojenie a jednu alebo viac Sites. Voľba všetkých
+Sites je pohodlný hromadný zápis, nie nový tenantový fallback. Nové Sites preto
+nie sú automaticky priradené bez samostatného potvrdeného plánu.
+
+Device assignment je explicitný override. Jeho odstránenie zapíše do
+`atlas_connection_id` hodnotu `null`, čím sa zariadenie vráti k Site dedičnosti.
+Dry-run a Apply znovu kontrolujú Tenant všetkých cieľov aj VPN spojenia,
+zachovávajú ostatné NetBox custom fields a Apply je viazaný na HMAC odtlačok
+presného plánu. OpenBao secret sa počas priraďovania nenačítava.
+
+Apply zapisuje jednotlivé NetBox objekty postupne. Nie je to distribuovaná
+transakcia: ak NetBox zlyhá uprostred hromadného zápisu, operátor vytvorí nový
+dry-run, ktorý už úspešné zápisy označí ako `UNCHANGED` a ponúkne iba zostávajúce
+operácie. Resolver následne pri každom zariadení samostatne overí zhodu Tenant,
+VRF a `allowed_prefixes`; samotné Site priradenie tieto device-level podmienky
+neobchádza.
+
 ## OpenBao secret reference
 
 Atlas databáza uchováva iba `secret_ref`. Skutočné hodnoty sa vkladajú mimo
@@ -99,6 +119,9 @@ autorizáciu.
 | `DELETE /api/v1/vpn/connections/{connection_id}` | Kontrolovaná deaktivácia. |
 | `POST /api/v1/vpn/connections/{connection_id}/validate` | NetBox a OpenBao referencia. |
 | `GET /api/v1/vpn/devices/{device_id}/resolve` | Tenant-safe rozlíšenie zariadenia. |
+| `GET /api/v1/vpn/assignments/options` | Tenant-scoped spojenia, Sites a aktívne Devices pre GUI. |
+| `POST /api/v1/vpn/assignments/plan` | Secret-free dry-run Site alebo Device priradenia. |
+| `POST /api/v1/vpn/assignments/apply` | Aplikuje iba potvrdený a nezmenený assignment plán. |
 
 Príklad create payloadu:
 

@@ -26,9 +26,12 @@ class FakeNetBox:
                 {"id": 32, "name": "customer-a-isolated", "tenant": {"id": 1}},
             ],
             "/api/dcim/sites/": [
-                {"id": 20, "slug": "customer-a-dc", "tenant": {"id": 1},
-                 "custom_fields": {"atlas_connection_id": "customer-a-primary"}},
-                {"id": 21, "slug": "customer-b-dc", "tenant": {"id": 2},
+                {"id": 20, "name": "Customer A DC", "slug": "customer-a-dc", "tenant": {"id": 1},
+                 "custom_fields": {
+                     "atlas_connection_id": "customer-a-primary",
+                     "owner_note": "preserve-site-field",
+                 }},
+                {"id": 21, "name": "Customer B DC", "slug": "customer-b-dc", "tenant": {"id": 2},
                  "custom_fields": {"atlas_connection_id": "customer-b-primary"}},
             ],
             "/api/ipam/ip-addresses/": [
@@ -40,9 +43,11 @@ class FakeNetBox:
             "/api/dcim/devices/": [
                 {"id": 101, "name": "A-SW01", "tenant": {"id": 1},
                  "site": {"id": 20}, "primary_ip4": {"id": 201},
+                 "status": {"value": "active"},
                  "custom_fields": {}},
                 {"id": 102, "name": "B-SW01", "tenant": {"id": 2},
                  "site": {"id": 21}, "primary_ip4": {"id": 202},
+                 "status": {"value": "active"},
                  "custom_fields": {}},
             ],
         }
@@ -55,9 +60,24 @@ class FakeNetBox:
         params = params or {}
         result = []
         for item in self.objects[endpoint]:
-            if all(self._id(item.get(key)) == expected for key, expected in params.items()):
+            def value(key):
+                if key == "tenant_id":
+                    return self._id(item.get("tenant"))
+                if key == "status" and isinstance(item.get("status"), dict):
+                    return item["status"].get("value")
+                return self._id(item.get(key))
+            if all(value(key) == expected for key, expected in params.items()):
                 result.append(copy.deepcopy(item))
         return result
+
+    def patch(self, endpoint, payload):
+        prefix = "/api/dcim/sites/" if endpoint.startswith("/api/dcim/sites/") else "/api/dcim/devices/"
+        object_id = int(endpoint.removeprefix(prefix).rstrip("/"))
+        for item in self.objects[prefix]:
+            if item["id"] == object_id:
+                item.update(copy.deepcopy(payload))
+                return copy.deepcopy(item)
+        raise AssertionError(endpoint)
 
 
 class FakeOpenBao:
@@ -271,3 +291,112 @@ class VPNRegistryTests(unittest.TestCase):
                 VPNRegistryError, "pagination_invalid"
             ):
                 self.service.list(**values)
+
+    def test_site_assignment_plan_apply_and_options_are_tenant_scoped(self):
+        self.seed()
+
+        options = self.service.assignment_options(1)
+        plan = self.service.plan_assignment(
+            tenant_id=1,
+            connection_id="customer-a-primary",
+            target_type="site",
+            target_ids=[20],
+        )
+        remove_plan = self.service.plan_assignment(
+            tenant_id=1,
+            connection_id=None,
+            target_type="site",
+            target_ids=[20],
+        )
+        result = self.service.apply_assignment(
+            expected_plan=remove_plan,
+            tenant_id=1,
+            connection_id=None,
+            target_type="site",
+            target_ids=[20],
+        )
+
+        self.assertEqual(options["tenant"]["slug"], "customer-a")
+        self.assertEqual([20], [item["id"] for item in options["sites"]])
+        self.assertEqual([101], [item["id"] for item in options["devices"]])
+        self.assertEqual(plan["operations"][0]["action"], "UNCHANGED")
+        self.assertEqual(result["operations"][0]["action"], "REMOVE")
+        self.assertIsNone(
+            self.netbox.objects["/api/dcim/sites/"][0]["custom_fields"][
+                "atlas_connection_id"
+            ]
+        )
+        self.assertEqual(
+            self.netbox.objects["/api/dcim/sites/"][0]["custom_fields"]["owner_note"],
+            "preserve-site-field",
+        )
+
+    def test_device_override_apply_and_remove_returns_to_site_assignment(self):
+        self.seed()
+        self.service.create(
+            self.connection("customer-a-secondary", prefixes=["192.168.1.0/24"])
+        )
+        self.netbox.objects["/api/dcim/devices/"][0]["custom_fields"] = {
+            "owner_note": "preserve-device-field"
+        }
+
+        assign_plan = self.service.plan_assignment(
+            tenant_id=1,
+            connection_id="customer-a-secondary",
+            target_type="device",
+            target_ids=[101],
+        )
+        self.service.apply_assignment(
+            expected_plan=assign_plan,
+            tenant_id=1,
+            connection_id="customer-a-secondary",
+            target_type="device",
+            target_ids=[101],
+        )
+        overridden = self.service.resolve_device(101)
+
+        remove_plan = self.service.plan_assignment(
+            tenant_id=1,
+            connection_id=None,
+            target_type="device",
+            target_ids=[101],
+        )
+        self.service.apply_assignment(
+            expected_plan=remove_plan,
+            tenant_id=1,
+            connection_id=None,
+            target_type="device",
+            target_ids=[101],
+        )
+        inherited = self.service.resolve_device(101)
+
+        self.assertEqual(overridden["connection_id"], "customer-a-secondary")
+        self.assertEqual(overridden["connection_source"], "device")
+        self.assertEqual(inherited["connection_id"], "customer-a-primary")
+        self.assertEqual(inherited["connection_source"], "site")
+        self.assertEqual(
+            self.netbox.objects["/api/dcim/devices/"][0]["custom_fields"][
+                "owner_note"
+            ],
+            "preserve-device-field",
+        )
+
+    def test_assignment_rejects_cross_tenant_target_and_connection(self):
+        self.seed()
+
+        with self.assertRaisesRegex(
+            VPNRegistryError, "assignment_target_tenant_mismatch"
+        ):
+            self.service.plan_assignment(
+                tenant_id=1,
+                connection_id="customer-a-primary",
+                target_type="site",
+                target_ids=[21],
+            )
+        with self.assertRaisesRegex(VPNRegistryError, "connection_tenant_mismatch"):
+            self.service.plan_assignment(
+                tenant_id=1,
+                connection_id="customer-b-primary",
+                target_type="device",
+                target_ids=[101],
+            )

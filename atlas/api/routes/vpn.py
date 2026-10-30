@@ -1,12 +1,16 @@
 """Authorized REST API for the persistent VPN connection registry."""
 
+import hashlib
+import hmac
+import json
 import logging
 
 from fastapi import APIRouter, Depends, Query, Request, status
 
 from atlas.api.errors import AtlasError
-from atlas.api.operator_auth import require_operator
+from atlas.api.operator_auth import require_operator, validated_operator_token
 from atlas.vpn.models import (
+    VPNAssignmentRequest,
     VPNConnectionCreate,
     VPNConnectionPage,
     VPNConnectionPatch,
@@ -42,6 +46,19 @@ def _translate(operation):
             exc.code,
             messages.get(exc.code, "VPN connection validation failed"),
         ) from None
+
+
+def _assignment_hash(body: VPNAssignmentRequest, plan: dict, token: str) -> str:
+    canonical = json.dumps(
+        {
+            "request": body.model_dump(exclude={"plan_hash"}, mode="json"),
+            "plan": plan,
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+        ensure_ascii=False,
+    ).encode("utf-8")
+    return hmac.new(token.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
 
 
 @router.get(
@@ -153,6 +170,83 @@ def resolve_device(
             device_id, expected_tenant=tenant_id,
         )
     )
+
+
+@router.get("/assignments/options")
+def assignment_options(
+    request: Request,
+    tenant_id: int = Query(gt=0),
+) -> dict:
+    validated_operator_token(request, scope="vpn")
+    return _translate(
+        lambda: request.app.state.dependencies.vpn.assignment_options(tenant_id)
+    )
+
+
+@router.post("/assignments/plan")
+def plan_assignment(body: VPNAssignmentRequest, request: Request) -> dict:
+    token = validated_operator_token(request, scope="vpn")
+    plan = _translate(
+        lambda: request.app.state.dependencies.vpn.plan_assignment(
+            tenant_id=body.tenant_id,
+            connection_id=body.connection_id,
+            target_type=body.target_type,
+            target_ids=body.target_ids,
+        )
+    )
+    plan["plan_hash"] = _assignment_hash(body, plan, token)
+    logger.info(
+        "vpn.assignment_planned",
+        extra={
+            "event": "vpn.assignment_planned",
+            "tenant_id": body.tenant_id,
+            "connection_id": body.connection_id,
+            "target_type": body.target_type,
+            "target_count": len(body.target_ids),
+        },
+    )
+    return plan
+
+
+@router.post("/assignments/apply")
+def apply_assignment(body: VPNAssignmentRequest, request: Request) -> dict:
+    token = validated_operator_token(request, scope="vpn")
+    preview = _translate(
+        lambda: request.app.state.dependencies.vpn.plan_assignment(
+            tenant_id=body.tenant_id,
+            connection_id=body.connection_id,
+            target_type=body.target_type,
+            target_ids=body.target_ids,
+        )
+    )
+    expected = _assignment_hash(body, preview, token)
+    if body.plan_hash is None or not hmac.compare_digest(body.plan_hash, expected):
+        raise AtlasError(
+            409,
+            "vpn_assignment_plan_stale",
+            "VPN assignment or dependency state changed; create a new plan",
+        )
+    result = _translate(
+        lambda: request.app.state.dependencies.vpn.apply_assignment(
+            expected_plan=preview,
+            tenant_id=body.tenant_id,
+            connection_id=body.connection_id,
+            target_type=body.target_type,
+            target_ids=body.target_ids,
+        )
+    )
+    result["plan_hash"] = expected
+    logger.info(
+        "vpn.assignment_applied",
+        extra={
+            "event": "vpn.assignment_applied",
+            "tenant_id": body.tenant_id,
+            "connection_id": body.connection_id,
+            "target_type": body.target_type,
+            "target_count": len(body.target_ids),
+        },
+    )
+    return result
 
 
 __all__ = ["router"]

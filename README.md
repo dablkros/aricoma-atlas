@@ -735,6 +735,8 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET`, `PATCH`, `DELETE /api/v1/vpn/connections/{connection_id}` | Detail, validovaná aktualizácia a kontrolovaná deaktivácia spojenia. |
 | `POST /api/v1/vpn/connections/{connection_id}/validate` | Overí NetBox vlastníctvo a dostupnosť OpenBao referencie bez vrátenia secretu. |
 | `GET /api/v1/vpn/devices/{device_id}/resolve` | Tenant/VRF/prefix-safe resolver; fyzické VPN spojenie nevytvára. |
+| `GET /api/v1/vpn/assignments/options` | Tenant-scoped zoznam VPN spojení, Sites a aktívnych Devices pre Operations UI. |
+| `POST /api/v1/vpn/assignments/plan`, `/apply` | Dry-run a potvrdené priradenie Site profilu alebo Device override bez čítania secretu. |
 | `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
 | `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
 | `GET /api/credentials/options` | Autorizovaný zoznam aktívnych zariadení s tenantom a podporovaných platformových možností bez secretov. |

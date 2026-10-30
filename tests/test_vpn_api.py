@@ -94,6 +94,49 @@ class FakeVPNService:
             "gateway_port": 443,
         }
 
+    def assignment_options(self, tenant_id):
+        return {
+            "tenant": {"id": tenant_id, "name": "Customer A", "slug": "customer-a"},
+            "connections": [{
+                "connection_id": "customer-a-primary",
+                "name": "Customer A primary",
+                "administrative_status": "planned",
+                "management_vrf_id": 30,
+            }],
+            "sites": [{
+                "id": 20,
+                "name": "Customer A DC",
+                "slug": "customer-a-dc",
+                "connection_id": None,
+            }],
+            "devices": [],
+        }
+
+    def plan_assignment(
+        self, *, tenant_id, connection_id, target_type, target_ids,
+    ):
+        return {
+            "tenant": {"id": tenant_id, "name": "Customer A", "slug": "customer-a"},
+            "connection": {
+                "connection_id": connection_id,
+                "name": "Customer A primary",
+                "management_vrf_id": 30,
+            } if connection_id else None,
+            "target_type": target_type,
+            "operations": [{
+                "target_type": target_type,
+                "target_id": target_ids[0],
+                "target_name": "Customer A DC",
+                "current_connection_id": None,
+                "desired_connection_id": connection_id,
+                "action": "ASSIGN" if connection_id else "UNCHANGED",
+            }],
+            "apply_allowed": True,
+        }
+
+    def apply_assignment(self, *, expected_plan, **_values):
+        return {**expected_plan, "status": "APPLIED"}
+
 
 class VPNApiTests(unittest.TestCase):
     def setUp(self):
@@ -180,6 +223,40 @@ class VPNApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 404)
         self.assertEqual(response.json()["error"]["code"], "connection_not_found")
+
+    def test_assignment_options_require_authorization(self):
+        response = self.client.get("/api/v1/vpn/assignments/options?tenant_id=1")
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.json()["error"]["code"], "vpn_unauthorized")
+
+    def test_assignment_plan_hash_is_required_for_apply(self):
+        payload = {
+            "tenant_id": 1,
+            "connection_id": "customer-a-primary",
+            "target_type": "site",
+            "target_ids": [20],
+        }
+        planned = self.client.post(
+            "/api/v1/vpn/assignments/plan", json=payload, headers=self.headers,
+        )
+
+        self.assertEqual(planned.status_code, 200)
+        self.assertRegex(planned.json()["plan_hash"], r"^[a-f0-9]{64}$")
+
+        stale = self.client.post(
+            "/api/v1/vpn/assignments/apply", json=payload, headers=self.headers,
+        )
+        applied = self.client.post(
+            "/api/v1/vpn/assignments/apply",
+            json={**payload, "plan_hash": planned.json()["plan_hash"]},
+            headers=self.headers,
+        )
+
+        self.assertEqual(stale.status_code, 409)
+        self.assertEqual(stale.json()["error"]["code"], "vpn_assignment_plan_stale")
+        self.assertEqual(applied.status_code, 200)
+        self.assertEqual(applied.json()["status"], "APPLIED")
 
 
 if __name__ == "__main__":

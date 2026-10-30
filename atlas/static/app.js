@@ -24,6 +24,10 @@ const state = {
   credentialPlan: null,
   credentialBusy: false,
   credentialSelectedDeviceIds: new Set(),
+  vpnAssignmentOptions: null,
+  vpnAssignmentPlan: null,
+  vpnAssignmentBusy: false,
+  vpnAssignmentSelectedIds: new Set(),
   authenticated: false,
   principal: null,
   adminExpiryTimer: null,
@@ -169,6 +173,23 @@ const elements = {
   credentialPlanOperations: document.querySelector("#credential-plan-operations"),
   credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
   credentialApply: document.querySelector("#credential-apply"),
+  vpnAssignmentOpen: document.querySelector("#vpn-assignment-open"),
+  vpnAssignmentDialog: document.querySelector("#vpn-assignment-dialog"),
+  vpnAssignmentClose: document.querySelector("#vpn-assignment-close"),
+  vpnAssignmentTenant: document.querySelector("#vpn-assignment-tenant"),
+  vpnAssignmentConnection: document.querySelector("#vpn-assignment-connection"),
+  vpnAssignmentTargetType: document.querySelector("#vpn-assignment-target-type"),
+  vpnAssignmentFilter: document.querySelector("#vpn-assignment-filter"),
+  vpnAssignmentSelectAll: document.querySelector("#vpn-assignment-select-all"),
+  vpnAssignmentTargets: document.querySelector("#vpn-assignment-targets"),
+  vpnAssignmentCount: document.querySelector("#vpn-assignment-count"),
+  vpnAssignmentPlanButton: document.querySelector("#vpn-assignment-plan"),
+  vpnAssignmentActivity: document.querySelector("#vpn-assignment-activity"),
+  vpnAssignmentPlanResult: document.querySelector("#vpn-assignment-plan-result"),
+  vpnAssignmentPlanStatus: document.querySelector("#vpn-assignment-plan-status"),
+  vpnAssignmentOperations: document.querySelector("#vpn-assignment-operations"),
+  vpnAssignmentConfirm: document.querySelector("#vpn-assignment-confirm"),
+  vpnAssignmentApply: document.querySelector("#vpn-assignment-apply"),
   adminSessionButton: document.querySelector("#admin-session-button"),
   adminSessionIdentity: document.querySelector("#admin-session-identity"),
   adminLoginDialog: document.querySelector("#admin-login-dialog"),
@@ -779,6 +800,235 @@ async function applyCredentials() {
     toast(error.safeMessage || "Credential onboarding apply failed.", "error");
   } finally {
     setCredentialBusy(false);
+  }
+}
+
+function resetVPNAssignmentPlan() {
+  state.vpnAssignmentPlan = null;
+  elements.vpnAssignmentPlanResult.hidden = true;
+  elements.vpnAssignmentConfirm.checked = false;
+  elements.vpnAssignmentConfirm.disabled = true;
+  elements.vpnAssignmentApply.disabled = true;
+}
+
+function vpnAssignmentTargets() {
+  if (!state.vpnAssignmentOptions) return [];
+  return elements.vpnAssignmentTargetType.value === "device"
+    ? state.vpnAssignmentOptions.devices || []
+    : state.vpnAssignmentOptions.sites || [];
+}
+
+function filteredVPNAssignmentTargets() {
+  const query = elements.vpnAssignmentFilter.value.trim().toLocaleLowerCase();
+  return vpnAssignmentTargets().filter((target) => {
+    const searchable = `${target.name || ""} ${target.site_name || ""}`.toLocaleLowerCase();
+    return !query || searchable.includes(query);
+  });
+}
+
+function updateVPNAssignmentControls() {
+  const ready = Boolean(
+    elements.vpnAssignmentTenant.value
+    && elements.vpnAssignmentConnection.value
+    && state.vpnAssignmentSelectedIds.size,
+  );
+  elements.vpnAssignmentPlanButton.disabled = state.vpnAssignmentBusy || !ready;
+  elements.vpnAssignmentCount.textContent = `${state.vpnAssignmentSelectedIds.size} selected`;
+}
+
+function renderVPNAssignmentTargets() {
+  const targets = filteredVPNAssignmentTargets();
+  const selected = state.vpnAssignmentSelectedIds;
+  const targetType = elements.vpnAssignmentTargetType.value;
+  elements.vpnAssignmentFilter.placeholder = targetType === "device"
+    ? "Filter Devices by name or Site" : "Filter Sites by name";
+  elements.vpnAssignmentSelectAll.textContent = targetType === "device"
+    ? "Select all Devices" : "Select all Sites";
+  if (!elements.vpnAssignmentTenant.value) {
+    elements.vpnAssignmentTargets.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "Select a tenant first.",
+      }),
+    );
+  } else if (!targets.length) {
+    elements.vpnAssignmentTargets.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "No matching targets.",
+      }),
+    );
+  } else {
+    elements.vpnAssignmentTargets.replaceChildren(...targets.map((target) => {
+      const checkbox = Object.assign(document.createElement("input"), {
+        type: "checkbox", value: String(target.id), checked: selected.has(target.id),
+      });
+      const label = document.createElement("label");
+      label.className = "credential-device-option";
+      const text = document.createElement("span");
+      const site = targetType === "device" && target.site_name ? ` — ${target.site_name}` : "";
+      const current = target.connection_id ? ` · ${target.connection_id}` : " · no assignment";
+      text.textContent = `${target.name || target.id}${site}${current}`;
+      label.append(checkbox, text);
+      return label;
+    }));
+  }
+  elements.vpnAssignmentSelectAll.disabled = !targets.length;
+  updateVPNAssignmentControls();
+}
+
+function renderVPNAssignmentOptions() {
+  const options = state.vpnAssignmentOptions;
+  elements.vpnAssignmentConnection.replaceChildren(
+    new Option("Select a VPN connection", ""),
+    ...(options?.connections || []).map((connection) => new Option(
+      `${connection.name} (${connection.connection_id})`, connection.connection_id,
+    )),
+    new Option("Remove assignment / use Site inheritance", "__remove__"),
+  );
+  const enabled = Boolean(options);
+  elements.vpnAssignmentConnection.disabled = !enabled;
+  elements.vpnAssignmentTargetType.disabled = !enabled;
+  elements.vpnAssignmentFilter.disabled = !enabled;
+  renderVPNAssignmentTargets();
+}
+
+async function openVPNAssignment() {
+  if (!requireOperatorToken()) return;
+  elements.vpnAssignmentDialog.showModal();
+  elements.vpnAssignmentOpen.disabled = true;
+  resetVPNAssignmentPlan();
+  state.vpnAssignmentOptions = null;
+  state.vpnAssignmentSelectedIds.clear();
+  try {
+    const tenants = await apiRequest("/api/inventory/tenants", {
+      headers: operatorHeaders(),
+    });
+    elements.vpnAssignmentTenant.replaceChildren(
+      new Option("Select a tenant", ""),
+      ...tenants.map((tenant) => new Option(
+        `${tenant.name} (${tenant.slug})`, String(tenant.id),
+      )),
+    );
+    renderVPNAssignmentOptions();
+    elements.vpnAssignmentTenant.focus();
+  } catch (error) {
+    toast(error.safeMessage || "Could not load VPN assignment tenants.", "error");
+  } finally {
+    elements.vpnAssignmentOpen.disabled = false;
+  }
+}
+
+async function loadVPNAssignmentOptions() {
+  resetVPNAssignmentPlan();
+  state.vpnAssignmentOptions = null;
+  state.vpnAssignmentSelectedIds.clear();
+  elements.vpnAssignmentFilter.value = "";
+  const tenantId = elements.vpnAssignmentTenant.value;
+  if (!tenantId) {
+    renderVPNAssignmentOptions();
+    return;
+  }
+  setVPNAssignmentBusy(true);
+  try {
+    state.vpnAssignmentOptions = await apiRequest(
+      `/api/v1/vpn/assignments/options?tenant_id=${encodeURIComponent(tenantId)}`,
+      { headers: operatorHeaders() },
+    );
+    renderVPNAssignmentOptions();
+  } catch (error) {
+    renderVPNAssignmentOptions();
+    toast(error.safeMessage || "Could not load tenant VPN assignments.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
+  }
+}
+
+function vpnAssignmentPayload() {
+  const selectedConnection = elements.vpnAssignmentConnection.value;
+  return {
+    tenant_id: Number(elements.vpnAssignmentTenant.value),
+    connection_id: selectedConnection === "__remove__" ? null : selectedConnection,
+    target_type: elements.vpnAssignmentTargetType.value,
+    target_ids: [...state.vpnAssignmentSelectedIds].sort((left, right) => left - right),
+  };
+}
+
+function renderVPNAssignmentPlan(result) {
+  state.vpnAssignmentPlan = result;
+  elements.vpnAssignmentPlanResult.hidden = false;
+  setPill(elements.vpnAssignmentPlanStatus, "healthy", "Ready to apply");
+  elements.vpnAssignmentOperations.replaceChildren(...result.operations.map((operation) => {
+    const row = document.createElement("tr");
+    for (const value of [
+      operation.target_name,
+      operation.current_connection_id || "—",
+      operation.desired_connection_id || "Site inheritance / none",
+      operation.action,
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  }));
+  elements.vpnAssignmentConfirm.disabled = false;
+  elements.vpnAssignmentConfirm.checked = false;
+  elements.vpnAssignmentApply.disabled = true;
+}
+
+function setVPNAssignmentBusy(busy) {
+  state.vpnAssignmentBusy = busy;
+  elements.vpnAssignmentActivity.hidden = !busy;
+  elements.vpnAssignmentDialog.setAttribute("aria-busy", String(busy));
+  updateVPNAssignmentControls();
+  elements.vpnAssignmentApply.disabled = busy
+    || !state.vpnAssignmentPlan
+    || !elements.vpnAssignmentConfirm.checked;
+}
+
+async function planVPNAssignment() {
+  if (!requireOperatorToken()) return;
+  setVPNAssignmentBusy(true);
+  try {
+    const result = await apiRequest("/api/v1/vpn/assignments/plan", {
+      method: "POST", headers: operatorHeaders(), body: vpnAssignmentPayload(),
+    });
+    renderVPNAssignmentPlan(result);
+    toast("VPN assignment plan is ready for review.", "success");
+  } catch (error) {
+    resetVPNAssignmentPlan();
+    toast(error.safeMessage || "VPN assignment planning failed.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
+  }
+}
+
+async function applyVPNAssignment() {
+  if (!state.vpnAssignmentPlan || !elements.vpnAssignmentConfirm.checked) return;
+  setVPNAssignmentBusy(true);
+  try {
+    const result = await apiRequest("/api/v1/vpn/assignments/apply", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: { ...vpnAssignmentPayload(), plan_hash: state.vpnAssignmentPlan.plan_hash },
+    });
+    renderVPNAssignmentPlan(result);
+    setPill(elements.vpnAssignmentPlanStatus, "healthy", "Applied");
+    for (const operation of result.operations) {
+      const target = vpnAssignmentTargets().find(
+        (item) => item.id === operation.target_id,
+      );
+      if (target) target.connection_id = operation.desired_connection_id;
+    }
+    renderVPNAssignmentTargets();
+    state.vpnAssignmentPlan = null;
+    elements.vpnAssignmentConfirm.disabled = true;
+    elements.vpnAssignmentApply.disabled = true;
+    toast("VPN assignments were applied to NetBox.", "success");
+  } catch (error) {
+    if (error.code === "vpn_assignment_plan_stale") resetVPNAssignmentPlan();
+    toast(error.safeMessage || "VPN assignment apply failed.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
   }
 }
 
@@ -2218,6 +2468,49 @@ elements.credentialApplyConfirm.addEventListener("change", () => {
   elements.credentialApply.disabled = state.credentialBusy
     || !state.credentialPlan?.apply_allowed
     || !elements.credentialApplyConfirm.checked;
+});
+elements.vpnAssignmentOpen.addEventListener("click", openVPNAssignment);
+elements.vpnAssignmentClose.addEventListener("click", () => {
+  resetVPNAssignmentPlan();
+  elements.vpnAssignmentDialog.close();
+});
+elements.vpnAssignmentTenant.addEventListener("change", loadVPNAssignmentOptions);
+elements.vpnAssignmentConnection.addEventListener("change", () => {
+  resetVPNAssignmentPlan();
+  updateVPNAssignmentControls();
+});
+elements.vpnAssignmentTargetType.addEventListener("change", () => {
+  state.vpnAssignmentSelectedIds.clear();
+  elements.vpnAssignmentFilter.value = "";
+  resetVPNAssignmentPlan();
+  renderVPNAssignmentTargets();
+});
+elements.vpnAssignmentFilter.addEventListener("input", renderVPNAssignmentTargets);
+elements.vpnAssignmentTargets.addEventListener("change", (event) => {
+  if (!(event.target instanceof HTMLInputElement) || event.target.type !== "checkbox") return;
+  const id = Number(event.target.value);
+  if (event.target.checked) state.vpnAssignmentSelectedIds.add(id);
+  else state.vpnAssignmentSelectedIds.delete(id);
+  resetVPNAssignmentPlan();
+  updateVPNAssignmentControls();
+});
+elements.vpnAssignmentSelectAll.addEventListener("click", () => {
+  const visible = filteredVPNAssignmentTargets();
+  const allSelected = visible.length > 0
+    && visible.every((target) => state.vpnAssignmentSelectedIds.has(target.id));
+  for (const target of visible) {
+    if (allSelected) state.vpnAssignmentSelectedIds.delete(target.id);
+    else state.vpnAssignmentSelectedIds.add(target.id);
+  }
+  resetVPNAssignmentPlan();
+  renderVPNAssignmentTargets();
+});
+elements.vpnAssignmentPlanButton.addEventListener("click", planVPNAssignment);
+elements.vpnAssignmentApply.addEventListener("click", applyVPNAssignment);
+elements.vpnAssignmentConfirm.addEventListener("change", () => {
+  elements.vpnAssignmentApply.disabled = state.vpnAssignmentBusy
+    || !state.vpnAssignmentPlan
+    || !elements.vpnAssignmentConfirm.checked;
 });
 for (const input of [
   elements.credentialProfile,

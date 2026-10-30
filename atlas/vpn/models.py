@@ -19,6 +19,7 @@ VPNAdministrativeStatus = Literal["planned", "enabled", "disabled"]
 VPNRuntimeStatus = Literal[
     "not_deployed", "disconnected", "connecting", "connected", "degraded", "error"
 ]
+VPNAssignmentTarget = Literal["site", "device"]
 
 
 def _gateway(value: str) -> str:
@@ -143,6 +144,28 @@ class VPNValidationResult(BaseModel):
     validation_status: Literal["valid"]
 
 
+class VPNAssignmentRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    tenant_id: int = Field(gt=0)
+    connection_id: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+    target_type: VPNAssignmentTarget
+    target_ids: list[int] = Field(min_length=1, max_length=500)
+    plan_hash: str | None = Field(default=None, pattern=r"^[a-f0-9]{64}$")
+
+    @field_validator("target_ids")
+    @classmethod
+    def validate_target_ids(cls, values: list[int]) -> list[int]:
+        if any(isinstance(value, bool) or value <= 0 for value in values):
+            raise ValueError("target_ids must contain positive integers")
+        if len(set(values)) != len(values):
+            raise ValueError("target_ids contains duplicates")
+        return values
+
+
 class VPNResolutionResult(BaseModel):
     device_id: int = Field(gt=0)
     device_name: str | None = None
@@ -195,6 +218,7 @@ class VPNResolutionResult(BaseModel):
 
 
 __all__ = [
+    "VPNAssignmentRequest",
     "VPNConnectionCreate",
     "VPNConnectionPage",
     "VPNConnectionPatch",

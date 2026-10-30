@@ -362,6 +362,15 @@ h2 {
   margin: .45rem 0 .65rem;
 }
 
+.vpn-assignment-filter-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin: .45rem 0 .65rem;
+}
+
+.vpn-assignment-filter-row input {
+  width: 100%;
+}
+
 .credential-device-list {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1281,6 +1290,10 @@ textarea[aria-invalid="true"] {
 }
 
 @media (max-width: 640px) {
+  .vpn-assignment-filter-row {
+    grid-template-columns: 1fr;
+  }
+
   .credential-device-list {
     grid-template-columns: 1fr;
   }

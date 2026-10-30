@@ -202,6 +202,211 @@ class VPNRegistryService:
             "validation_status": "valid",
         }
 
+    def assignment_options(self, tenant_id: int) -> dict:
+        tenant = self._tenant(tenant_id)
+        connections = self.list(tenant_id=tenant_id, limit=100, offset=0)
+        if connections.total > len(connections.items):
+            raise VPNRegistryError("assignment_connection_limit_exceeded", 409)
+        try:
+            sites = self.netbox.get_all(
+                "/api/dcim/sites/", params={"tenant_id": tenant_id},
+            )
+            devices = self.netbox.get_all(
+                "/api/dcim/devices/",
+                params={"tenant_id": tenant_id, "status": "active"},
+            )
+        except DependencyError:
+            raise VPNRegistryError("netbox_unavailable", 503) from None
+        sites = [
+            site for site in sites
+            if isinstance(site, dict) and related_id(site.get("tenant")) == tenant_id
+        ]
+        devices = [
+            device for device in devices
+            if isinstance(device, dict)
+            and related_id(device.get("tenant")) == tenant_id
+            and (
+                device.get("status") == "active"
+                or (
+                    isinstance(device.get("status"), dict)
+                    and device["status"].get("value") == "active"
+                )
+            )
+        ]
+        return {
+            "tenant": {
+                "id": tenant_id,
+                "name": tenant.get("name"),
+                "slug": tenant["slug"],
+            },
+            "connections": [
+                {
+                    "connection_id": connection.connection_id,
+                    "name": connection.name,
+                    "administrative_status": connection.administrative_status,
+                    "management_vrf_id": connection.management_vrf_id,
+                }
+                for connection in connections.items
+                if connection.administrative_status != "disabled"
+            ],
+            "sites": [
+                {
+                    "id": site.get("id"),
+                    "name": site.get("name") or site.get("display") or site.get("slug"),
+                    "slug": site.get("slug"),
+                    "connection_id": _custom_field(
+                        site.get("custom_fields"), "atlas_connection_id"
+                    ),
+                }
+                for site in sorted(
+                    sites,
+                    key=lambda item: str(
+                        item.get("name") or item.get("display") or item.get("slug") or ""
+                    ).casefold(),
+                )
+            ],
+            "devices": [
+                {
+                    "id": device.get("id"),
+                    "name": device.get("name") or device.get("display"),
+                    "site_id": related_id(device.get("site")),
+                    "site_name": (
+                        (device.get("site") or {}).get("name")
+                        if isinstance(device.get("site"), dict)
+                        else None
+                    ),
+                    "connection_id": _custom_field(
+                        device.get("custom_fields"), "atlas_connection_id"
+                    ),
+                }
+                for device in sorted(
+                    devices,
+                    key=lambda item: str(
+                        item.get("name") or item.get("display") or ""
+                    ).casefold(),
+                )
+            ],
+        }
+
+    def _assignment_targets(
+        self, tenant_id: int, target_type: str, target_ids: list[int]
+    ) -> list[dict]:
+        if target_type not in {"site", "device"}:
+            raise VPNRegistryError("assignment_target_type_invalid")
+        endpoint = "/api/dcim/sites/" if target_type == "site" else "/api/dcim/devices/"
+        missing = "site_not_found" if target_type == "site" else "device_not_found"
+        ambiguous = "site_ambiguous" if target_type == "site" else "device_ambiguous"
+        targets = [
+            self._one(endpoint, {"id": target_id}, missing, ambiguous)
+            for target_id in target_ids
+        ]
+        if any(related_id(target.get("tenant")) != tenant_id for target in targets):
+            raise VPNRegistryError("assignment_target_tenant_mismatch", 409)
+        if target_type == "device" and any(
+            not (
+                target.get("status") == "active"
+                or (
+                    isinstance(target.get("status"), dict)
+                    and target["status"].get("value") == "active"
+                )
+            )
+            for target in targets
+        ):
+            raise VPNRegistryError("assignment_target_inactive", 409)
+        return targets
+
+    def plan_assignment(
+        self,
+        *,
+        tenant_id: int,
+        connection_id: str | None,
+        target_type: str,
+        target_ids: list[int],
+    ) -> dict:
+        tenant = self._tenant(tenant_id)
+        connection = self.get(connection_id) if connection_id else None
+        if connection is not None:
+            if connection.tenant_id != tenant_id:
+                raise VPNRegistryError("connection_tenant_mismatch", 409)
+            if connection.administrative_status == "disabled":
+                raise VPNRegistryError("connection_disabled", 409)
+            self._validate_references(
+                VPNConnectionCreate.model_validate(
+                    connection.model_dump(
+                        exclude={
+                            "id", "tenant_slug", "runtime_status",
+                            "created_at", "updated_at",
+                        }
+                    )
+                )
+            )
+        targets = self._assignment_targets(tenant_id, target_type, target_ids)
+        operations = []
+        for target in targets:
+            current = _custom_field(target.get("custom_fields"), "atlas_connection_id")
+            action = (
+                "UNCHANGED"
+                if current == connection_id
+                else "REMOVE"
+                if connection_id is None
+                else "ASSIGN"
+            )
+            operations.append({
+                "target_type": target_type,
+                "target_id": target.get("id"),
+                "target_name": (
+                    target.get("name") or target.get("display") or target.get("slug")
+                ),
+                "current_connection_id": current,
+                "desired_connection_id": connection_id,
+                "action": action,
+            })
+        return {
+            "tenant": {
+                "id": tenant_id,
+                "name": tenant.get("name"),
+                "slug": tenant["slug"],
+            },
+            "connection": (
+                {
+                    "connection_id": connection.connection_id,
+                    "name": connection.name,
+                    "management_vrf_id": connection.management_vrf_id,
+                }
+                if connection is not None else None
+            ),
+            "target_type": target_type,
+            "operations": operations,
+            "apply_allowed": True,
+        }
+
+    def apply_assignment(self, *, expected_plan: dict, **values) -> dict:
+        current = self.plan_assignment(**values)
+        if current != expected_plan:
+            raise VPNRegistryError("assignment_plan_stale", 409)
+        endpoint = (
+            "/api/dcim/sites/" if current["target_type"] == "site"
+            else "/api/dcim/devices/"
+        )
+        targets = self._assignment_targets(
+            values["tenant_id"], current["target_type"], values["target_ids"]
+        )
+        by_id = {target.get("id"): target for target in targets}
+        try:
+            for operation in current["operations"]:
+                if operation["action"] == "UNCHANGED":
+                    continue
+                target = by_id[operation["target_id"]]
+                fields = dict(target.get("custom_fields") or {})
+                fields["atlas_connection_id"] = operation["desired_connection_id"]
+                self.netbox.patch(
+                    f"{endpoint}{operation['target_id']}/",
+                    {"custom_fields": fields},
+                )
+        except (DependencyError, KeyError):
+            raise VPNRegistryError("netbox_unavailable", 503) from None
+        return {**current, "status": "APPLIED"}
+
     def resolve_device(
         self, device_id: int, *, expected_tenant: int | str | None = None
     ) -> dict:
