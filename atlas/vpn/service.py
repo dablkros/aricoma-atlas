@@ -1,5 +1,7 @@
 """VPN registry validation and tenant-safe device resolution."""
 
+from __future__ import annotations
+
 from ipaddress import ip_interface, ip_network
 import re
 
