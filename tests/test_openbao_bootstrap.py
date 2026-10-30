@@ -100,6 +100,15 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
         )
 
+    def test_vpn_writer_is_limited_to_one_connection_leaf(self):
+        spec = deploy_openbao.RUNTIME_ROLES['atlas-vpn-profile-writer']
+        self.assertEqual(spec['identity_file'], ROOT / '.runtime/openbao-vpn-profile-writer.json')
+        policy = spec['policy_file'].read_text(encoding='utf-8')
+        self.assertIn('atlas/data/vpn/connections/+', policy)
+        self.assertIn('"create", "read", "update"', policy)
+        self.assertNotIn('"delete"', policy)
+        self.assertNotIn('"list"', policy)
+
     def test_deployer_cannot_read_admin_recovery_password(self):
         policy = (
             ROOT
@@ -202,6 +211,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             set(deploy_openbao.RUNTIME_ROLES),
             {
                 "atlas-credential-writer",
+                "atlas-vpn-profile-writer",
                 "atlas-monitoring-provisioner",
                 "atlas-backend",
                 "netbox-runtime",
@@ -264,6 +274,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 call("temporary-root", "atlas-backend"),
                 call("temporary-root", "atlas-monitoring-provisioner"),
                 call("temporary-root", "atlas-credential-writer"),
+                call("temporary-root", "atlas-vpn-profile-writer"),
             ],
         )
 
@@ -330,6 +341,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
     def test_existing_install_may_lack_only_the_new_backend_identity(self):
         identities = {
+            "atlas-vpn-profile-writer": None,
             "atlas-credential-writer": None,
             "atlas-monitoring-provisioner": None,
             "atlas-backend": None,
@@ -347,6 +359,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                     "atlas-backend",
                     "atlas-monitoring-provisioner",
                     "atlas-credential-writer",
+                    "atlas-vpn-profile-writer",
                 },
             )
 

@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     credential_writer_identity_file: Path = Path(
         ".runtime/openbao-credential-writer.json"
     )
+    vpn_profile_writer_identity_file: Path = Path('.runtime/openbao-vpn-profile-writer.json')
     monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
     admin_session_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
     app_name: str = Field(default="Aricoma Atlas", min_length=1, max_length=100)
@@ -111,6 +112,7 @@ class Settings(BaseSettings):
         "monitoring_config_file",
         "monitoring_identity_file",
         "credential_writer_identity_file",
+        "vpn_profile_writer_identity_file",
         "monitoring_operator_token_file",
         "openbao_identity_file",
         "oxidized_inventory_file",

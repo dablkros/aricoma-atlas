@@ -572,6 +572,10 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
             "Atlas credential writer AppRole identity is missing or is not a regular file"
         )
 
+    vpn_profile_writer_identity_file = root / ".runtime/openbao-vpn-profile-writer.json"
+    if vpn_profile_writer_identity_file.is_symlink():
+        raise RuntimeError("Atlas VPN profile writer AppRole identity cannot be a symlink")
+
     monitoring_directory = root / ".runtime/monitoring"
     if monitoring_directory.is_symlink():
         raise RuntimeError("Monitoring runtime cannot be a symlink")
@@ -692,6 +696,8 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         f"{built_catalog}:/app/build:ro",
         f"{upstream_device_types}:/app/devicetype-library/device-types:ro",
     ]
+    if vpn_profile_writer_identity_file.is_file():
+        volumes.append(f"{vpn_profile_writer_identity_file}:/run/secrets/atlas-vpn-profile-writer.json:ro")
     if inventory_config.is_file():
         volumes.append(f"{inventory_config}:/run/atlas/inventory/config.yaml:ro")
     if selection.enabled("oxidized"):
@@ -709,6 +715,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_OPENBAO_IDENTITY_FILE": "/run/secrets/atlas-backend.json",
         "ATLAS_MONITORING_IDENTITY_FILE": "/run/secrets/atlas-monitoring.json",
         "ATLAS_CREDENTIAL_WRITER_IDENTITY_FILE": "/run/secrets/atlas-credential-writer.json",
+        "ATLAS_VPN_PROFILE_WRITER_IDENTITY_FILE": "/run/secrets/atlas-vpn-profile-writer.json",
         "ATLAS_MONITORING_CONFIG_FILE": "/run/secrets/atlas-monitoring-config.yaml",
         "ATLAS_MONITORING_OPERATOR_TOKEN_FILE": "/run/secrets/atlas-monitoring-operator-token",
         "ATLAS_MONITORING_JOBS_DIRECTORY": "/run/atlas/monitoring/jobs",

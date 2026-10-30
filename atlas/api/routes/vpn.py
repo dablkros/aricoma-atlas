@@ -19,6 +19,8 @@ from atlas.vpn.models import (
     VPNValidationResult,
 )
 from atlas.vpn.service import VPNRegistryError
+from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
+from atlas.vpn.import_service import VPNImportError, inspect_profile
 
 
 router = APIRouter(prefix="/v1/vpn", tags=["vpn"])
@@ -59,6 +61,55 @@ def _assignment_hash(body: VPNAssignmentRequest, plan: dict, token: str) -> str:
         ensure_ascii=False,
     ).encode("utf-8")
     return hmac.new(token.encode("utf-8"), canonical, hashlib.sha256).hexdigest()
+
+
+def _import_hash(body: ProfileImportRequest, plan: dict, token: str) -> str:
+    # SecretStr masks JSON serialization; bind the real values without exposing them.
+    payload = body.model_dump(exclude={'plan_hash'}, mode='json')
+    for name in ('profile_base64', 'username', 'password', 'export_password'):
+        value = getattr(body, name)
+        payload[name] = value.get_secret_value() if value is not None else None
+    canonical = json.dumps({'request': payload, 'plan': plan}, sort_keys=True,
+                           separators=(',', ':'), ensure_ascii=False).encode('utf-8')
+    return hmac.new(token.encode('utf-8'), canonical, hashlib.sha256).hexdigest()
+
+
+def _import_translate(operation):
+    try:
+        return operation()
+    except VPNImportError as exc:
+        raise AtlasError(exc.status_code, exc.code, 'VPN profile import failed') from None
+    except VPNRegistryError as exc:
+        raise AtlasError(exc.status_code, exc.code, 'VPN profile validation failed') from None
+
+
+@router.get('/forticlient/options')
+def forticlient_options(request: Request) -> dict:
+    validated_operator_token(request, scope='vpn')
+    return _import_translate(request.app.state.dependencies.vpn_import.options)
+
+
+@router.post('/forticlient/inspect')
+def forticlient_inspect(body: ProfileInspectRequest, request: Request) -> dict:
+    validated_operator_token(request, scope='vpn')
+    return _import_translate(lambda: inspect_profile(body))
+
+
+@router.post('/forticlient/plan')
+def forticlient_plan(body: ProfileImportRequest, request: Request) -> dict:
+    token = validated_operator_token(request, scope='vpn')
+    result = _import_translate(lambda: request.app.state.dependencies.vpn_import.plan(body))
+    result['plan_hash'] = _import_hash(body, result, token)
+    return result
+
+
+@router.post('/forticlient/apply')
+def forticlient_apply(body: ProfileImportRequest, request: Request) -> dict:
+    token = validated_operator_token(request, scope='vpn')
+    preview = _import_translate(lambda: request.app.state.dependencies.vpn_import.plan(body))
+    if body.plan_hash is None or not hmac.compare_digest(body.plan_hash, _import_hash(body, preview, token)):
+        raise AtlasError(409, 'vpn_import_plan_stale', 'Create a new import plan')
+    return _import_translate(lambda: request.app.state.dependencies.vpn_import.apply(body, preview))
 
 
 @router.get(

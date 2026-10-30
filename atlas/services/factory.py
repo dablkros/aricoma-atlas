@@ -24,6 +24,7 @@ from atlas.services.zabbix import ZabbixMonitoringService, ZabbixService
 from atlas.services.zabbix_sync import ZabbixSyncService
 from atlas.vpn.service import VPNRegistryService
 from atlas.vpn.store import SQLiteVPNConnectionStore
+from atlas.vpn.import_service import VPNProfileImportService
 
 
 @dataclass(frozen=True)
@@ -43,6 +44,7 @@ class DependencyServices:
     monitoring: MonitoringService = None
     cisco_support: CiscoSupportService = None
     credentials: CredentialOnboardingService = None
+    vpn_import: VPNProfileImportService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -73,6 +75,13 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     credential_writer = OpenBaoService(
         OpenBaoClient(str(settings.openbao_url), timeout=timeout),
         settings.credential_writer_identity_file,
+    )
+    vpn_writer = OpenBaoService(
+        OpenBaoClient(str(settings.openbao_url), timeout=timeout),
+        settings.vpn_profile_writer_identity_file,
+    )
+    vpn_registry = VPNRegistryService(
+        SQLiteVPNConnectionStore(settings.vpn_registry_file), netbox, openbao,
     )
     zabbix_sync = ZabbixSyncService(
         netbox,
@@ -116,11 +125,8 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             credential_writer,
             credential_writer,
         ),
-        vpn=VPNRegistryService(
-            SQLiteVPNConnectionStore(settings.vpn_registry_file),
-            netbox,
-            openbao,
-        ),
+        vpn=vpn_registry,
+        vpn_import=VPNProfileImportService(vpn_registry, vpn_writer),
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,

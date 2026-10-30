@@ -464,6 +464,18 @@ class BackendRuntimeTests(unittest.TestCase):
         self.environment.stop()
         self.temporary.cleanup()
 
+    def test_vpn_writer_identity_is_mounted_only_when_provisioned(self):
+        identity = self.root / '.runtime/openbao-vpn-profile-writer.json'
+        compose = deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
+        service = yaml.safe_load(compose.read_text(encoding='utf-8'))['services']['backend']
+        target = '/run/secrets/atlas-vpn-profile-writer.json'
+        self.assertEqual(service['environment']['ATLAS_VPN_PROFILE_WRITER_IDENTITY_FILE'], target)
+        self.assertFalse(any(target in volume for volume in service['volumes']))
+        identity.write_text('{}\n', encoding='utf-8')
+        compose = deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
+        service = yaml.safe_load(compose.read_text(encoding='utf-8'))['services']['backend']
+        self.assertIn(f'{identity.resolve()}:{target}:ro', service['volumes'])
+
     def test_prepare_runtime_writes_hardened_loopback_only_compose(self):
         compose_file = deploy_backend.prepare_runtime(
             self.config,

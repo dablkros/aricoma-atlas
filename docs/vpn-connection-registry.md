@@ -85,8 +85,7 @@ neobchádza.
 
 ## OpenBao secret reference
 
-Atlas databáza uchováva iba `secret_ref`. Skutočné hodnoty sa vkladajú mimo
-registry API do OpenBao KV v2 mountu `atlas/`:
+Atlas databáza uchováva iba `secret_ref`. Import FortiClient profilu ukladá potrebné hodnoty cez samostatnú identity do OpenBao KV v2 mountu `atlas/`:
 
 ```text
 atlas/vpn/connections/customer-a-primary
@@ -104,6 +103,34 @@ metadata bez načítania secret hodnoty. Obsah secretu sa nevracia cez API ani C
 a neloguje sa. Budúci VPN Worker musí dostať vlastnú, užšiu machine identity s
 prístupom k potrebným data cestám; P1 worker ani zápis secretov neimplementuje.
 
+## Import FortiClient profilu v Operations UI
+
+Na existujúcej inštalácii po aktualizácii zdrojového kódu spustite
+`sudo atlasctl openbao`, vyberte `2. Reconcile Atlas backend roles` a dokončite
+quorum. Potom spustite `sudo atlasctl deploy`, aby backend pripojil novú
+identitu. Nová inštalácia ju pripraví v rámci bootstrapu. Bez identity bude
+import bezpečne odmietnutý; existujúci register zostáva dostupný.
+
+1. V NetBoxe pripravte zákazníka (Tenant) a jeho vlastnú management VRF.
+2. V Operations UI otvorte **Import FortiClient VPN** a nahrajte exportovaný
+   Windows XML/`.conf` alebo macOS `.plist`. Vyberte profil a typ súboru.
+3. Vyberte zákazníka a jeho VRF, zadajte unikátne connection ID, názov a
+   povolené IPv4 prefixy. Zadajte VPN meno a heslo. Pri formáte `EncX` zadajte
+   aj heslo použité pri exporte; `Enc` ho nevyžaduje.
+4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
+   uložia do OpenBao, exportné heslo ani pôvodný súbor sa neukladajú. Plán a
+   odpoveď neobsahujú heslá. Súbor sa spracuje v pamäti a jeho limit je 2 MiB.
+5. Priradenie spojenia k Sites alebo Devices urobte samostatne cez existujúci
+   **Assign VPN connections**. Import vytvorí záznam v stave `planned`, tunel
+   nepripája a nemení routing.
+
+Podporovaný je iba overiteľný PSK export `Enc`/`EncX` a úzka podmnožina
+IKEv2 profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH skupiny
+21); nepodporované nastavenia, SSO a certifikátová autentifikácia sa odmietnu.
+Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
+spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,
+vytvorte nový plán s rovnakými vstupmi a import zopakujte.
+
 ## REST API
 
 Všetky endpointy vyžadujú existujúcu Atlas administrátorskú session alebo
@@ -112,6 +139,10 @@ autorizáciu.
 
 | Metóda a cesta | Operácia |
 |---|---|
+| `GET /api/v1/vpn/forticlient/options` | Zákazníci a ich VRF pre import. |
+| `POST /api/v1/vpn/forticlient/inspect` | Bezpečný zoznam názvov profilov. |
+| `POST /api/v1/vpn/forticlient/plan` | Overenie a plán importu bez zobrazenia secretov. |
+| `POST /api/v1/vpn/forticlient/apply` | Potvrdenie nezmeneného plánu a uloženie do OpenBao. |
 | `GET /api/v1/vpn/connections` | Stránkovaný zoznam; `tenant_id`, `limit`, `offset`. |
 | `POST /api/v1/vpn/connections` | Vytvorenie po NetBox validácii. |
 | `GET /api/v1/vpn/connections/{connection_id}` | Detail bez secret obsahu. |

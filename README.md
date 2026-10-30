@@ -1617,7 +1617,13 @@ entitlementy, nepokrytý PID alebo nedostupné Cisco API vracajú `UNKNOWN` a
 nemenia úspešný zber zariadenia na connection failure. CBS softvérový EoX
 posiela release bez OS typu, pretože Cisco EoX samostatný CBS typ neuvádza.
 
-Fresh OpenBao bootstrap tieto policies, AppRoles a machine identities vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile Atlas backend roles`. Operácia zosúladí `atlas-backend`, `atlas-monitoring-provisioner` a `atlas-credential-writer`; vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
+Fresh OpenBao bootstrap tieto policies, AppRoles a machine identities vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile Atlas backend roles`. Operácia zosúladí `atlas-backend`, `atlas-monitoring-provisioner`, `atlas-credential-writer` a `atlas-vpn-profile-writer`; vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
+
+## `atlas-vpn-profile-writer`
+
+Samostatná identita pre potvrdený import VPN profilov má prístup iba k secretom
+`atlas/data/vpn/connections/+`. Postup importu, obmedzenia a potrebná aktualizácia
+existujúcej inštalácie sú v [VPN Connection Registry](docs/vpn-connection-registry.md).
 
 ## `netbox-runtime`
 

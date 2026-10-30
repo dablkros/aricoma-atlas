@@ -2469,6 +2469,188 @@ elements.credentialApplyConfirm.addEventListener("change", () => {
     || !state.credentialPlan?.apply_allowed
     || !elements.credentialApplyConfirm.checked;
 });
+// VPN profile import never renders or stores decrypted credentials in the UI.
+const vpnImport = {
+  open: document.querySelector('#vpn-import-open'),
+  dialog: document.querySelector('#vpn-import-dialog'),
+  close: document.querySelector('#vpn-import-close'),
+  message: document.querySelector('#vpn-import-message'),
+  file: document.querySelector('#vpn-import-file'),
+  format: document.querySelector('#vpn-import-format'),
+  profile: document.querySelector('#vpn-import-profile'),
+  exportPassword: document.querySelector('#vpn-import-export-password'),
+  tenant: document.querySelector('#vpn-import-tenant'),
+  vrf: document.querySelector('#vpn-import-vrf'),
+  id: document.querySelector('#vpn-import-id'),
+  name: document.querySelector('#vpn-import-name'),
+  prefixes: document.querySelector('#vpn-import-prefixes'),
+  username: document.querySelector('#vpn-import-username'),
+  password: document.querySelector('#vpn-import-password'),
+  planButton: document.querySelector('#vpn-import-plan'),
+  apply: document.querySelector('#vpn-import-apply'),
+  review: document.querySelector('#vpn-import-review'),
+  data: null, options: null, plan: null, busy: false, revision: 0,
+};
+
+function resetVPNImportPlan() {
+  vpnImport.revision += 1;
+  vpnImport.plan = null;
+  vpnImport.apply.disabled = true;
+  vpnImport.review.hidden = true;
+  vpnImport.review.textContent = '';
+}
+
+function vpnImportMessage(message) { vpnImport.message.textContent = message; }
+
+function renderVPNImportVrfs() {
+  const owner = Number(vpnImport.tenant.value);
+  vpnImport.vrf.replaceChildren(new Option('Select a management VRF', ''),
+    ...(vpnImport.options?.vrfs || []).filter((vrf) => vrf.tenant_id === owner)
+      .map((vrf) => new Option(vrf.name, String(vrf.id))));
+}
+
+async function openVPNImport() {
+  if (!requireOperatorToken()) return;
+  vpnImport.dialog.showModal();
+  vpnImportMessage('Loading customers and management VRFs…');
+  try {
+    vpnImport.options = await apiRequest('/api/v1/vpn/forticlient/options', { headers: operatorHeaders() });
+    vpnImport.tenant.replaceChildren(new Option('Select a customer', ''),
+      ...vpnImport.options.tenants.map((tenant) => new Option(tenant.name, String(tenant.id))));
+    renderVPNImportVrfs();
+    vpnImportMessage('Select a profile file. Import saves settings but does not connect the VPN.');
+  } catch (error) {
+    vpnImportMessage(error.safeMessage || 'Could not load customers.');
+  }
+}
+
+async function inspectVPNImportFile() {
+  resetVPNImportPlan();
+  vpnImport.data = null;
+  vpnImport.profile.replaceChildren(new Option('Choose a file first', ''));
+  const file = vpnImport.file.files?.[0];
+  const revision = vpnImport.revision;
+  if (!file) return;
+  if (file.size === 0 || file.size > 2 * 1024 * 1024) {
+    vpnImportMessage('The file must be between 1 byte and 2 MiB.');
+    return;
+  }
+  try {
+    const encoded = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const result = await apiRequest('/api/v1/vpn/forticlient/inspect', {
+      method: 'POST', headers: operatorHeaders(),
+      body: { format: vpnImport.format.value, profile_base64: encoded },
+    });
+    if (!vpnImport.dialog.open || vpnImport.revision !== revision || vpnImport.file.files?.[0] !== file) return;
+    vpnImport.data = encoded;
+    vpnImport.profile.replaceChildren(new Option('Select a VPN profile', ''),
+      ...result.profiles.map((name) => new Option(name, name)));
+    if (result.profiles.length === 1) vpnImport.profile.value = result.profiles[0];
+    vpnImportMessage('Choose a customer and management VRF, enter allowed networks and VPN credentials.');
+  } catch (error) {
+    vpnImportMessage(error.safeMessage || 'Could not read this profile.');
+  }
+}
+
+function vpnImportPayload() {
+  return {
+    format: vpnImport.format.value, profile_base64: vpnImport.data || '',
+    profile_name: vpnImport.profile.value,
+    export_password: vpnImport.exportPassword.value || null,
+    username: vpnImport.username.value, password: vpnImport.password.value,
+    connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
+    tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
+    allowed_prefixes: vpnImport.prefixes.value.split(',').map((part) => part.trim()).filter(Boolean),
+  };
+}
+
+async function planVPNImport() {
+  if (vpnImport.busy || !requireOperatorToken()) return;
+  resetVPNImportPlan();
+  vpnImport.busy = true;
+  vpnImport.planButton.disabled = true;
+  const revision = vpnImport.revision;
+  try {
+    const result = await apiRequest('/api/v1/vpn/forticlient/plan', {
+      method: 'POST', headers: operatorHeaders(), body: vpnImportPayload(),
+    });
+    if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
+    vpnImport.plan = result;
+    vpnImport.review.textContent = `Customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}; Network ID ${result.network_id}; allowed networks ${result.allowed_prefixes.join(', ')}. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    vpnImport.review.hidden = false;
+    vpnImport.apply.disabled = !result.apply_allowed;
+    vpnImportMessage('Review the settings, then save the profile.');
+  } catch (error) {
+    const messages = {
+      vpn_export_password_required: 'Enter the password used to export this profile.',
+      encrypted_secret_integrity_failed: 'The export password or encrypted profile could not be verified.',
+      vpn_connection_conflict: 'This connection ID already belongs to different settings.',
+      vpn_secret_conflict: 'Credentials already exist for this connection and will not be overwritten.',
+      vpn_secret_unavailable: 'VPN credential storage is unavailable. Check the VPN writer identity.',
+      vpn_secret_format_unsupported: 'This encrypted secret format is not supported.',
+      unsupported_encrypted_secret_format: 'This encrypted secret format is not supported.',
+      unsupported_ipsec_profile: 'This IPsec configuration is not supported by the current import.',
+      unsupported_proposal: 'The encryption proposal in this profile is not supported.',
+      unsupported_username: 'The username contains unsupported characters.',
+      unsupported_local_id: 'The local ID contains unsupported characters.',
+      unsupported_auth_method: 'This authentication method is not supported.',
+      invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
+      invalid_decrypted_secret: 'The decrypted PSK is invalid.',
+    };
+    vpnImportMessage(messages[error.code] || error.safeMessage || 'Could not prepare the import.');
+  } finally {
+    vpnImport.busy = false;
+    vpnImport.planButton.disabled = false;
+  }
+}
+
+async function applyVPNImport() {
+  if (!vpnImport.plan || vpnImport.busy) return;
+  vpnImport.busy = true;
+  vpnImport.apply.disabled = true;
+  try {
+    const result = await apiRequest('/api/v1/vpn/forticlient/apply', {
+      method: 'POST', headers: operatorHeaders(),
+      body: { ...vpnImportPayload(), plan_hash: vpnImport.plan.plan_hash },
+    });
+    vpnImportMessage(`Saved ${result.connection_id}. VPN runtime is not deployed; assign the connection to sites separately.`);
+    vpnImport.exportPassword.value = '';
+    vpnImport.username.value = '';
+    vpnImport.password.value = '';
+    vpnImport.data = null;
+    vpnImport.file.value = '';
+    resetVPNImportPlan();
+  } catch (error) {
+    resetVPNImportPlan();
+    vpnImportMessage(error.code === 'vpn_import_partial'
+      ? 'The registry was created but OpenBao could not be saved. Review the same import again to retry.'
+      : (error.safeMessage || 'Could not save this profile.'));
+  } finally { vpnImport.busy = false; }
+}
+
+vpnImport.open.addEventListener('click', openVPNImport);
+vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport.dialog.close(); });
+vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
+vpnImport.dialog.addEventListener('close', () => {
+  vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
+  vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
+});
+vpnImport.file.addEventListener('change', inspectVPNImportFile);
+vpnImport.format.addEventListener('change', inspectVPNImportFile);
+vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
+for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
+                     vpnImport.id, vpnImport.name, vpnImport.prefixes, vpnImport.username, vpnImport.password]) {
+  field.addEventListener('input', resetVPNImportPlan);
+  field.addEventListener('change', resetVPNImportPlan);
+}
+vpnImport.planButton.addEventListener('click', planVPNImport);
+vpnImport.apply.addEventListener('click', applyVPNImport);
+
 elements.vpnAssignmentOpen.addEventListener("click", openVPNAssignment);
 elements.vpnAssignmentClose.addEventListener("click", () => {
   resetVPNAssignmentPlan();
