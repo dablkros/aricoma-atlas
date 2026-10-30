@@ -1,0 +1,28 @@
+--- a/src/libcharon/sa/ikev2/tasks/ike_init.c
++++ b/src/libcharon/sa/ikev2/tasks/ike_init.c
+@@ -909,7 +909,25 @@ METHOD(task_t, build_i, status_t,
+ 	{
+ 		return FAILED;
+ 	}
++	/* Atlas lab interoperability: one dedicated daemon and one Fortinet peer. */
++	if (!this->old_sa &&
++		strcmp(this->ike_sa->get_name(this->ike_sa), "forti-full") == 0)
++	{
++		int configured_id;
++		uint8_t network_id;
++
++		configured_id = lib->settings->get_int(lib->settings,
++						"%s.atlas_fortinet_network_id", -1, lib->ns);
++		if (configured_id < 0 || configured_id > 255)
++		{
++			DBG1(DBG_IKE, "Atlas Fortinet network ID not configured or invalid");
++			return FAILED;
++		}
++		network_id = configured_id;
++		message->add_notify(message, FALSE, (notify_type_t)61520,
++							chunk_from_thing(network_id));
++	}
+ 
+ #ifdef ME
+ 	{
+ 		chunk_t connect_id = this->ike_sa->get_connect_id(this->ike_sa);
