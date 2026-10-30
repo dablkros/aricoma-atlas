@@ -28,6 +28,8 @@ const state = {
   vpnAssignmentPlan: null,
   vpnAssignmentBusy: false,
   vpnAssignmentSelectedIds: new Set(),
+  vpnTestOptions: null,
+  vpnTestBusy: false,
   authenticated: false,
   principal: null,
   adminExpiryTimer: null,
@@ -190,6 +192,25 @@ const elements = {
   vpnAssignmentOperations: document.querySelector("#vpn-assignment-operations"),
   vpnAssignmentConfirm: document.querySelector("#vpn-assignment-confirm"),
   vpnAssignmentApply: document.querySelector("#vpn-assignment-apply"),
+  vpnTestOpen: document.querySelector("#vpn-test-open"),
+  vpnTestDialog: document.querySelector("#vpn-test-dialog"),
+  vpnTestClose: document.querySelector("#vpn-test-close"),
+  vpnTestTenant: document.querySelector("#vpn-test-tenant"),
+  vpnTestConnection: document.querySelector("#vpn-test-connection"),
+  vpnTestSite: document.querySelector("#vpn-test-site"),
+  vpnTestDevice: document.querySelector("#vpn-test-device"),
+  vpnTestPort: document.querySelector("#vpn-test-port"),
+  vpnTestRun: document.querySelector("#vpn-test-run"),
+  vpnTestMessage: document.querySelector("#vpn-test-message"),
+  vpnTestActivity: document.querySelector("#vpn-test-activity"),
+  vpnTestResult: document.querySelector("#vpn-test-result"),
+  vpnTestResultTitle: document.querySelector("#vpn-test-result-title"),
+  vpnTestStatus: document.querySelector("#vpn-test-status"),
+  vpnTestTunnel: document.querySelector("#vpn-test-tunnel"),
+  vpnTestTarget: document.querySelector("#vpn-test-target"),
+  vpnTestAddress: document.querySelector("#vpn-test-address"),
+  vpnTestCleanup: document.querySelector("#vpn-test-cleanup"),
+  vpnTestDetail: document.querySelector("#vpn-test-detail"),
   adminSessionButton: document.querySelector("#admin-session-button"),
   adminSessionIdentity: document.querySelector("#admin-session-identity"),
   adminLoginDialog: document.querySelector("#admin-login-dialog"),
@@ -891,7 +912,7 @@ function renderVPNAssignmentOptions() {
   renderVPNAssignmentTargets();
 }
 
-async function openVPNAssignment() {
+async function openVPNAssignment({ tenantId = null, connectionId = null } = {}) {
   if (!requireOperatorToken()) return;
   elements.vpnAssignmentDialog.showModal();
   elements.vpnAssignmentOpen.disabled = true;
@@ -909,6 +930,14 @@ async function openVPNAssignment() {
       )),
     );
     renderVPNAssignmentOptions();
+    if (tenantId && [...elements.vpnAssignmentTenant.options].some((option) => option.value === String(tenantId))) {
+      elements.vpnAssignmentTenant.value = String(tenantId);
+      await loadVPNAssignmentOptions();
+      if (connectionId && [...elements.vpnAssignmentConnection.options].some((option) => option.value === connectionId)) {
+        elements.vpnAssignmentConnection.value = connectionId;
+        updateVPNAssignmentControls();
+      }
+    }
     elements.vpnAssignmentTenant.focus();
   } catch (error) {
     toast(error.safeMessage || "Could not load VPN assignment tenants.", "error");
@@ -2475,6 +2504,11 @@ const vpnImport = {
   dialog: document.querySelector('#vpn-import-dialog'),
   close: document.querySelector('#vpn-import-close'),
   message: document.querySelector('#vpn-import-message'),
+  fields: document.querySelector('#vpn-import-fields'),
+  advanced: document.querySelector('#vpn-import-advanced'),
+  activity: document.querySelector('#vpn-import-activity'),
+  activityTitle: document.querySelector('#vpn-import-activity-title'),
+  activityDetail: document.querySelector('#vpn-import-activity-detail'),
   file: document.querySelector('#vpn-import-file'),
   format: document.querySelector('#vpn-import-format'),
   profile: document.querySelector('#vpn-import-profile'),
@@ -2483,13 +2517,13 @@ const vpnImport = {
   vrf: document.querySelector('#vpn-import-vrf'),
   id: document.querySelector('#vpn-import-id'),
   name: document.querySelector('#vpn-import-name'),
-  prefixes: document.querySelector('#vpn-import-prefixes'),
   username: document.querySelector('#vpn-import-username'),
   password: document.querySelector('#vpn-import-password'),
+  assign: document.querySelector('#vpn-import-assign'),
   planButton: document.querySelector('#vpn-import-plan'),
   apply: document.querySelector('#vpn-import-apply'),
   review: document.querySelector('#vpn-import-review'),
-  data: null, options: null, plan: null, busy: false, revision: 0,
+  data: null, options: null, plan: null, busy: false, revision: 0, lastSaved: null,
 };
 
 function resetVPNImportPlan() {
@@ -2500,7 +2534,73 @@ function resetVPNImportPlan() {
   vpnImport.review.textContent = '';
 }
 
-function vpnImportMessage(message) { vpnImport.message.textContent = message; }
+function vpnImportMessage(message, isError = false) {
+  vpnImport.message.textContent = message;
+  vpnImport.message.classList.toggle('is-error', isError);
+}
+
+function setVPNImportBusy(title = '', detail = '') {
+  vpnImport.busy = Boolean(title);
+  vpnImport.fields.disabled = vpnImport.busy;
+  vpnImport.close.disabled = vpnImport.busy;
+  vpnImport.planButton.disabled = vpnImport.busy;
+  vpnImport.apply.disabled = vpnImport.busy || !vpnImport.plan?.apply_allowed;
+  vpnImport.activity.hidden = !vpnImport.busy;
+  vpnImport.dialog.setAttribute('aria-busy', String(vpnImport.busy));
+  if (vpnImport.busy) {
+    vpnImport.activityTitle.textContent = title;
+    vpnImport.activityDetail.textContent = detail;
+  }
+}
+
+function suggestVPNConnectionDetails() {
+  const name = vpnImport.profile.value;
+  if (!name) return;
+  const id = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100).replace(/-+$/g, '');
+  for (const [field, suggestion] of [[vpnImport.id, id], [vpnImport.name, name]]) {
+    if (!field.value || field.value === field.dataset.generated) {
+      field.value = suggestion;
+      field.dataset.generated = suggestion;
+    }
+  }
+}
+
+function vpnImportFieldError(field, message) {
+  if (vpnImport.busy) setVPNImportBusy();
+  if (field === vpnImport.id || field === vpnImport.name) vpnImport.advanced.open = true;
+  field.setAttribute('aria-invalid', 'true');
+  vpnImportMessage(message, true);
+  field.focus();
+  return false;
+}
+
+function validateVPNImport() {
+  const payload = vpnImportPayload();
+  if (!vpnImport.data) return vpnImportFieldError(vpnImport.file, 'Choose a VPN profile file.');
+  if (!payload.profile_name) return vpnImportFieldError(vpnImport.profile, 'Select a VPN profile from the file.');
+  if (!payload.tenant_id) return vpnImportFieldError(vpnImport.tenant, 'Select a customer.');
+  if (!payload.management_vrf_id) return vpnImportFieldError(vpnImport.vrf, 'Select the customer’s management VRF.');
+  if (!payload.username) return vpnImportFieldError(vpnImport.username, 'Enter the VPN username.');
+  if (!payload.password) return vpnImportFieldError(vpnImport.password, 'Enter the VPN password.');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(payload.connection_id) || payload.connection_id.length > 100)
+    return vpnImportFieldError(vpnImport.id, 'Connection ID may contain only lowercase letters, numbers and single hyphens.');
+  if (!payload.name || payload.name.length > 200) return vpnImportFieldError(vpnImport.name, 'Enter a connection name of up to 200 characters.');
+  return true;
+}
+
+function vpnImportServerError(error) {
+  const fields = {connection_id: [vpnImport.id, 'Use lowercase letters, numbers and single hyphens for the connection ID.'],
+    name: [vpnImport.name, 'Enter a connection name.'],
+    tenant_id: [vpnImport.tenant, 'Select a customer.'], management_vrf_id: [vpnImport.vrf, 'Select a management VRF.'],
+    profile_name: [vpnImport.profile, 'Select a VPN profile.'], username: [vpnImport.username, 'Check the VPN username.'],
+    password: [vpnImport.password, 'Check the VPN password.'], export_password: [vpnImport.exportPassword, 'Check the export password.']};
+  for (const detail of error.data?.error?.details || []) {
+    const key = detail.location?.find((part) => Object.hasOwn(fields, part));
+    if (key) return vpnImportFieldError(...fields[key]);
+  }
+  return null;
+}
 
 function renderVPNImportVrfs() {
   const owner = Number(vpnImport.tenant.value);
@@ -2512,7 +2612,10 @@ function renderVPNImportVrfs() {
 async function openVPNImport() {
   if (!requireOperatorToken()) return;
   vpnImport.dialog.showModal();
-  vpnImportMessage('Loading customers and management VRFs…');
+  vpnImport.assign.hidden = true;
+  vpnImport.lastSaved = null;
+  setVPNImportBusy('Loading customers', 'Atlas is loading customers and management VRFs from NetBox.');
+  vpnImportMessage('Import saves the profile; it does not connect the VPN.');
   try {
     vpnImport.options = await apiRequest('/api/v1/vpn/forticlient/options', { headers: operatorHeaders() });
     vpnImport.tenant.replaceChildren(new Option('Select a customer', ''),
@@ -2520,8 +2623,8 @@ async function openVPNImport() {
     renderVPNImportVrfs();
     vpnImportMessage('Select a profile file. Import saves settings but does not connect the VPN.');
   } catch (error) {
-    vpnImportMessage(error.safeMessage || 'Could not load customers.');
-  }
+    vpnImportMessage(error.safeMessage || 'Could not load customers.', true);
+  } finally { setVPNImportBusy(); }
 }
 
 async function inspectVPNImportFile() {
@@ -2532,9 +2635,10 @@ async function inspectVPNImportFile() {
   const revision = vpnImport.revision;
   if (!file) return;
   if (file.size === 0 || file.size > 2 * 1024 * 1024) {
-    vpnImportMessage('The file must be between 1 byte and 2 MiB.');
+    vpnImportMessage('The file must be between 1 byte and 2 MiB.', true);
     return;
   }
+  setVPNImportBusy('Reading VPN profile', 'Atlas is inspecting the selected file.');
   try {
     const encoded = await new Promise((resolve, reject) => {
       const reader = new FileReader();
@@ -2551,10 +2655,11 @@ async function inspectVPNImportFile() {
     vpnImport.profile.replaceChildren(new Option('Select a VPN profile', ''),
       ...result.profiles.map((name) => new Option(name, name)));
     if (result.profiles.length === 1) vpnImport.profile.value = result.profiles[0];
-    vpnImportMessage('Choose a customer and management VRF, enter allowed networks and VPN credentials.');
+    suggestVPNConnectionDetails();
+    vpnImportMessage('Choose the customer and VPN credentials.');
   } catch (error) {
-    vpnImportMessage(error.safeMessage || 'Could not read this profile.');
-  }
+    vpnImportMessage(error.safeMessage || 'Could not read this profile.', true);
+  } finally { setVPNImportBusy(); }
 }
 
 function vpnImportPayload() {
@@ -2565,15 +2670,15 @@ function vpnImportPayload() {
     username: vpnImport.username.value, password: vpnImport.password.value,
     connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
     tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
-    allowed_prefixes: vpnImport.prefixes.value.split(',').map((part) => part.trim()).filter(Boolean),
+    allowed_prefixes: [],
   };
 }
 
 async function planVPNImport() {
   if (vpnImport.busy || !requireOperatorToken()) return;
   resetVPNImportPlan();
-  vpnImport.busy = true;
-  vpnImport.planButton.disabled = true;
+  if (!validateVPNImport()) return;
+  setVPNImportBusy('Reviewing import', 'Atlas is checking the profile, NetBox and OpenBao.');
   const revision = vpnImport.revision;
   try {
     const result = await apiRequest('/api/v1/vpn/forticlient/plan', {
@@ -2581,7 +2686,7 @@ async function planVPNImport() {
     });
     if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
     vpnImport.plan = result;
-    vpnImport.review.textContent = `Customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}; Network ID ${result.network_id}; allowed networks ${result.allowed_prefixes.join(', ')}. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    vpnImport.review.textContent = `Customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}; Network ID ${result.network_id}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
     vpnImportMessage('Review the settings, then save the profile.');
@@ -2602,23 +2707,26 @@ async function planVPNImport() {
       invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
       invalid_decrypted_secret: 'The decrypted PSK is invalid.',
     };
-    vpnImportMessage(messages[error.code] || error.safeMessage || 'Could not prepare the import.');
-  } finally {
-    vpnImport.busy = false;
-    vpnImport.planButton.disabled = false;
-  }
+    if (error.code === 'validation_error' && vpnImportServerError(error) === false) return;
+    if (['vpn_export_password_required', 'encrypted_secret_integrity_failed'].includes(error.code)) {
+      vpnImportFieldError(vpnImport.exportPassword, messages[error.code]);
+      return;
+    }
+    vpnImportMessage(messages[error.code] || error.safeMessage || 'Could not prepare the import.', true);
+  } finally { setVPNImportBusy(); }
 }
 
 async function applyVPNImport() {
   if (!vpnImport.plan || vpnImport.busy) return;
-  vpnImport.busy = true;
-  vpnImport.apply.disabled = true;
+  setVPNImportBusy('Saving VPN profile', 'Atlas is saving the connection and its credentials.');
   try {
     const result = await apiRequest('/api/v1/vpn/forticlient/apply', {
       method: 'POST', headers: operatorHeaders(),
       body: { ...vpnImportPayload(), plan_hash: vpnImport.plan.plan_hash },
     });
-    vpnImportMessage(`Saved ${result.connection_id}. VPN runtime is not deployed; assign the connection to sites separately.`);
+    vpnImport.lastSaved = { tenantId: result.tenant_id, connectionId: result.connection_id };
+    vpnImport.assign.hidden = false;
+    vpnImportMessage('VPN profile saved. Assign it to a Site next. The VPN has not been connected.');
     vpnImport.exportPassword.value = '';
     vpnImport.username.value = '';
     vpnImport.password.value = '';
@@ -2629,24 +2737,32 @@ async function applyVPNImport() {
     resetVPNImportPlan();
     vpnImportMessage(error.code === 'vpn_import_partial'
       ? 'The registry was created but OpenBao could not be saved. Review the same import again to retry.'
-      : (error.safeMessage || 'Could not save this profile.'));
-  } finally { vpnImport.busy = false; }
+      : (error.safeMessage || 'Could not save this profile.'), true);
+  } finally { setVPNImportBusy(); }
 }
 
 vpnImport.open.addEventListener('click', openVPNImport);
+vpnImport.assign.addEventListener('click', () => {
+  if (!vpnImport.lastSaved || vpnImport.busy) return;
+  const saved = vpnImport.lastSaved;
+  vpnImport.dialog.close();
+  openVPNAssignment(saved);
+});
 vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport.dialog.close(); });
 vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
 vpnImport.dialog.addEventListener('close', () => {
   vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
-vpnImport.file.addEventListener('change', inspectVPNImportFile);
+vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
 vpnImport.format.addEventListener('change', inspectVPNImportFile);
 vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
+vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
 for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
-                     vpnImport.id, vpnImport.name, vpnImport.prefixes, vpnImport.username, vpnImport.password]) {
-  field.addEventListener('input', resetVPNImportPlan);
-  field.addEventListener('change', resetVPNImportPlan);
+                     vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password]) {
+  const changed = () => { field.removeAttribute('aria-invalid'); resetVPNImportPlan(); };
+  field.addEventListener('input', changed);
+  field.addEventListener('change', changed);
 }
 vpnImport.planButton.addEventListener('click', planVPNImport);
 vpnImport.apply.addEventListener('click', applyVPNImport);
@@ -2694,6 +2810,153 @@ elements.vpnAssignmentConfirm.addEventListener("change", () => {
     || !state.vpnAssignmentPlan
     || !elements.vpnAssignmentConfirm.checked;
 });
+
+function resetVPNTestResult() {
+  elements.vpnTestResult.hidden = true;
+  elements.vpnTestStatus.className = "status-pill status-pill-neutral";
+  elements.vpnTestStatus.textContent = "Unknown";
+}
+
+function updateVPNTestRun() {
+  const port = Number(elements.vpnTestPort.value);
+  elements.vpnTestRun.disabled = state.vpnTestBusy
+    || !elements.vpnTestConnection.value
+    || !elements.vpnTestDevice.value
+    || !Number.isInteger(port) || port < 1 || port > 65535;
+}
+
+function renderVPNTestConnections() {
+  const options = state.vpnTestOptions;
+  elements.vpnTestConnection.replaceChildren(
+    new Option("Select a VPN connection", ""),
+    ...(options?.connections || []).map((item) => new Option(item.name, item.connection_id)),
+  );
+  elements.vpnTestConnection.disabled = !(options?.connections || []).length;
+  renderVPNTestSites();
+}
+
+function renderVPNTestSites() {
+  const connectionId = elements.vpnTestConnection.value;
+  const sites = (state.vpnTestOptions?.sites || []).filter(
+    (site) => site.connection_id === connectionId,
+  );
+  elements.vpnTestSite.replaceChildren(
+    new Option(connectionId ? "Select an assigned Site" : "Select a VPN first", ""),
+    ...sites.map((site) => new Option(site.name, String(site.id))),
+  );
+  elements.vpnTestSite.disabled = !connectionId || sites.length === 0;
+  elements.vpnTestMessage.textContent = connectionId && sites.length === 0
+    ? "This VPN is not assigned to a Site yet. Assign it before testing."
+    : "Choose an assigned Site and one device whose management port should answer.";
+  renderVPNTestDevices();
+}
+
+function renderVPNTestDevices() {
+  const siteId = Number(elements.vpnTestSite.value);
+  const devices = (state.vpnTestOptions?.devices || []).filter(
+    (device) => siteId > 0 && device.site_id === siteId,
+  );
+  elements.vpnTestDevice.replaceChildren(
+    new Option(siteId ? "Select a proof device" : "Select a Site first", ""),
+    ...devices.map((device) => new Option(device.name, String(device.id))),
+  );
+  elements.vpnTestDevice.disabled = !siteId || devices.length === 0;
+  if (siteId && devices.length === 0) {
+    elements.vpnTestMessage.textContent = "The selected Site has no active device available for a connectivity test.";
+  }
+  resetVPNTestResult();
+  updateVPNTestRun();
+}
+
+async function openVPNTest() {
+  if (!requireOperatorToken()) return;
+  state.vpnTestOptions = null;
+  state.vpnTestBusy = false;
+  resetVPNTestResult();
+  elements.vpnTestDialog.showModal();
+  elements.vpnTestMessage.textContent = "Loading customers from NetBox…";
+  elements.vpnTestTenant.disabled = true;
+  try {
+    const options = await apiRequest("/api/v1/vpn/forticlient/options", { headers: operatorHeaders() });
+    elements.vpnTestTenant.replaceChildren(
+      new Option("Select a customer", ""),
+      ...options.tenants.map((tenant) => new Option(tenant.name, String(tenant.id))),
+    );
+    elements.vpnTestTenant.disabled = false;
+    elements.vpnTestMessage.textContent = "Choose a customer, VPN, assigned Site and proof device.";
+  } catch (error) {
+    elements.vpnTestMessage.textContent = error.safeMessage || "Could not load VPN test options.";
+  }
+}
+
+async function loadVPNTestOptions() {
+  const tenantId = Number(elements.vpnTestTenant.value);
+  state.vpnTestOptions = null;
+  elements.vpnTestConnection.replaceChildren(new Option("Loading VPN connections…", ""));
+  elements.vpnTestConnection.disabled = true;
+  renderVPNTestSites();
+  if (!tenantId) return;
+  elements.vpnTestMessage.textContent = "Loading assigned Sites and devices…";
+  try {
+    state.vpnTestOptions = await apiRequest(
+      `/api/v1/vpn/assignments/options?tenant_id=${encodeURIComponent(tenantId)}`,
+      { headers: operatorHeaders() },
+    );
+    renderVPNTestConnections();
+  } catch (error) {
+    elements.vpnTestMessage.textContent = error.safeMessage || "Could not load assigned VPN targets.";
+  }
+}
+
+async function runVPNTest() {
+  if (state.vpnTestBusy || elements.vpnTestRun.disabled) return;
+  state.vpnTestBusy = true;
+  resetVPNTestResult();
+  updateVPNTestRun();
+  elements.vpnTestActivity.hidden = false;
+  elements.vpnTestMessage.textContent = "The worker is connecting and will disconnect automatically after the check.";
+  const connectionId = elements.vpnTestConnection.value;
+  try {
+    const result = await apiRequest(
+      `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test`,
+      {
+        method: "POST", headers: operatorHeaders(),
+        body: { device_id: Number(elements.vpnTestDevice.value), target_port: Number(elements.vpnTestPort.value) },
+      },
+    );
+    elements.vpnTestResult.hidden = false;
+    elements.vpnTestStatus.textContent = result.status === "passed" ? "Passed" : "Failed";
+    elements.vpnTestStatus.className = `status-pill ${result.status === "passed" ? "status-pill-healthy" : "status-pill-unhealthy"}`;
+    elements.vpnTestResultTitle.textContent = result.status === "passed" ? "VPN is working" : "VPN test failed";
+    elements.vpnTestTunnel.textContent = result.tunnel_established ? "IKE and CHILD SA established" : "Not established";
+    elements.vpnTestTarget.textContent = result.target_reachable
+      ? `${result.target_ip}:${result.target_port} reachable`
+      : `${result.target_ip}:${result.target_port} did not answer`;
+    elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
+    elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
+    elements.vpnTestDetail.textContent = `${result.message} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
+    elements.vpnTestMessage.textContent = result.disconnected
+      ? "Test finished. The temporary VPN connectivity is closed."
+      : "Test finished, but cleanup was not confirmed.";
+  } catch (error) {
+    elements.vpnTestMessage.textContent = error.safeMessage || "The VPN test could not be started.";
+  } finally {
+    state.vpnTestBusy = false;
+    elements.vpnTestActivity.hidden = true;
+    updateVPNTestRun();
+  }
+}
+
+elements.vpnTestOpen.addEventListener("click", openVPNTest);
+elements.vpnTestClose.addEventListener("click", () => { if (!state.vpnTestBusy) elements.vpnTestDialog.close(); });
+elements.vpnTestDialog.addEventListener("cancel", (event) => { if (state.vpnTestBusy) event.preventDefault(); });
+elements.vpnTestTenant.addEventListener("change", loadVPNTestOptions);
+elements.vpnTestConnection.addEventListener("change", renderVPNTestSites);
+elements.vpnTestSite.addEventListener("change", renderVPNTestDevices);
+elements.vpnTestDevice.addEventListener("change", updateVPNTestRun);
+elements.vpnTestPort.addEventListener("input", updateVPNTestRun);
+elements.vpnTestRun.addEventListener("click", runVPNTest);
+
 for (const input of [
   elements.credentialProfile,
   elements.credentialProphylaxisEnabled,

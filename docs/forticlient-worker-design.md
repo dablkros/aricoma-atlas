@@ -1,7 +1,25 @@
 # FortiClient IPsec: izolovaný pilot
 
-Tento dokument opisuje návrh pokračovania. Register VPN zostáva P1 a žiadny
-worker ani endpoint na pripájanie tu ešte nie je implementovaný.
+Tento dokument opisuje implementovaný prvý P2 rez: samostatný worker, ktorý
+na žiadosť GUI vytvorí jeden dočasný tunel, overí jeden NetBox Device a tunel
+vždy ukončí. Spúšťanie Ansible úloh cez VPN ešte nie je súčasťou tohto rezu.
+
+## Implementovaný testovací tok
+
+Backend najprv cez existujúci resolver overí, že vybraný aktívny Device patrí
+rovnakému Tenantovi a že jeho Site alebo explicitný Device override ukazuje na
+presne testované `connection_id`. Worker dostane iba identifikátory, overené
+gateway metadata, cieľovú IPv4 adresu a TCP port; nedostane VPN heslá cez API.
+Vlastnou read-only AppRole identitou načíta presný OpenBao leaf, vytvorí
+krátkodobý swanctl config, spustí patched strongSwan 6.1.0, vyžiada CHILD SA a
+otestuje TCP spojenie. Výsledok odlišuje vytvorený tunel od dostupnosti cieľa.
+
+`finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
+workerovom network namespace a odstráni profilový fragment. Globálny zámok
+odmietne druhý súbežný test. Backend nemá `NET_ADMIN`; worker má iba
+`NET_ADMIN`/`NET_RAW`, read-only root filesystem, tmpfs `/run` a súkromný
+control network chránený náhodným bearer tokenom. Worker neposkytuje generický
+shell ani Docker socket.
 
 ## Overené hranice
 
@@ -11,8 +29,8 @@ worker ani endpoint na pripájanie tu ešte nie je implementovaný.
   EncX s exportným heslom, no úspešnú autentifikáciu ani prenos cez VPN nie.
 - Zdrojový patch pre nastaviteľné ID je pripravený proti archívu 6.1.0; jeho
   kompilácia a vyjednávanie s ľubovoľným iným ID ešte nie sú overené.
-- Existujúce P1 `runtime_status=not_deployed` a OpenBao metadata-only policy
-  sa nemenia, kým worker a jeho autorizácia nie sú zavedené a otestované.
+- Trvalý `runtime_status` zostáva `not_deployed`: test je synchrónny a po
+  každom výsledku sa odpojí. Stav `passed` sa neukladá ako aktívna VPN.
 
 ## Izolácia a postupné prepínanie
 
@@ -29,7 +47,9 @@ uvoľniť súkromné konfiguračné a DNS údaje a potvrdiť neaktívny stav. Je
 globálny zámok chráni prepnutie proti súbehu medzi API procesmi; timeout alebo
 pád musí viesť k obnoviteľnému chybovému stavu, nie k presmerovaniu úlohy do
 inej VPN. Podľa existujúceho resolvera musí byť každá cieľová IP v tenantovej
-VRF a `allowed_prefixes` pred odoslaním do workera znovu validovaná.
+VRF a prípadných explicitných `allowed_prefixes` pred odoslaním do workera
+znovu validovaná. Pri Site scope sa cieľ určuje podľa aktuálneho NetBox Device
+a Site, nie ručne zadaným zoznamom prefixov.
 
 ## Tajomstvá a hranice oprávnení
 
@@ -49,13 +69,13 @@ Sieťové pravidlá musia zabezpečiť, aby zákaznícka prevádzka neunikla mim
 ani počas reconnectu alebo zlyhania tunela. Návrat DNS a routovania sa musí
 riešiť v izolovanom priestore, nie prepisovaním DNS fyzického hostiteľa.
 
-## Pred nasadením P2
+## Zostávajúca akceptácia a ďalší P2 rozsah
 
-Treba implementovať a otestovať vlastnú AppRole, profilový import so zápisom do
-OpenBao, životný cyklus kontajnera a VPN, stavový automat, krytie pre súbeh a
-obnovu po páde a skutočné vykonávanie existujúceho Ansible backendu v tom istom
-priestore. Potrebná je integrácia s existujúcim SQLite registrom, auth/API a UI.
-Akceptácia na Ubuntu VM musí overiť aspoň dva Tenants s prekrývajúcimi sa
+Akceptácia na Ubuntu VM musí overiť reálny build patched image, IKE/CHILD,
+úspešný aj neúspešný TCP cieľ, timeout, cleanup a druhý súbežný test. Následne
+treba doplniť skutočné vykonávanie existujúceho Ansible backendu v rovnakom
+network namespace a dlhšie žijúci stavový automat pre produkčné úlohy.
+Širšia akceptácia musí overiť aspoň dva Tenants s prekrývajúcimi sa
 adresami, reconnect a rekey, DNS, zabránenie úniku prevádzky, cleanup, chyby
 OpenBao a nepovolený prístup. Dovtedy sa stav nesmie označiť za `connected`
 podľa samotného uloženia profilu.

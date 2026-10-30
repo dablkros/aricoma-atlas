@@ -59,6 +59,22 @@ def _proposals(values, mapping):
     return ','.join(normalized)
 
 
+def validate_profile(profile: FortiClientProfile, secrets: VPNSecrets) -> None:
+    """Validate the supported profile independently of runtime target selection."""
+    if profile.ike_version != 2 or profile.phase1_dh_group != 21 or profile.phase2_dh_group != 21 or not profile.pfs or not profile.user_auth_enabled:
+        raise FortiClientProfileError('unsupported_ipsec_profile')
+    if not isinstance(secrets.psk, bytes) or not secrets.psk or not isinstance(secrets.password, str) or not secrets.password:
+        raise FortiClientProfileError('invalid_credentials')
+    _identity(secrets.username, 'unsupported_username')
+    if profile.local_id:
+        _identity(profile.local_id, 'unsupported_local_id')
+    _proposals(profile.phase1_proposals, _IKE)
+    _proposals(profile.phase2_proposals, _ESP)
+    _gateway(profile.gateway)
+    if not 1 <= profile.gateway_port <= 65535 or not 0 <= profile.network_id <= 255:
+        raise FortiClientProfileError('invalid_profile')
+
+
 def render_swanctl(profile: FortiClientProfile, secrets: VPNSecrets,
                    allowed_prefixes: tuple[str, ...]) -> str:
     """Return sensitive config; caller must use private transient storage only.
@@ -66,10 +82,7 @@ def render_swanctl(profile: FortiClientProfile, secrets: VPNSecrets,
     The caller must separately configure and verify a dedicated patched daemon
     with profile.network_id. The return value must never be exposed or logged.
     """
-    if profile.ike_version != 2 or profile.phase1_dh_group != 21 or profile.phase2_dh_group != 21 or not profile.pfs or not profile.user_auth_enabled:
-        raise FortiClientProfileError('unsupported_ipsec_profile')
-    if not isinstance(secrets.psk, bytes) or not secrets.psk or not isinstance(secrets.password, str) or not secrets.password:
-        raise FortiClientProfileError('invalid_credentials')
+    validate_profile(profile, secrets)
     username = _identity(secrets.username, 'unsupported_username')
     local_id = _identity(profile.local_id, 'unsupported_local_id') if profile.local_id else None
     if not allowed_prefixes:

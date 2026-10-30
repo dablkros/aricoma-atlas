@@ -31,6 +31,12 @@ def backend_config(**overrides):
             "prophylaxis_result_retention": 10000,
             "prophylaxis_concurrency": 4,
         },
+        "vpn_worker": {
+            "docker_image": f"aricoma-atlas-vpn-worker:{__version__}",
+            "dockerfile": "deployment/vpn/Dockerfile",
+            "connect_timeout": 45,
+            "target_timeout": 5,
+        },
         "runtime": {
             "directory": ".runtime/backend",
             "compose_project": "atlas-backend",
@@ -414,6 +420,9 @@ class BackendRuntimeTests(unittest.TestCase):
         dockerfile = self.root / "deployment/backend/Dockerfile"
         dockerfile.parent.mkdir(parents=True)
         dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+        worker_dockerfile = self.root / "deployment/vpn/Dockerfile"
+        worker_dockerfile.parent.mkdir(parents=True)
+        worker_dockerfile.write_text("FROM scratch\n", encoding="utf-8")
         identity = self.root / ".runtime/openbao-backend.json"
         identity.parent.mkdir(parents=True)
         identity.write_text("{}\n", encoding="utf-8")
@@ -423,6 +432,8 @@ class BackendRuntimeTests(unittest.TestCase):
             self.root / ".runtime/openbao-credential-writer.json"
         )
         credential_writer_identity.write_text("{}\n", encoding="utf-8")
+        vpn_worker_identity = self.root / ".runtime/openbao-vpn-worker.json"
+        vpn_worker_identity.write_text("{}\n", encoding="utf-8")
         operator_token = self.root / ".runtime/monitoring/operator-token"
         operator_token.parent.mkdir(parents=True)
         operator_token.write_text("t" * 40 + "\n", encoding="utf-8")
@@ -528,6 +539,7 @@ class BackendRuntimeTests(unittest.TestCase):
             service["environment"]["ATLAS_VPN_REGISTRY_FILE"],
             "/run/atlas/vpn/connections.sqlite3",
         )
+        self.assertEqual(service["environment"]["ATLAS_VPN_WORKER_URL"], "http://vpn-worker:8090")
         self.assertEqual(
             service["environment"]["ATLAS_INVENTORY_CONFIG"],
             "/run/atlas/inventory/config.yaml",
@@ -641,7 +653,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             set(service["networks"]),
-            {"openbao", "netbox", "oxidized", "zabbix"},
+            {"openbao", "netbox", "oxidized", "zabbix", "vpn_control"},
         )
         self.assertEqual(
             data["networks"],
@@ -662,8 +674,15 @@ class BackendRuntimeTests(unittest.TestCase):
                     "external": True,
                     "name": "atlas-zabbix-api",
                 },
+                "vpn_control": {"internal": True},
             },
         )
+        worker = data["services"]["vpn-worker"]
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertEqual(worker["cap_add"], ["NET_ADMIN", "NET_RAW"])
+        self.assertTrue(worker["read_only"])
+        self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
+        self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))
         self.assertIn("healthcheck", service)
         self.assertEqual(os.stat(compose_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(compose_file.parent).st_mode & 0o777, 0o700)
@@ -672,6 +691,7 @@ class BackendRuntimeTests(unittest.TestCase):
         (self.root / ".runtime/openbao-backend.json").unlink()
         (self.root / ".runtime/openbao-monitoring.json").unlink()
         (self.root / ".runtime/openbao-credential-writer.json").unlink()
+        (self.root / ".runtime/openbao-vpn-worker.json").unlink()
         (self.root / ".runtime/monitoring/operator-token").unlink()
         (self.root / ".runtime/monitoring").rmdir()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
@@ -737,23 +757,22 @@ class BackendRuntimeTests(unittest.TestCase):
             compose_mock.call_args_list,
             [
                 call(compose_file, "atlas-backend", "config", "--quiet"),
-                call(compose_file, "atlas-backend", "build", "--pull", "backend"),
+                call(compose_file, "atlas-backend", "build", "--pull", "backend", "vpn-worker"),
                 call(
                     compose_file,
                     "atlas-backend",
                     "up",
                     "-d",
                     "--force-recreate",
+                    "vpn-worker",
                     "backend",
                 ),
             ],
         )
-        wait_mock.assert_called_once_with(
-            compose_file,
-            "atlas-backend",
-            "backend",
-            120,
-        )
+        self.assertEqual(wait_mock.call_args_list, [
+            call(compose_file, "atlas-backend", "vpn-worker", 120),
+            call(compose_file, "atlas-backend", "backend", 120),
+        ])
 
 
 class AtlasDeploymentOrderTests(unittest.TestCase):

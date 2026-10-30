@@ -61,6 +61,11 @@ DEVICE_CREDENTIALS_POLICY_FILE = (
 )
 
 RUNTIME_ROLES = {
+    "atlas-vpn-worker": {
+        "policy_file": ROOT / "deployment/openbao/policies/atlas-vpn-worker.hcl",
+        "identity_file": ROOT / ".runtime/openbao-vpn-worker.json",
+        "additional_policies": [],
+    },
     "atlas-vpn-profile-writer": {
         "policy_file": ROOT / "deployment/openbao/policies/atlas-vpn-profile-writer.hcl",
         "identity_file": ROOT / ".runtime/openbao-vpn-profile-writer.json",
@@ -1738,6 +1743,7 @@ def main():
                         "atlas-monitoring-provisioner",
                         "atlas-credential-writer",
                         "atlas-vpn-profile-writer",
+                        "atlas-vpn-worker",
                     },
                 )
 

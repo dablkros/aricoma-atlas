@@ -8,7 +8,7 @@ from fastapi.testclient import TestClient
 
 from atlas.api.main import create_app
 from atlas.config import Settings
-from atlas.vpn.models import VPNConnectionPage, VPNConnectionRecord
+from atlas.vpn.models import VPNConnectionPage, VPNConnectionRecord, VPNConnectivityTestResult
 from atlas.vpn.service import VPNRegistryError
 
 
@@ -138,13 +138,37 @@ class FakeVPNService:
         return {**expected_plan, "status": "APPLIED"}
 
 
+class FakeVPNTestService:
+    def __init__(self):
+        self.calls = []
+
+    def run(self, connection_id, *, device_id, target_port):
+        self.calls.append((connection_id, device_id, target_port))
+        return VPNConnectivityTestResult(**{
+            "connection_id": connection_id,
+            "device_id": device_id,
+            "device_name": "A-SW01",
+            "target_ip": "192.168.1.10",
+            "target_port": target_port,
+            "status": "passed",
+            "tunnel_established": True,
+            "target_reachable": True,
+            "assigned_address": "100.64.1.2",
+            "disconnected": True,
+            "duration_ms": 1200,
+            "failure_stage": None,
+            "message": "The tunnel established and the target answered.",
+        })
+
+
 class VPNApiTests(unittest.TestCase):
     def setUp(self):
         self.token_file = tempfile.NamedTemporaryFile(mode="w+")
         self.token_file.write(OPERATOR_TOKEN)
         self.token_file.flush()
         self.service = FakeVPNService()
-        dependencies = SimpleNamespace(vpn=self.service, openbao=None)
+        self.vpn_test = FakeVPNTestService()
+        dependencies = SimpleNamespace(vpn=self.service, vpn_test=self.vpn_test, openbao=None)
         settings = Settings(
             environment="test",
             log_level="CRITICAL",
@@ -167,6 +191,29 @@ class VPNApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "vpn_unauthorized")
+
+    def test_connectivity_test_requires_authorization(self):
+        response = self.client.post(
+            "/api/v1/vpn/connections/customer-a-primary/test",
+            json={"device_id": 10, "target_port": 22},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(self.vpn_test.calls, [])
+
+    def test_connectivity_test_returns_tunnel_and_cleanup_evidence(self):
+        response = self.client.post(
+            "/api/v1/vpn/connections/customer-a-primary/test",
+            json={"device_id": 10, "target_port": 22},
+            headers=self.headers,
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(self.vpn_test.calls, [("customer-a-primary", 10, 22)])
+        self.assertTrue(response.json()["tunnel_established"])
+        self.assertTrue(response.json()["target_reachable"])
+        self.assertTrue(response.json()["disconnected"])
+        self.assertNotIn("password", response.text.lower())
 
     def test_list_is_paginated_and_secret_values_are_never_serialized(self):
         response = self.client.get(

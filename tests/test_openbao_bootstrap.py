@@ -109,6 +109,15 @@ class OpenBaoBootstrapTests(unittest.TestCase):
         self.assertNotIn('"delete"', policy)
         self.assertNotIn('"list"', policy)
 
+    def test_vpn_worker_can_only_read_connection_leaves(self):
+        spec = deploy_openbao.RUNTIME_ROLES["atlas-vpn-worker"]
+        self.assertEqual(spec["identity_file"], ROOT / ".runtime/openbao-vpn-worker.json")
+        policy = spec["policy_file"].read_text(encoding="utf-8")
+        self.assertIn("atlas/data/vpn/connections/+", policy)
+        self.assertIn('capabilities = ["read"]', policy)
+        for capability in ('"create"', '"update"', '"delete"', '"list"'):
+            self.assertNotIn(capability, policy)
+
     def test_deployer_cannot_read_admin_recovery_password(self):
         policy = (
             ROOT
@@ -212,6 +221,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             {
                 "atlas-credential-writer",
                 "atlas-vpn-profile-writer",
+                "atlas-vpn-worker",
                 "atlas-monitoring-provisioner",
                 "atlas-backend",
                 "netbox-runtime",
@@ -275,6 +285,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 call("temporary-root", "atlas-monitoring-provisioner"),
                 call("temporary-root", "atlas-credential-writer"),
                 call("temporary-root", "atlas-vpn-profile-writer"),
+                call("temporary-root", "atlas-vpn-worker"),
             ],
         )
 
@@ -341,6 +352,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
     def test_existing_install_may_lack_only_the_new_backend_identity(self):
         identities = {
+            "atlas-vpn-worker": None,
             "atlas-vpn-profile-writer": None,
             "atlas-credential-writer": None,
             "atlas-monitoring-provisioner": None,
@@ -360,6 +372,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                     "atlas-monitoring-provisioner",
                     "atlas-credential-writer",
                     "atlas-vpn-profile-writer",
+                    "atlas-vpn-worker",
                 },
             )
 

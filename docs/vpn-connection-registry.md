@@ -23,7 +23,7 @@ klienta. Preto je `runtime_status` vždy `not_deployed`.
 | `auth_method` | `username_password`, `certificate`, `psk` alebo `external_mfa`. |
 | `secret_ref` | Presná referencia `vpn/connections/<connection_id>`. |
 | `management_vrf_id` | Tenant-owned NetBox management VRF. |
-| `allowed_prefixes` | Neprázdny zoznam normalizovaných CIDR sietí. |
+| `allowed_prefixes` | Prázdny zoznam znamená Site scope podľa NetBoxu; neprázdny zoznam zachováva explicitné CIDR obmedzenie. |
 | `administrative_status` | `planned`, `enabled` alebo `disabled`. |
 | `created_at`, `updated_at` | UTC čas vytvorenia a poslednej zmeny. |
 
@@ -53,15 +53,15 @@ Resolver postupuje striktne:
 1. načíta Device podľa NetBox ID;
 2. overí jeho Tenant a Site;
 3. načíta `primary_ip4`, jej Tenant a VRF;
-4. použije Device override, inak Site hodnotu;
+4. pre Site scope použije Site hodnotu; pri starších profiloch s explicitnými prefixmi uprednostní Device override;
 5. vyhľadá presné `connection_id` v SQLite registri;
 6. overí rovnaký Tenant a `management_vrf_id`;
-7. overí management IP voči `allowed_prefixes`;
+7. ak profil obsahuje explicitné `allowed_prefixes`, overí management IP voči nim; inak používa Site scope;
 8. vráti iba netajné metadata a `runtime_status=not_deployed`.
 
 Nepriradené zariadenie zostáva platným NetBox objektom a resolver vráti
 `resolution_status=unmapped`. Neexistuje automatický fallback na iné spojenie,
-Tenant ani VRF. Prekrývajúce sa IP adresy sú bezpečne oddelené Tenantom a VRF.
+Tenant ani VRF. Register rozlišuje prekrývajúce sa IP adresy pomocou Tenant a VRF; sieťovú izoláciu počas prevádzky musí ešte zabezpečiť budúci VPN worker.
 
 ### Operations UI assignment flow
 
@@ -70,7 +70,7 @@ Tenant, jedno tenant-owned VPN spojenie a jednu alebo viac Sites. Voľba všetk�
 Sites je pohodlný hromadný zápis, nie nový tenantový fallback. Nové Sites preto
 nie sú automaticky priradené bez samostatného potvrdeného plánu.
 
-Device assignment je explicitný override. Jeho odstránenie zapíše do
+Pri starších profiloch s explicitnými prefixmi je Device assignment explicitný override. Pri nových profiloch so Site scope má Site prednosť aj pred už existujúcim Device override a profil sa nedá priradiť priamo k Device. Jeho odstránenie zapíše do
 `atlas_connection_id` hodnotu `null`, čím sa zariadenie vráti k Site dedičnosti.
 Dry-run a Apply znovu kontrolujú Tenant všetkých cieľov aj VPN spojenia,
 zachovávajú ostatné NetBox custom fields a Apply je viazaný na HMAC odtlačok
@@ -80,7 +80,7 @@ Apply zapisuje jednotlivé NetBox objekty postupne. Nie je to distribuovaná
 transakcia: ak NetBox zlyhá uprostred hromadného zápisu, operátor vytvorí nový
 dry-run, ktorý už úspešné zápisy označí ako `UNCHANGED` a ponúkne iba zostávajúce
 operácie. Resolver následne pri každom zariadení samostatne overí zhodu Tenant,
-VRF a `allowed_prefixes`; samotné Site priradenie tieto device-level podmienky
+VRF a prípadné explicitné `allowed_prefixes`; samotné Site priradenie tieto device-level podmienky
 neobchádza.
 
 ## OpenBao secret reference
@@ -100,8 +100,10 @@ vpn/connections/customer-a-primary
 Backend policy má iba read prístup k
 `atlas/metadata/vpn/connections/*`. Endpoint `validate` preto kontroluje KV v2
 metadata bez načítania secret hodnoty. Obsah secretu sa nevracia cez API ani CLI
-a neloguje sa. Budúci VPN Worker musí dostať vlastnú, užšiu machine identity s
-prístupom k potrebným data cestám; P1 worker ani zápis secretov neimplementuje.
+a neloguje sa. Import používa samostatnú identitu `atlas-vpn-profile-writer`
+so zápisom do `atlas/data/vpn/connections/+`. Izolovaný testovací worker používa
+odlišnú read-only identitu `atlas-vpn-worker`, ktorá môže načítať iba leaf
+`atlas/data/vpn/connections/+`; backend secret data naďalej nečíta.
 
 ## Import FortiClient profilu v Operations UI
 
@@ -114,15 +116,22 @@ import bezpečne odmietnutý; existujúci register zostáva dostupný.
 1. V NetBoxe pripravte zákazníka (Tenant) a jeho vlastnú management VRF.
 2. V Operations UI otvorte **Import FortiClient VPN** a nahrajte exportovaný
    Windows XML/`.conf` alebo macOS `.plist`. Vyberte profil a typ súboru.
-3. Vyberte zákazníka a jeho VRF, zadajte unikátne connection ID, názov a
-   povolené IPv4 prefixy. Zadajte VPN meno a heslo. Pri formáte `EncX` zadajte
+3. Vyberte zákazníka a jeho VRF. Connection ID a názov sa navrhnú z profilu;
+   možno ich upraviť. Prefixy sa pri GUI importe nezadávajú: cieľové zariadenia
+   určí priradená Site a ich aktuálna management IP v NetBoxe. Zadajte VPN meno
+   a heslo. Pri formáte `EncX` zadajte
    aj heslo použité pri exporte; `Enc` ho nevyžaduje.
 4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
    uložia do OpenBao, exportné heslo ani pôvodný súbor sa neukladajú. Plán a
    odpoveď neobsahujú heslá. Súbor sa spracuje v pamäti a jeho limit je 2 MiB.
-5. Priradenie spojenia k Sites alebo Devices urobte samostatne cez existujúci
-   **Assign VPN connections**. Import vytvorí záznam v stave `planned`, tunel
+5. Priradenie importovaného spojenia k Site urobte samostatne cez existujúci
+   **Assign VPN connections**. Pri Site scope má Site prednosť pred Device
+   override; Tenant a management VRF sa naďalej overujú. Import vytvorí záznam v stave `planned`, tunel
    nepripája a nemení routing.
+6. V **Test VPN** vyberte zákazníka, spojenie, priradenú Site, aktívny Device a
+   management TCP port. Worker vytvorí tunel vo vlastnom network namespace,
+   oddelene zobrazí IKE/CHILD a dostupnosť cieľa a následne tunel ukončí. Jeden
+   Atlas worker vykonáva najviac jeden takýto test súčasne.
 
 Podporovaný je iba overiteľný PSK export `Enc`/`EncX` a úzka podmnožina
 IKEv2 profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH skupiny

@@ -25,6 +25,7 @@ from atlas.services.zabbix_sync import ZabbixSyncService
 from atlas.vpn.service import VPNRegistryService
 from atlas.vpn.store import SQLiteVPNConnectionStore
 from atlas.vpn.import_service import VPNProfileImportService
+from atlas.vpn.worker_client import VPNConnectivityTestService, VPNWorkerClient
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class DependencyServices:
     cisco_support: CiscoSupportService = None
     credentials: CredentialOnboardingService = None
     vpn_import: VPNProfileImportService = None
+    vpn_test: VPNConnectivityTestService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -117,6 +119,16 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             read_timeout=settings.http_read_timeout,
         ),
     )
+    vpn_test = None
+    if settings.vpn_worker_url is not None:
+        vpn_test = VPNConnectivityTestService(
+            vpn_registry,
+            VPNWorkerClient(
+                str(settings.vpn_worker_url),
+                settings.vpn_worker_token_file,
+                timeout=settings.vpn_worker_timeout,
+            ),
+        )
     return DependencyServices(
         monitoring=monitoring,
         cisco_support=cisco_support,
@@ -127,6 +139,7 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         ),
         vpn=vpn_registry,
         vpn_import=VPNProfileImportService(vpn_registry, vpn_writer),
+        vpn_test=vpn_test,
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,

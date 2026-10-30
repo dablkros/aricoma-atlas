@@ -72,7 +72,7 @@ class VPNConnectionCreate(BaseModel):
     auth_method: VPNAuthMethod
     secret_ref: str = Field(min_length=1, max_length=200)
     management_vrf_id: int = Field(gt=0)
-    allowed_prefixes: list[str] = Field(min_length=1, max_length=128)
+    allowed_prefixes: list[str] = Field(max_length=128)
     administrative_status: VPNAdministrativeStatus = "planned"
 
     @field_validator("gateway_host")
@@ -105,7 +105,7 @@ class VPNConnectionPatch(BaseModel):
     auth_method: VPNAuthMethod | None = None
     secret_ref: str | None = Field(default=None, min_length=1, max_length=200)
     management_vrf_id: int | None = Field(default=None, gt=0)
-    allowed_prefixes: list[str] | None = Field(default=None, min_length=1, max_length=128)
+    allowed_prefixes: list[str] | None = Field(default=None, max_length=128)
     administrative_status: VPNAdministrativeStatus | None = None
 
     @field_validator("gateway_host")
@@ -142,6 +142,44 @@ class VPNValidationResult(BaseModel):
     administrative_status: VPNAdministrativeStatus
     runtime_status: Literal["not_deployed"]
     validation_status: Literal["valid"]
+
+
+class VPNConnectivityTestRequest(BaseModel):
+    """Select one NetBox device as proof that the transient tunnel carries traffic."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    device_id: int = Field(gt=0)
+    target_port: int = Field(default=22, ge=1, le=65535)
+
+
+class VPNConnectivityTestResult(BaseModel):
+    connection_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    device_id: int = Field(gt=0)
+    device_name: str | None = None
+    target_ip: str
+    target_port: int = Field(ge=1, le=65535)
+    status: Literal["passed", "failed"]
+    tunnel_established: bool
+    target_reachable: bool
+    assigned_address: str | None = None
+    disconnected: bool
+    duration_ms: int = Field(ge=0)
+    failure_stage: Literal[
+        "validation", "worker", "ike", "child", "target", "cleanup"
+    ] | None = None
+    message: str = Field(min_length=1, max_length=300)
+
+    @field_validator("target_ip")
+    @classmethod
+    def validate_target_ip(cls, value: str) -> str:
+        try:
+            address = ip_address(value)
+        except ValueError:
+            raise ValueError("target_ip is invalid") from None
+        if address.version != 4:
+            raise ValueError("target_ip must be IPv4")
+        return str(address)
 
 
 class VPNAssignmentRequest(BaseModel):
@@ -219,6 +257,8 @@ class VPNResolutionResult(BaseModel):
 
 __all__ = [
     "VPNAssignmentRequest",
+    "VPNConnectivityTestRequest",
+    "VPNConnectivityTestResult",
     "VPNConnectionCreate",
     "VPNConnectionPage",
     "VPNConnectionPatch",

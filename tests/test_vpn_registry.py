@@ -193,6 +193,38 @@ class VPNRegistryTests(unittest.TestCase):
         self.assertEqual(result["connection_id"], "customer-a-secondary")
         self.assertEqual(result["connection_source"], "device")
 
+    def test_site_scoped_connection_targets_site_and_wins_over_device_override(self):
+        site_connection = self.connection().model_copy(update={'allowed_prefixes': []})
+        self.service.create(site_connection)
+        self.service.create(self.connection('customer-a-secondary'))
+        self.netbox.objects['/api/dcim/devices/'][0]['custom_fields'] = {
+            'atlas_connection_id': 'customer-a-secondary'
+        }
+        result = self.service.resolve_device(101)
+        self.assertEqual(result['connection_id'], 'customer-a-primary')
+        self.assertEqual(result['connection_source'], 'site')
+        self.assertEqual(result['management_ip'], '192.168.1.10')
+        with self.assertRaisesRegex(VPNRegistryError, 'assignment_site_scope_required'):
+            self.service.plan_assignment(tenant_id=1, connection_id='customer-a-primary',
+                                         target_type='device', target_ids=[101])
+        self.netbox.objects['/api/dcim/sites/'][0]['custom_fields'] = {}
+        self.netbox.objects['/api/dcim/devices/'][0]['custom_fields'] = {
+            'atlas_connection_id': 'customer-a-primary'
+        }
+        with self.assertRaisesRegex(VPNRegistryError, 'assignment_site_scope_required'):
+            self.service.resolve_device(101)
+
+    def test_site_scoped_connection_still_rejects_foreign_tenant_and_vrf(self):
+        site_connection = self.connection().model_copy(update={'allowed_prefixes': []})
+        self.service.create(site_connection)
+        self.netbox.objects['/api/ipam/ip-addresses/'][0]['tenant'] = {'id': 2}
+        with self.assertRaisesRegex(VPNRegistryError, 'management_ip_tenant_mismatch'):
+            self.service.resolve_device(101)
+        self.netbox.objects['/api/ipam/ip-addresses/'][0]['tenant'] = {'id': 1}
+        self.netbox.objects['/api/ipam/ip-addresses/'][0]['vrf'] = {'id': 32}
+        with self.assertRaisesRegex(VPNRegistryError, 'connection_vrf_mismatch'):
+            self.service.resolve_device(101)
+
     def test_cross_tenant_mapping_is_rejected(self):
         self.seed()
         self.netbox.objects["/api/dcim/sites/"][0]["custom_fields"] = {

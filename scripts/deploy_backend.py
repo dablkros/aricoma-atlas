@@ -136,12 +136,13 @@ def validate_config(raw):
     config = copy.deepcopy(raw)
     try:
         backend = config["backend"]
+        vpn_worker = config["vpn_worker"]
         runtime = config["runtime"]
         network = config["network"]
     except KeyError as exc:
         raise ValueError(f"Missing Atlas backend configuration section: {exc.args[0]}") from None
 
-    if not all(isinstance(section, dict) for section in (backend, runtime, network)):
+    if not all(isinstance(section, dict) for section in (backend, vpn_worker, runtime, network)):
         raise ValueError("Atlas backend configuration sections must be objects")
 
     for field in ("version", "docker_image", "python_base_image", "dockerfile"):
@@ -205,6 +206,19 @@ def validate_config(raw):
     dockerfile = Path(backend["dockerfile"])
     if dockerfile.is_absolute() or ".." in dockerfile.parts:
         raise ValueError("backend.dockerfile must be a safe repository-relative path")
+
+    for field in ("docker_image", "dockerfile"):
+        if not isinstance(vpn_worker.get(field), str) or not vpn_worker[field].strip():
+            raise ValueError(f"vpn_worker.{field} must be a non-empty string")
+    if not IMAGE_PATTERN.fullmatch(vpn_worker["docker_image"]):
+        raise ValueError("vpn_worker.docker_image must use an explicit version tag")
+    worker_dockerfile = Path(vpn_worker["dockerfile"])
+    if worker_dockerfile.is_absolute() or ".." in worker_dockerfile.parts:
+        raise ValueError("vpn_worker.dockerfile must be a safe repository-relative path")
+    for field, minimum, maximum in (("connect_timeout", 10, 120), ("target_timeout", 1, 30)):
+        value = vpn_worker.get(field)
+        if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
+            raise ValueError(f"vpn_worker.{field} must be an integer from {minimum} to {maximum}")
 
     runtime_directory = Path(str(runtime.get("directory", "")))
     if (
@@ -548,6 +562,9 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     dockerfile = (root / config["backend"]["dockerfile"]).resolve()
     if root not in dockerfile.parents or not dockerfile.is_file():
         raise RuntimeError(f"Atlas backend Dockerfile not found: {dockerfile}")
+    worker_dockerfile = (root / config["vpn_worker"]["dockerfile"]).resolve()
+    if root not in worker_dockerfile.parents or not worker_dockerfile.is_file():
+        raise RuntimeError(f"Atlas VPN worker Dockerfile not found: {worker_dockerfile}")
 
     identity_file = root / ".runtime/openbao-backend.json"
     if identity_file.is_symlink() or not identity_file.is_file():
@@ -575,6 +592,10 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
     vpn_profile_writer_identity_file = root / ".runtime/openbao-vpn-profile-writer.json"
     if vpn_profile_writer_identity_file.is_symlink():
         raise RuntimeError("Atlas VPN profile writer AppRole identity cannot be a symlink")
+
+    vpn_worker_identity_file = root / ".runtime/openbao-vpn-worker.json"
+    if vpn_worker_identity_file.is_symlink() or not vpn_worker_identity_file.is_file():
+        raise RuntimeError("Atlas VPN worker AppRole identity is missing or invalid")
 
     monitoring_directory = root / ".runtime/monitoring"
     if monitoring_directory.is_symlink():
@@ -647,6 +668,13 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         raise RuntimeError("VPN registry runtime escaped the protected runtime directory")
     vpn_directory.mkdir(parents=True, exist_ok=True)
     os.chmod(vpn_directory, 0o700)
+    vpn_worker_token_file = vpn_directory / "worker-token"
+    if vpn_worker_token_file.is_symlink():
+        raise RuntimeError("VPN worker token cannot be a symlink")
+    if not vpn_worker_token_file.exists():
+        _materialize_operator_token(vpn_worker_token_file, secrets.token_urlsafe(48))
+    _read_local_operator_token(vpn_worker_token_file)
+    os.chmod(vpn_worker_token_file, 0o600)
 
     inventory_config = root / ".runtime/inventory.yaml"
     inventory_device_types = root / ".runtime/inventory/device-types"
@@ -692,6 +720,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         f"{monitoring_trust}:/run/atlas/monitoring/trust:ro",
         f"{prophylaxis_directory}:/run/atlas/prophylaxis:rw",
         f"{vpn_directory}:/run/atlas/vpn:rw",
+        f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
         f"{inventory_device_types}:/run/atlas/inventory/device-types:rw",
         f"{built_catalog}:/app/build:ro",
         f"{upstream_device_types}:/app/devicetype-library/device-types:ro",
@@ -729,6 +758,9 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
         "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
         "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
         "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
+        "ATLAS_VPN_WORKER_URL": "http://vpn-worker:8090",
+        "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
+        "ATLAS_VPN_WORKER_TIMEOUT": str(config["vpn_worker"]["connect_timeout"] + config["vpn_worker"]["target_timeout"] + 20),
         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(backend["prophylaxis_result_retention"]),
         "ATLAS_PROPHYLAXIS_CONCURRENCY": str(backend["prophylaxis_concurrency"]),
         "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
@@ -748,10 +780,11 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
             "ATLAS_ZABBIX_URL": "http://atlas-zabbix-web:8080/api_jsonrpc.php",
             "ATLAS_ZABBIX_UI_URL": ui_urls["zabbix"],
         })
-    service_networks = {"openbao": {}, "netbox": {}}
+    service_networks = {"openbao": {}, "netbox": {}, "vpn_control": {}}
     external_networks = {
         "openbao": {"external": True, "name": OPENBAO_NETWORK},
         "netbox": {"external": True, "name": NETBOX_NETWORK},
+        "vpn_control": {"internal": True},
     }
     if selection.enabled("oxidized"):
         service_networks["oxidized"] = {}
@@ -796,7 +829,34 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
                         "retries": 20,
                         "start_period": "10s",
                     },
-                }
+                },
+                "vpn-worker": {
+                    "image": config["vpn_worker"]["docker_image"],
+                    "build": {
+                        "context": str(root),
+                        "dockerfile": config["vpn_worker"]["dockerfile"],
+                    },
+                    "restart": "unless-stopped",
+                    "init": True,
+                    "environment": {
+                        "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
+                        "ATLAS_VPN_WORKER_IDENTITY_FILE": "/run/secrets/atlas-vpn-worker.json",
+                        "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
+                        "ATLAS_VPN_CONNECT_TIMEOUT": str(config["vpn_worker"]["connect_timeout"]),
+                        "ATLAS_VPN_TARGET_TIMEOUT": str(config["vpn_worker"]["target_timeout"]),
+                    },
+                    "volumes": [
+                        f"{vpn_worker_identity_file}:/run/secrets/atlas-vpn-worker.json:ro",
+                        f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
+                    ],
+                    "networks": {"openbao": {}, "vpn_control": {}},
+                    "read_only": True,
+                    "tmpfs": ["/run:rw,nosuid,nodev,size=32m,mode=755", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"],
+                    "cap_drop": ["ALL"],
+                    "cap_add": ["NET_ADMIN", "NET_RAW"],
+                    "security_opt": ["no-new-privileges:true"],
+                    "pids_limit": 128,
+                },
             },
             "networks": external_networks,
         },
@@ -808,8 +868,14 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
 def deploy_runtime(config, compose_file):
     project = config["runtime"]["compose_project"]
     compose(compose_file, project, "config", "--quiet")
-    compose(compose_file, project, "build", "--pull", "backend")
-    compose(compose_file, project, "up", "-d", "--force-recreate", "backend")
+    compose(compose_file, project, "build", "--pull", "backend", "vpn-worker")
+    compose(compose_file, project, "up", "-d", "--force-recreate", "vpn-worker", "backend")
+    wait_healthy(
+        compose_file,
+        project,
+        "vpn-worker",
+        config["runtime"]["startup_timeout"],
+    )
     wait_healthy(
         compose_file,
         project,

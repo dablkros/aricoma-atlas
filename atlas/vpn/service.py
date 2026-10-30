@@ -332,6 +332,8 @@ class VPNRegistryService:
                 raise VPNRegistryError("connection_tenant_mismatch", 409)
             if connection.administrative_status == "disabled":
                 raise VPNRegistryError("connection_disabled", 409)
+            if target_type == "device" and not connection.allowed_prefixes:
+                raise VPNRegistryError("assignment_site_scope_required", 409)
             self._validate_references(
                 VPNConnectionCreate.model_validate(
                     connection.model_dump(
@@ -463,8 +465,12 @@ class VPNRegistryService:
         site_connection = _custom_field(
             site.get("custom_fields"), "atlas_connection_id"
         )
-        connection_id = device_connection or site_connection
-        source = "device" if device_connection else "site" if site_connection else None
+        # Site-scoped connections use NetBox Site membership as their target source.
+        # Legacy connections with an explicit prefix allowlist retain Device overrides.
+        site_record = self.get(site_connection) if site_connection and device_connection else None
+        site_scoped = site_record is not None and not site_record.allowed_prefixes
+        connection_id = site_connection if site_scoped else device_connection or site_connection
+        source = "site" if site_scoped else "device" if device_connection else "site" if site_connection else None
         if connection_id is None:
             return {
                 "device_id": device_id,
@@ -479,12 +485,14 @@ class VPNRegistryService:
                 "runtime_status": "not_deployed",
                 "resolution_status": "unmapped",
             }
-        connection = self.get(connection_id)
+        connection = site_record if site_scoped else self.get(connection_id)
+        if source == "device" and not connection.allowed_prefixes:
+            raise VPNRegistryError("assignment_site_scope_required", 409)
         if connection.tenant_id != tenant_id:
             raise VPNRegistryError("connection_tenant_mismatch", 409)
         if connection.management_vrf_id != vrf_id:
             raise VPNRegistryError("connection_vrf_mismatch", 409)
-        if not any(
+        if connection.allowed_prefixes and not any(
             target in ip_network(prefix, strict=True)
             for prefix in connection.allowed_prefixes
         ):

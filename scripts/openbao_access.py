@@ -511,6 +511,10 @@ def reconcile_backend_policy(client):
             root_token,
             "atlas-vpn-profile-writer",
         )
+        openbao_deployment.reconcile_runtime_role(
+            root_token,
+            "atlas-vpn-worker",
+        )
 
     applied = generate_temporary_root(
         client,

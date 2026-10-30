@@ -15,7 +15,7 @@ from atlas.vpn.forticlient_profile import (
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
 from atlas.vpn.models import VPNConnectionCreate
 from atlas.vpn.service import VPNRegistryError
-from atlas.vpn.strongswan_config import VPNSecrets, render_swanctl
+from atlas.vpn.strongswan_config import VPNSecrets, validate_profile
 
 MAX_PROFILE_BYTES = 2 * 1024 * 1024
 
@@ -104,7 +104,7 @@ class VPNProfileImportService:
                 administrative_status='planned',
             )
             # Fail closed if the profile or credentials cannot be represented by the current renderer.
-            render_swanctl(p, VPNSecrets(username, password, psk), tuple(record.allowed_prefixes))
+            validate_profile(p, VPNSecrets(username, password, psk))
             profile = asdict(p)
             del profile['encrypted_auth_info']
             profile['phase1_proposals'] = list(profile['phase1_proposals'])

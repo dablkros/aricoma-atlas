@@ -115,6 +115,14 @@ class VPNImportTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(self.writer.secret['psk_base64']), b'example-psk')
         self.assertNotIn('export_password', self.writer.secret)
 
+    def test_import_can_use_site_membership_without_entering_prefixes(self):
+        body = request().model_copy(update={'allowed_prefixes': []})
+        plan = self.service.plan(body)
+        self.assertEqual(plan['allowed_prefixes'], [])
+        self.service.apply(body, plan)
+        self.assertEqual(self.registry.value.allowed_prefixes, [])
+        self.assertEqual(self.service.plan(body)['registry_action'], 'unchanged')
+
     def test_partial_write_can_be_retried_without_overwrite(self):
         body = request(); plan = self.service.plan(body); self.writer.fail = True
         with self.assertRaisesRegex(VPNImportError, 'vpn_import_partial'):

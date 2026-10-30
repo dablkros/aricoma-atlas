@@ -25,6 +25,9 @@ class Settings(BaseSettings):
         ".runtime/openbao-credential-writer.json"
     )
     vpn_profile_writer_identity_file: Path = Path('.runtime/openbao-vpn-profile-writer.json')
+    vpn_worker_url: Optional[AnyHttpUrl] = None
+    vpn_worker_token_file: Path = Path('.runtime/vpn/worker-token')
+    vpn_worker_timeout: float = Field(default=75.0, gt=5, le=180)
     monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
     admin_session_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
     app_name: str = Field(default="Aricoma Atlas", min_length=1, max_length=100)
@@ -97,6 +100,15 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("vpn_worker_url")
+    @classmethod
+    def validate_worker_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
+        if value is None:
+            return value
+        if value.scheme != "http" or value.username or value.password or value.query or value.fragment:
+            raise ValueError("vpn_worker_url must be an internal HTTP origin")
+        return value
+
     @field_validator("netbox_ui_url", "oxidized_ui_url", "zabbix_ui_url")
     @classmethod
     def validate_ui_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
@@ -113,6 +125,7 @@ class Settings(BaseSettings):
         "monitoring_identity_file",
         "credential_writer_identity_file",
         "vpn_profile_writer_identity_file",
+        "vpn_worker_token_file",
         "monitoring_operator_token_file",
         "openbao_identity_file",
         "oxidized_inventory_file",

@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261030-1">
-    <script src="/static/app.js?v=20261030-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261030-3">
+    <script src="/static/app.js?v=20261030-3" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -126,6 +126,7 @@
           <button id="credential-onboarding-open" class="button button-primary" type="button">Onboard credentials</button>
           <button id="vpn-assignment-open" class="button button-primary" type="button">Assign VPN connections</button>
           <button id="vpn-import-open" class="button button-primary" type="button">Import FortiClient VPN</button>
+          <button id="vpn-test-open" class="button button-primary" type="button">Test VPN</button>
         </div>
         <p id="operator-result" class="operator-result" aria-live="polite">No operator action has been run.</p>
       </section>
@@ -341,29 +342,48 @@
       </section>
     </main>
 
-    <dialog id="vpn-import-dialog" class="inventory-dialog" aria-labelledby="vpn-import-title">
+    <dialog id="vpn-import-dialog" class="inventory-dialog vpn-import-dialog" aria-labelledby="vpn-import-title">
       <div class="dialog-shell">
         <header class="dialog-heading"><div>
           <p class="section-kicker">VPN profile</p>
           <h2 id="vpn-import-title">Import FortiClient VPN</h2>
-          <p>Import the profile, review its customer and network settings, then save its credentials to OpenBao.</p>
+          <p>Choose the exported profile and its customer. Atlas saves the credentials securely in OpenBao.</p>
         </div><button id="vpn-import-close" class="dialog-close" type="button" aria-label="Close VPN import">×</button></header>
-        <p id="vpn-import-message" class="operation-callout" role="status" aria-live="polite">Select a profile file. Import saves settings but does not connect the VPN.</p>
-        <div class="inventory-fields">
-          <div class="field-group"><label for="vpn-import-format">Profile format</label><select id="vpn-import-format"><option value="windows-xml">Windows FortiClient XML (.conf)</option><option value="macos-plist">macOS FortiClient plist</option></select></div>
-          <div class="field-group"><label for="vpn-import-file">Profile file</label><input id="vpn-import-file" type="file" accept=".conf,.xml,.plist"></div>
-          <div class="field-group"><label for="vpn-import-profile">VPN profile</label><select id="vpn-import-profile"><option value="">Choose a file first</option></select></div>
-          <div class="field-group"><label for="vpn-import-export-password">Export password, for EncX</label><input id="vpn-import-export-password" type="password" autocomplete="new-password"></div>
-          <div class="field-group"><label for="vpn-import-tenant">Customer</label><select id="vpn-import-tenant"><option value="">Select a customer</option></select></div>
-          <div class="field-group"><label for="vpn-import-vrf">Management VRF</label><select id="vpn-import-vrf"><option value="">Select a customer first</option></select></div>
-          <div class="field-group"><label for="vpn-import-id">Connection ID</label><input id="vpn-import-id" placeholder="customer-vpn" autocomplete="off"></div>
-          <div class="field-group"><label for="vpn-import-name">Connection name</label><input id="vpn-import-name" autocomplete="off"></div>
-          <div class="field-group"><label for="vpn-import-prefixes">Allowed IPv4 prefixes</label><input id="vpn-import-prefixes" placeholder="192.0.2.0/24, 198.51.100.0/24" autocomplete="off"></div>
-          <div class="field-group"><label for="vpn-import-username">VPN username</label><input id="vpn-import-username" autocomplete="off"></div>
-          <div class="field-group"><label for="vpn-import-password">VPN password</label><input id="vpn-import-password" type="password" autocomplete="new-password"></div>
-        </div>
-        <div class="inventory-plan-preview-actions"><button id="vpn-import-plan" class="button button-secondary" type="button">Review import</button><button id="vpn-import-apply" class="button button-primary" type="button" disabled>Save profile</button></div>
-        <div id="vpn-import-review" class="operation-callout" hidden></div>
+        <p id="vpn-import-message" class="vpn-import-notice" role="status" aria-live="polite">Import saves the profile; it does not connect the VPN.</p>
+        <fieldset id="vpn-import-fields" class="vpn-import-fields">
+          <section class="vpn-import-section" aria-labelledby="vpn-import-profile-heading">
+            <div class="vpn-import-section-heading"><span>1</span><div><h3 id="vpn-import-profile-heading">VPN profile</h3><p>Select a FortiClient export and the profile inside it.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-format">Profile format</label><select id="vpn-import-format"><option value="windows-xml">Windows FortiClient XML (.conf)</option><option value="macos-plist">macOS FortiClient plist</option></select></div>
+              <div class="field-group"><label for="vpn-import-file">Profile file</label><input id="vpn-import-file" type="file" accept=".conf,.xml,.plist"></div>
+              <div class="field-group"><label for="vpn-import-profile">VPN profile</label><select id="vpn-import-profile"><option value="">Choose a file first</option></select></div>
+              <div class="field-group"><label for="vpn-import-export-password">Export password <span class="vpn-optional">if required</span></label><input id="vpn-import-export-password" type="password" autocomplete="new-password" aria-describedby="vpn-export-help"><small id="vpn-export-help">Password used when the FortiClient profile was exported (EncX).</small></div>
+            </div>
+          </section>
+          <section class="vpn-import-section" aria-labelledby="vpn-import-customer-heading">
+            <div class="vpn-import-section-heading"><span>2</span><div><h3 id="vpn-import-customer-heading">Customer and network</h3><p>Choose the customer and their management VRF from NetBox. Assign the saved profile to a Site in the next step.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-tenant">Customer</label><select id="vpn-import-tenant"><option value="">Select a customer</option></select></div>
+              <div class="field-group"><label for="vpn-import-vrf">Management VRF</label><select id="vpn-import-vrf"><option value="">Select a customer first</option></select></div>
+            </div>
+          </section>
+          <section class="vpn-import-section" aria-labelledby="vpn-import-login-heading">
+            <div class="vpn-import-section-heading"><span>3</span><div><h3 id="vpn-import-login-heading">VPN sign-in</h3><p>Enter the account used to connect to this VPN.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-username">VPN username</label><input id="vpn-import-username" autocomplete="off"></div>
+              <div class="field-group"><label for="vpn-import-password">VPN password</label><input id="vpn-import-password" type="password" autocomplete="new-password"></div>
+            </div>
+          </section>
+          <details id="vpn-import-advanced" class="vpn-import-advanced"><summary>Connection details <span>generated from the profile</span></summary>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-id">Connection ID</label><input id="vpn-import-id" placeholder="customer-vpn" autocomplete="off" aria-describedby="vpn-id-help"><small id="vpn-id-help">Unique ID: lowercase letters, numbers and hyphens.</small></div>
+              <div class="field-group"><label for="vpn-import-name">Connection name</label><input id="vpn-import-name" autocomplete="off"></div>
+            </div>
+          </details>
+        </fieldset>
+        <div id="vpn-import-activity" class="inventory-activity" role="status" aria-live="polite" hidden><span class="monitoring-spinner" aria-hidden="true"></span><div><strong id="vpn-import-activity-title">Working…</strong><p id="vpn-import-activity-detail">Please wait.</p></div></div>
+        <div id="vpn-import-review" class="vpn-import-review" aria-live="polite" hidden></div>
+        <div class="vpn-import-actions"><button id="vpn-import-assign" class="button button-secondary" type="button" hidden>Assign to Sites</button><button id="vpn-import-plan" class="button button-secondary" type="button">Review import</button><button id="vpn-import-apply" class="button button-primary" type="button" disabled>Save profile</button></div>
       </div>
     </dialog>
 
@@ -650,13 +670,49 @@
       </div>
     </dialog>
 
+    <dialog id="vpn-test-dialog" class="inventory-dialog" aria-labelledby="vpn-test-title">
+      <div class="dialog-shell vpn-test-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">Isolated connectivity check</p>
+            <h2 id="vpn-test-title">Test VPN</h2>
+            <p>Atlas connects the selected VPN inside its isolated worker, checks one assigned device, and always disconnects.</p>
+          </div>
+          <button id="vpn-test-close" class="dialog-close" type="button" aria-label="Close VPN test">×</button>
+        </header>
+        <p id="vpn-test-message" class="vpn-import-notice" role="status" aria-live="polite">Choose a customer, VPN, assigned Site and proof device.</p>
+        <div class="inventory-fields">
+          <div class="field-group"><label for="vpn-test-tenant">Customer</label><select id="vpn-test-tenant"><option value="">Select a customer</option></select></div>
+          <div class="field-group"><label for="vpn-test-connection">VPN connection</label><select id="vpn-test-connection" disabled><option value="">Select a customer first</option></select></div>
+          <div class="field-group"><label for="vpn-test-site">Assigned Site</label><select id="vpn-test-site" disabled><option value="">Select a VPN first</option></select></div>
+          <div class="field-group"><label for="vpn-test-device">Proof device</label><select id="vpn-test-device" disabled><option value="">Select a Site first</option></select></div>
+          <div class="field-group"><label for="vpn-test-port">TCP port</label><input id="vpn-test-port" type="number" min="1" max="65535" value="22"><small>Use a management port known to answer, for example SSH 22 or HTTPS 443.</small></div>
+        </div>
+        <div id="vpn-test-activity" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span>
+          <div><strong>Testing VPN connectivity</strong><p>Connecting, checking the target, then disconnecting. This can take up to one minute.</p></div>
+        </div>
+        <section id="vpn-test-result" class="vpn-test-result" aria-live="polite" hidden>
+          <div class="inventory-summary-heading"><div><p class="section-kicker">Test result</p><h3 id="vpn-test-result-title">VPN test finished</h3></div><span id="vpn-test-status" class="status-pill status-pill-neutral">Unknown</span></div>
+          <dl class="vpn-test-evidence">
+            <div><dt>Tunnel</dt><dd id="vpn-test-tunnel">Not checked</dd></div>
+            <div><dt>Target</dt><dd id="vpn-test-target">Not checked</dd></div>
+            <div><dt>Assigned address</dt><dd id="vpn-test-address">—</dd></div>
+            <div><dt>Cleanup</dt><dd id="vpn-test-cleanup">Not checked</dd></div>
+          </dl>
+          <p id="vpn-test-detail" class="operator-result"></p>
+        </section>
+        <div class="dialog-actions"><button id="vpn-test-run" class="button button-primary" type="button" disabled>Connect, test and disconnect</button></div>
+      </div>
+    </dialog>
+
     <dialog id="vpn-assignment-dialog" class="inventory-dialog" aria-labelledby="vpn-assignment-title">
       <div class="dialog-shell">
         <header class="dialog-heading">
           <div>
             <p class="section-kicker">NetBox VPN mapping</p>
             <h2 id="vpn-assignment-title">Assign VPN connections</h2>
-            <p>Assign one tenant-owned VPN connection to Sites, or manage explicit Device overrides. Select all Sites to apply one connection across the tenant.</p>
+            <p>Select a customer and VPN, then choose the Sites that use it. Devices in each selected Site inherit the Site connection.</p>
           </div>
           <button id="vpn-assignment-close" class="dialog-close" type="button" aria-label="Close VPN assignment window">×</button>
         </header>

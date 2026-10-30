@@ -15,10 +15,13 @@ from atlas.vpn.models import (
     VPNConnectionPage,
     VPNConnectionPatch,
     VPNConnectionRecord,
+    VPNConnectivityTestRequest,
+    VPNConnectivityTestResult,
     VPNResolutionResult,
     VPNValidationResult,
 )
 from atlas.vpn.service import VPNRegistryError
+from atlas.vpn.worker_client import VPNWorkerError
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
 from atlas.vpn.import_service import VPNImportError, inspect_profile
 
@@ -48,6 +51,26 @@ def _translate(operation):
             exc.code,
             messages.get(exc.code, "VPN connection validation failed"),
         ) from None
+
+
+def _test_translate(operation):
+    try:
+        return operation()
+    except VPNWorkerError as exc:
+        messages = {
+            "vpn_worker_unavailable": "The isolated VPN worker is unavailable",
+            "vpn_worker_invalid_response": "The VPN worker returned an invalid response",
+            "vpn_worker_failed": "The VPN worker could not run the test",
+            "vpn_test_busy": "Another VPN test is already running",
+            "vpn_test_target_not_assigned": "The selected device does not use this VPN",
+            "vpn_driver_not_testable": "This VPN driver cannot be tested by the current worker",
+            "connection_disabled": "The VPN connection is disabled",
+        }
+        raise AtlasError(
+            exc.status_code, exc.code, messages.get(exc.code, "VPN connectivity test failed")
+        ) from None
+    except VPNRegistryError as exc:
+        raise AtlasError(exc.status_code, exc.code, "VPN target validation failed") from None
 
 
 def _assignment_hash(body: VPNAssignmentRequest, plan: dict, token: str) -> str:
@@ -204,6 +227,45 @@ def validate_connection(connection_id: str, request: Request) -> dict:
     return _translate(
         lambda: request.app.state.dependencies.vpn.validate(connection_id)
     )
+
+
+@router.post(
+    "/connections/{connection_id}/test",
+    response_model=VPNConnectivityTestResult,
+    dependencies=[Depends(authorized)],
+)
+def test_connection(
+    connection_id: str, body: VPNConnectivityTestRequest, request: Request,
+) -> VPNConnectivityTestResult:
+    service = getattr(request.app.state.dependencies, "vpn_test", None)
+    if service is None:
+        raise AtlasError(503, "vpn_worker_unavailable", "The isolated VPN worker is unavailable")
+    logger.info(
+        "vpn.connectivity_test_started",
+        extra={
+            "event": "vpn.connectivity_test_started",
+            "connection_id": connection_id,
+            "device_id": body.device_id,
+            "target_port": body.target_port,
+        },
+    )
+    result = _test_translate(
+        lambda: service.run(
+            connection_id, device_id=body.device_id, target_port=body.target_port,
+        )
+    )
+    logger.info(
+        "vpn.connectivity_test_finished",
+        extra={
+            "event": "vpn.connectivity_test_finished",
+            "connection_id": connection_id,
+            "device_id": body.device_id,
+            "status": result.status,
+            "failure_stage": result.failure_stage,
+            "disconnected": result.disconnected,
+        },
+    )
+    return result
 
 
 @router.get(
