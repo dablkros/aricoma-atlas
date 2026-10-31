@@ -31,6 +31,12 @@ def backend_config(**overrides):
             "prophylaxis_result_retention": 10000,
             "prophylaxis_concurrency": 4,
         },
+        "vpn_worker": {
+            "docker_image": f"aricoma-atlas-vpn-worker:{__version__}",
+            "dockerfile": "deployment/vpn/Dockerfile",
+            "connect_timeout": 45,
+            "target_timeout": 5,
+        },
         "runtime": {
             "directory": ".runtime/backend",
             "compose_project": "atlas-backend",
@@ -414,6 +420,9 @@ class BackendRuntimeTests(unittest.TestCase):
         dockerfile = self.root / "deployment/backend/Dockerfile"
         dockerfile.parent.mkdir(parents=True)
         dockerfile.write_text("FROM scratch\n", encoding="utf-8")
+        worker_dockerfile = self.root / "deployment/vpn/Dockerfile"
+        worker_dockerfile.parent.mkdir(parents=True)
+        worker_dockerfile.write_text("FROM scratch\n", encoding="utf-8")
         identity = self.root / ".runtime/openbao-backend.json"
         identity.parent.mkdir(parents=True)
         identity.write_text("{}\n", encoding="utf-8")
@@ -423,6 +432,8 @@ class BackendRuntimeTests(unittest.TestCase):
             self.root / ".runtime/openbao-credential-writer.json"
         )
         credential_writer_identity.write_text("{}\n", encoding="utf-8")
+        vpn_worker_identity = self.root / ".runtime/openbao-vpn-worker.json"
+        vpn_worker_identity.write_text("{}\n", encoding="utf-8")
         operator_token = self.root / ".runtime/monitoring/operator-token"
         operator_token.parent.mkdir(parents=True)
         operator_token.write_text("t" * 40 + "\n", encoding="utf-8")
@@ -464,11 +475,24 @@ class BackendRuntimeTests(unittest.TestCase):
         self.environment.stop()
         self.temporary.cleanup()
 
+    def test_vpn_writer_identity_is_mounted_only_when_provisioned(self):
+        identity = self.root / '.runtime/openbao-vpn-profile-writer.json'
+        compose = deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
+        service = yaml.safe_load(compose.read_text(encoding='utf-8'))['services']['backend']
+        target = '/run/secrets/atlas-vpn-profile-writer.json'
+        self.assertEqual(service['environment']['ATLAS_VPN_PROFILE_WRITER_IDENTITY_FILE'], target)
+        self.assertFalse(any(target in volume for volume in service['volumes']))
+        identity.write_text('{}\n', encoding='utf-8')
+        compose = deploy_backend.prepare_runtime(self.config, self.root, self.ui_urls)
+        service = yaml.safe_load(compose.read_text(encoding='utf-8'))['services']['backend']
+        self.assertIn(f'{identity.resolve()}:{target}:ro', service['volumes'])
+
     def test_prepare_runtime_writes_hardened_loopback_only_compose(self):
         compose_file = deploy_backend.prepare_runtime(
             self.config,
             self.root,
             self.ui_urls,
+            ppp_device_available=False,
         )
         data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         service = data["services"]["backend"]
@@ -512,6 +536,11 @@ class BackendRuntimeTests(unittest.TestCase):
             service["environment"]["ATLAS_PROPHYLAXIS_RESULTS_FILE"],
             "/run/atlas/prophylaxis/results.sqlite3",
         )
+        self.assertEqual(
+            service["environment"]["ATLAS_VPN_REGISTRY_FILE"],
+            "/run/atlas/vpn/connections.sqlite3",
+        )
+        self.assertEqual(service["environment"]["ATLAS_VPN_WORKER_URL"], "http://vpn-worker:8090")
         self.assertEqual(
             service["environment"]["ATLAS_INVENTORY_CONFIG"],
             "/run/atlas/inventory/config.yaml",
@@ -587,6 +616,10 @@ class BackendRuntimeTests(unittest.TestCase):
             service["volumes"],
         )
         self.assertIn(
+            f"{(self.root / '.runtime/vpn').resolve()}:/run/atlas/vpn:rw",
+            service["volumes"],
+        )
+        self.assertIn(
             f"{(self.root / '.runtime/inventory/device-types').resolve()}:"
             "/run/atlas/inventory/device-types:rw",
             service["volumes"],
@@ -604,6 +637,10 @@ class BackendRuntimeTests(unittest.TestCase):
             os.stat(self.root / ".runtime/prophylaxis").st_mode & 0o777,
             0o700,
         )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/vpn").st_mode & 0o777,
+            0o700,
+        )
         self.assertIn(
             f"{(self.root / '.runtime/oxidized/ssh/known_hosts').resolve()}:"
             "/run/atlas/ssh/known_hosts:ro",
@@ -617,7 +654,7 @@ class BackendRuntimeTests(unittest.TestCase):
         )
         self.assertEqual(
             set(service["networks"]),
-            {"openbao", "netbox", "oxidized", "zabbix"},
+            {"openbao", "netbox", "oxidized", "zabbix", "vpn_control"},
         )
         self.assertEqual(
             data["networks"],
@@ -638,16 +675,46 @@ class BackendRuntimeTests(unittest.TestCase):
                     "external": True,
                     "name": "atlas-zabbix-api",
                 },
+                "vpn_control": {"internal": True},
             },
         )
+        worker = data["services"]["vpn-worker"]
+        self.assertEqual(worker["cap_drop"], ["ALL"])
+        self.assertEqual(worker["cap_add"], ["NET_ADMIN", "NET_RAW"])
+        self.assertNotIn("devices", worker)
+        self.assertTrue(worker["read_only"])
+        self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
+        self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))
         self.assertIn("healthcheck", service)
         self.assertEqual(os.stat(compose_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(compose_file.parent).st_mode & 0o777, 0o700)
+
+    def test_vpn_worker_mounts_ppp_only_when_host_device_is_available(self):
+        without_ppp = deploy_backend.prepare_runtime(
+            self.config, self.root, self.ui_urls, ppp_device_available=False,
+        )
+        worker = yaml.safe_load(without_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
+        self.assertNotIn("devices", worker)
+
+        with_ppp = deploy_backend.prepare_runtime(
+            self.config, self.root, self.ui_urls, ppp_device_available=True,
+        )
+        worker = yaml.safe_load(with_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
+        self.assertEqual(worker["devices"], ["/dev/ppp:/dev/ppp"])
+
+    def test_ppp_capability_rejects_regular_files_and_symlinks(self):
+        regular = self.root / "not-a-ppp-device"
+        regular.write_text("not a device", encoding="utf-8")
+        self.assertFalse(deploy_backend.vpn_ppp_available(regular))
+        link = self.root / "ppp-link"
+        link.symlink_to(regular)
+        self.assertFalse(deploy_backend.vpn_ppp_available(link))
 
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
         (self.root / ".runtime/openbao-monitoring.json").unlink()
         (self.root / ".runtime/openbao-credential-writer.json").unlink()
+        (self.root / ".runtime/openbao-vpn-worker.json").unlink()
         (self.root / ".runtime/monitoring/operator-token").unlink()
         (self.root / ".runtime/monitoring").rmdir()
         (self.root / ".runtime/oxidized/ssh/known_hosts").unlink()
@@ -713,23 +780,22 @@ class BackendRuntimeTests(unittest.TestCase):
             compose_mock.call_args_list,
             [
                 call(compose_file, "atlas-backend", "config", "--quiet"),
-                call(compose_file, "atlas-backend", "build", "--pull", "backend"),
+                call(compose_file, "atlas-backend", "build", "--pull", "backend", "vpn-worker"),
                 call(
                     compose_file,
                     "atlas-backend",
                     "up",
                     "-d",
                     "--force-recreate",
+                    "vpn-worker",
                     "backend",
                 ),
             ],
         )
-        wait_mock.assert_called_once_with(
-            compose_file,
-            "atlas-backend",
-            "backend",
-            120,
-        )
+        self.assertEqual(wait_mock.call_args_list, [
+            call(compose_file, "atlas-backend", "vpn-worker", 120),
+            call(compose_file, "atlas-backend", "backend", 120),
+        ])
 
 
 class AtlasDeploymentOrderTests(unittest.TestCase):
@@ -884,6 +950,24 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("COPY --chown=atlas:atlas scripts /app/scripts", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
 
+    def test_vpn_worker_systemd_unit_directory_is_explicit(self):
+        dockerfile = (ROOT / "deployment/vpn/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--enable-systemd", dockerfile)
+        self.assertIn(
+            "--with-systemdsystemunitdir=/usr/local/lib/systemd/system",
+            dockerfile,
+        )
+
+    def test_vpn_worker_declares_yaml_runtime_dependency(self):
+        requirements = (ROOT / "deployment/vpn/requirements.txt").read_text(
+            encoding="utf-8"
+        ).splitlines()
+
+        self.assertIn("PyYAML==6.0.3", requirements)
+
 
 class InstallerContractTests(unittest.TestCase):
     def test_installer_requires_python_312_and_supported_ubuntu_releases(self):
@@ -892,6 +976,18 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("sys.version_info >= (3, 12)", installer)
         self.assertIn("24.04|26.04", installer)
         self.assertNotIn("22.04|24.04", installer)
+
+    def test_update_reconciles_missing_openbao_runtime_identities(self):
+        update = (ROOT / "update.sh").read_text(encoding="utf-8")
+        atlasctl = (ROOT / "bin/atlasctl").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts/deploy_atlas.py").read_text(encoding="utf-8")
+
+        self.assertIn("exec /usr/local/sbin/atlasctl deploy", update)
+        self.assertIn("missing_openbao_runtime_identities", deploy)
+        self.assertIn("--reconcile-runtime-roles", deploy)
+        self.assertIn("--reconcile-runtime-roles", atlasctl)
+        self.assertIn("vpn_worker_logs", atlasctl)
+        self.assertIn('logs "$@" vpn-worker', atlasctl)
 
 
 if __name__ == "__main__":

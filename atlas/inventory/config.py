@@ -42,6 +42,11 @@ def _mapping(value, label):
 
 def normalize_inventory_config(raw: object) -> dict:
     data = _mapping(raw, "inventory")
+    if "connection_profiles" in data:
+        raise ValueError(
+            "inventory.connection_profiles was replaced by the persistent VPN "
+            "Connection Registry; migrate profiles through /api/v1/vpn/connections"
+        )
     allowed = {
         "version",
         "default_tenant",
@@ -59,11 +64,12 @@ def normalize_inventory_config(raw: object) -> dict:
     tenant = data.get("default_tenant")
     if tenant is not None:
         tenant = _mapping(tenant, "inventory.default_tenant")
-        if set(tenant) - {"name", "slug", "provision"}:
+        if set(tenant) - {"name", "slug", "group", "provision"}:
             raise ValueError("inventory.default_tenant contains unknown fields")
         name = tenant.get("name")
         slug = tenant.get("slug")
         provision = tenant.get("provision", True)
+        group = tenant.get("group")
         if not isinstance(name, str) or not name.strip():
             raise ValueError("inventory.default_tenant.name is required")
         if not isinstance(slug, str) or not re.fullmatch(
@@ -72,7 +78,13 @@ def normalize_inventory_config(raw: object) -> dict:
             raise ValueError("inventory.default_tenant.slug is invalid")
         if type(provision) is not bool:
             raise ValueError("inventory.default_tenant.provision must be boolean")
-        tenant = {"name": " ".join(name.split()), "slug": slug, "provision": provision}
+        if group is not None and (not isinstance(group, str) or not group.strip()):
+            raise ValueError("inventory.default_tenant.group is invalid")
+        tenant = {
+            "name": " ".join(name.split()), "slug": slug,
+            "group": " ".join(group.split()) if group else None,
+            "provision": provision,
+        }
 
     site = data.get("default_site")
     if site is not None:
@@ -124,6 +136,7 @@ def normalize_inventory_config(raw: object) -> dict:
         for key, value in mapping.items()
     ):
         raise ValueError("inventory aliases and role mappings must be non-empty strings")
+
     return {
         "version": 1,
         "default_tenant": tenant,

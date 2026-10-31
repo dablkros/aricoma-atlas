@@ -1,10 +1,11 @@
 # Device credential onboarding
 
 Atlas Operations UI provides an explicit plan/apply flow for device credentials.
-One plan targets one or more active devices from the same manufacturer. The
-operator selects one explicit platform and one shared credential profile for the
-whole batch; Atlas blocks a device that already has a different platform instead
-of silently replacing it.
+One plan targets one or more active devices from one tenant and the same
+manufacturer. The operator first selects the tenant, then one explicit platform
+and one shared credential profile for the whole batch. Atlas blocks devices
+without a tenant, cross-tenant batches and a device that already has a different
+platform instead of silently replacing it.
 It stores only `credential_profile`, the selected platform and enablement flags
 in NetBox. Passwords, API tokens and SNMP communities are written only to the
 OpenBao KV v2 mount.
@@ -28,9 +29,9 @@ response, logs them, or stores them in NetBox.
 
 ## Safety contract
 
-1. Select one or more active NetBox devices from the same manufacturer, an
-   explicit compatible platform and a shared credential profile. A plan accepts
-   at most 100 unique devices.
+1. Select one tenant and one or more active NetBox devices from that tenant and
+   the same manufacturer, an explicit compatible platform and a shared
+   credential profile. A plan accepts at most 100 unique devices.
 2. Select the consumers and enter their purpose-specific values.
 3. Create a dry-run plan. An existing different value is a conflict unless
    explicit replacement was selected.

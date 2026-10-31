@@ -28,7 +28,7 @@ Usage:
   sudo atlasctl components add oxidized|zabbix
   sudo atlasctl deploy [deploy_atlas.py options]
   sudo atlasctl status
-  sudo atlasctl openbao
+  sudo atlasctl openbao [reconcile-runtime]
   sudo atlasctl oxidized reconcile
   sudo atlasctl oxidized host-key scan HOST [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT] [--legacy-ssh]
@@ -38,9 +38,15 @@ Usage:
   sudo atlasctl zabbix credentials
   sudo atlasctl zabbix logs [docker compose logs options]
   sudo atlasctl integrations cisco test
-  sudo atlasctl inventory tenant add --name NAME [--dry-run]
+  sudo atlasctl vpn list [--tenant-id ID]
+  sudo atlasctl vpn show CONNECTION_ID
+  sudo atlasctl vpn resolve --device-id ID [--tenant-id ID]
+  sudo atlasctl vpn validate CONNECTION_ID
+  sudo atlasctl vpn logs [docker compose logs options]
+  sudo atlasctl inventory tenant add --name NAME [--group GROUP] [--dry-run]
   sudo atlasctl inventory site add --tenant TENANT --name NAME [--dry-run]
   sudo atlasctl inventory site set-default --tenant TENANT --name NAME [--dry-run|--apply]
+  sudo atlasctl inventory vrf add --tenant TENANT --name NAME [--dry-run|--apply]
   sudo atlasctl inventory upload FILE [--name NAME.csv|NAME.xlsx] [--force]
   sudo atlasctl inventory device-type search MODEL [--json]
   sudo atlasctl inventory device-type add MODEL [--dry-run|--apply]
@@ -60,7 +66,7 @@ Commands:
   components add        Permanently add an optional component.
   deploy                Deploy or reconcile the full Atlas stack.
   status                Show Atlas container and Oxidized inventory state.
-  openbao               Open the interactive OpenBao access helper.
+  openbao               Open OpenBao access or reconcile runtime roles.
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
@@ -69,6 +75,7 @@ Commands:
   zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
   integrations cisco    Test Cisco OAuth and Support API entitlements.
+  vpn                    Inspect VPN connections and worker logs.
   inventory             Manage tenants, sites, Device Types and device imports.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
@@ -125,6 +132,7 @@ atlas_env() {
     fi
 
     values+=("ATLAS_OXIDIZED_RUN_DIR=${OXIDIZED_INVENTORY_DIR}")
+    values+=("ATLAS_VPN_REGISTRY_FILE=${RUNTIME_DIR}/vpn/connections.sqlite3")
 
     printf '%s\0' "${values[@]}"
 }
@@ -308,6 +316,12 @@ backend_logs() {
     exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend logs "$@" backend
 }
 
+vpn_worker_logs() {
+    [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
+    exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
+        logs "$@" vpn-worker
+}
+
 prophylaxis_logs() {
     [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
     docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
@@ -384,7 +398,7 @@ main() {
 
     local command=${1:-}
     case "$command" in
-        components|inventory|oxidized|zabbix|integrations|backend|prophylaxis|proxy)
+        components|inventory|oxidized|zabbix|integrations|vpn|backend|prophylaxis|proxy)
             admin_auth require
             ;;
     esac
@@ -448,6 +462,13 @@ main() {
             ;;
         openbao)
             shift
+            if [[ "${1:-}" == "reconcile-runtime" ]]; then
+                shift
+                [[ $# -eq 0 ]] || die "openbao reconcile-runtime accepts no options"
+                run_python_as_atlas \
+                    "${ATLAS_ROOT}/scripts/openbao_access.py" \
+                    --reconcile-runtime-roles
+            fi
             run_python_as_atlas "${ATLAS_ROOT}/scripts/openbao_access.py" "$@"
             ;;
         inventory)
@@ -557,6 +578,22 @@ main() {
                     cd "$ATLAS_ROOT"
                     exec "$PYTHON" \
                         "${ATLAS_ROOT}/scripts/cisco_support_cli.py"
+                    ;;
+                *)
+                    usage
+                    exit 2
+                    ;;
+            esac
+            ;;
+        vpn)
+            shift
+            case "${1:-}" in
+                list|show|resolve|validate)
+                    run_python_as_atlas "${ATLAS_ROOT}/scripts/vpn_cli.py" "$@"
+                    ;;
+                logs)
+                    shift
+                    vpn_worker_logs "$@"
                     ;;
                 *)
                     usage

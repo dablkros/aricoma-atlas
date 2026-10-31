@@ -586,6 +586,25 @@ class OpenBaoClient:
             )
         return data, metadata
 
+    def kv_read_metadata(
+        self,
+        token,
+        path,
+        mount="atlas",
+    ):
+        """Read KV v2 key metadata without reading the secret value."""
+        response = self._request(
+            "GET",
+            f"{mount}/metadata/{path.lstrip('/')}",
+            token=token,
+        )
+        metadata = self._json_object(response).get("data", {})
+        if not isinstance(metadata, dict):
+            raise OpenBaoInvalidResponse(
+                "OpenBao returned invalid KV key metadata"
+            )
+        return metadata
+
 
     def kv_write(
         self,

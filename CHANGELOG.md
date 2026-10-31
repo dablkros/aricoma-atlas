@@ -4,6 +4,29 @@ All notable changes to Aricoma Atlas are documented here. A release section is
 final only after its commit passes the complete release workflow and receives
 the corresponding Git tag.
 
+## [Unreleased]
+
+### Added
+
+- Persistent, secret-free VPN Connection Registry with SQLite schema migration,
+  NetBox Tenant/VRF validation and controlled deactivation.
+- Tenant-safe Device resolver supporting Site defaults, Device overrides,
+  overlapping management IP spaces and allowed-prefix enforcement.
+- Authorized `/api/v1/vpn` REST contracts and `atlasctl vpn` diagnostics.
+- OpenBao KV v2 metadata-only secret validation; VPN secret values remain
+  outside the registry and require a separate future worker identity.
+
+### Changed
+
+- Replaced the temporary P0 `inventory.connection_profiles` YAML resolver with
+  one persistent registry source of truth. Legacy YAML profiles are rejected
+  explicitly and are never migrated silently.
+
+### Known limitations
+
+- P1 records connection intent only. It does not create tunnels, run VPN
+  clients, change host routing or report a connected runtime state.
+
 ## [0.4.3] - 2026-10-26
 
 ### Added

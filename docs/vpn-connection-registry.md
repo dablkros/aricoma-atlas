@@ -1,0 +1,254 @@
+# VPN Connection Registry (P1)
+
+## Účel a hranice
+
+VPN Connection Registry je perzistentný register netajných metadát, podľa
+ktorých Atlas určí spojenie priradené konkrétnemu NetBox Device. P1 nevytvára
+tunel, nemení routing hostiteľa, nekontroluje dostupnosť gateway a nespúšťa VPN
+klienta. Preto je `runtime_status` vždy `not_deployed`.
+
+## Dátový model
+
+| Pole | Význam |
+|---|---|
+| `id` | Interné UUID vytvorené Atlasom. |
+| `connection_id` | Nemenný verejný identifikátor, globálne unique. |
+| `name` | Zobrazovaný názov. |
+| `tenant_id` | NetBox Tenant ID; zdroj pravdy pre vlastníctvo. |
+| `tenant_slug` | Pri čítaní odvodený z NetBoxu, neukladá sa ako zdroj pravdy. |
+| `vendor` | `fortinet`, `checkpoint` alebo `generic`. |
+| `protocol` | `ipsec-ikev2`, `ssl-vpn`, `wireguard` alebo `openvpn`. |
+| `driver` | `strongswan`, `openfortivpn`, `forticlient`, `checkpoint-snx`, `wireguard` alebo `openvpn`. |
+| `gateway_host`, `gateway_port` | Netajný cieľ VPN gateway. |
+| `auth_method` | `username_password`, `certificate`, `psk` alebo `external_mfa`. |
+| `secret_ref` | Presná referencia `vpn/connections/<connection_id>`. |
+| `management_vrf_id` | Tenant-owned NetBox management VRF. |
+| `allowed_prefixes` | Prázdny zoznam znamená Site scope podľa NetBoxu; neprázdny zoznam zachováva explicitné CIDR obmedzenie. |
+| `administrative_status` | `planned`, `enabled` alebo `disabled`. |
+| `created_at`, `updated_at` | UTC čas vytvorenia a poslednej zmeny. |
+
+Povolené vendor/protocol/driver hodnoty sú katalóg, nie tvrdenie o funkčnom
+VPN klientovi. Kombinácie sa v P1 zámerne neblokujú bez overenej kompatibility.
+
+## Perzistencia a migrácia
+
+Register používa samostatný SQLite súbor
+`/run/atlas/vpn/connections.sqlite3`, bind-mountovaný z chránenej
+`.runtime/vpn/` s adresárom `0700` a databázou `0600`. Tabuľka
+`vpn_registry_migrations` eviduje aplikovanú schému; migrácia `1` vytvorí
+`vpn_connections`, unique constraint pre `connection_id` a tenant index.
+Migrácia je dopredná a nie je deštruktívna.
+
+`DELETE` nevykonáva fyzické mazanie: nastaví `administrative_status=disabled`.
+Staré `inventory.connection_profiles` nie sú druhým zdrojom pravdy. Ak sa
+objavia v site YAML, validácia ich explicitne odmietne s pokynom vytvoriť
+plnohodnotné záznamy cez `/api/v1/vpn/connections`; neúplné P0 profily sa
+automaticky a potichu nemigrujú.
+
+## NetBox mapovanie a resolver
+
+Custom field `atlas_connection_id` podporuje `dcim.site` aj `dcim.device`.
+Resolver postupuje striktne:
+
+1. načíta Device podľa NetBox ID;
+2. overí jeho Tenant a Site;
+3. načíta `primary_ip4`, jej Tenant a VRF;
+4. pre Site scope použije Site hodnotu; pri starších profiloch s explicitnými prefixmi uprednostní Device override;
+5. vyhľadá presné `connection_id` v SQLite registri;
+6. overí rovnaký Tenant a `management_vrf_id`;
+7. ak profil obsahuje explicitné `allowed_prefixes`, overí management IP voči nim; inak používa Site scope;
+8. vráti iba netajné metadata a `runtime_status=not_deployed`.
+
+Nepriradené zariadenie zostáva platným NetBox objektom a resolver vráti
+`resolution_status=unmapped`. Neexistuje automatický fallback na iné spojenie,
+Tenant ani VRF. Register rozlišuje prekrývajúce sa IP adresy pomocou Tenant a
+VRF; jednorazový P2 test spúšťa tunel v izolovanom worker kontajneri.
+Produkčné vykonávanie Ansible úloh cez tento sieťový priestor ešte nie je
+implementované.
+
+### Operations UI assignment flow
+
+Operations UI používa Site ako predvolenú úroveň priradenia. Operátor vyberie
+Tenant, jedno tenant-owned VPN spojenie a jednu alebo viac Sites. Voľba všetkých
+Sites je pohodlný hromadný zápis, nie nový tenantový fallback. Nové Sites preto
+nie sú automaticky priradené bez samostatného potvrdeného plánu.
+
+Pri starších profiloch s explicitnými prefixmi je Device assignment explicitný override. Pri nových profiloch so Site scope má Site prednosť aj pred už existujúcim Device override a profil sa nedá priradiť priamo k Device. Jeho odstránenie zapíše do
+`atlas_connection_id` hodnotu `null`, čím sa zariadenie vráti k Site dedičnosti.
+Dry-run a Apply znovu kontrolujú Tenant všetkých cieľov aj VPN spojenia,
+zachovávajú ostatné NetBox custom fields a Apply je viazaný na HMAC odtlačok
+presného plánu. OpenBao secret sa počas priraďovania nenačítava.
+
+Apply zapisuje jednotlivé NetBox objekty postupne. Nie je to distribuovaná
+transakcia: ak NetBox zlyhá uprostred hromadného zápisu, operátor vytvorí nový
+dry-run, ktorý už úspešné zápisy označí ako `UNCHANGED` a ponúkne iba zostávajúce
+operácie. Resolver následne pri každom zariadení samostatne overí zhodu Tenant,
+VRF a prípadné explicitné `allowed_prefixes`; samotné Site priradenie tieto device-level podmienky
+neobchádza.
+
+## OpenBao secret reference
+
+Atlas databáza uchováva iba `secret_ref`. Import FortiClient profilu ukladá potrebné hodnoty cez samostatnú identity do OpenBao KV v2 mountu `atlas/`:
+
+```text
+atlas/vpn/connections/customer-a-primary
+```
+
+Registry hodnota je preto:
+
+```text
+vpn/connections/customer-a-primary
+```
+
+Backend policy má iba read prístup k
+`atlas/metadata/vpn/connections/*`. Endpoint `validate` preto kontroluje KV v2
+metadata bez načítania secret hodnoty. Obsah secretu sa nevracia cez API ani CLI
+a neloguje sa. Import používa samostatnú identitu `atlas-vpn-profile-writer`
+so zápisom do `atlas/data/vpn/connections/+`. Izolovaný testovací worker používa
+odlišnú read-only identitu `atlas-vpn-worker`, ktorá môže načítať iba leaf
+`atlas/data/vpn/connections/+`; backend secret data naďalej nečíta.
+
+## Import FortiClient profilu v Operations UI
+
+Na existujúcej inštalácii `sudo ./update.sh` rozpozná chýbajúcu runtime
+identitu a pred deployom spustí quorum-controlled reconcile. Operátor zadá
+požadované unseal shares; dočasný root token sa po akcii revokuje. Rovnaký krok
+možno spustiť samostatne cez `sudo atlasctl openbao reconcile-runtime` alebo
+interaktívne cez `sudo atlasctl openbao`, voľbu
+`2. Reconcile Atlas backend roles`. Nová inštalácia identity pripraví v rámci
+bootstrapu. Bez identity bude import bezpečne odmietnutý; existujúci register
+zostáva dostupný.
+
+1. V NetBoxe pripravte zákazníka (Tenant) a jeho vlastnú management VRF.
+2. V Operations UI otvorte **Import FortiClient VPN** a nahrajte exportovaný
+   Windows XML/`.conf` alebo macOS `.plist`. Vyberte profil a typ súboru.
+3. Vyberte zákazníka a jeho VRF. Connection ID a názov sa navrhnú z profilu;
+   možno ich upraviť. Prefixy sa pri GUI importe nezadávajú: cieľové zariadenia
+   určí priradená Site a ich aktuálna management IP v NetBoxe. Zadajte VPN meno
+   a heslo. Pri formáte `EncX` zadajte
+   aj heslo použité pri exporte; `Enc` ho nevyžaduje. Klasický Windows
+   SSL-VPN profil s menom/heslom exportné heslo ani PSK nepotrebuje.
+4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
+   uložia do OpenBao, exportné heslo ani pôvodný súbor sa neukladajú. Plán a
+   odpoveď neobsahujú heslá. Súbor sa spracuje v pamäti a jeho limit je 2 MiB.
+5. Priradenie importovaného spojenia k Site urobte samostatne cez existujúci
+   **Assign VPN connections**. Pri Site scope má Site prednosť pred Device
+   override; Tenant a management VRF sa naďalej overujú. Import vytvorí záznam v stave `planned`, tunel
+   nepripája a nemení routing.
+6. V **Test VPN** vyberte zákazníka, spojenie, priradenú Site, aktívny Device a
+   management TCP port. Worker vytvorí tunel vo vlastnom network namespace,
+   oddelene zobrazí stav tunela a dostupnosť cieľa a následne tunel ukončí. Jeden
+   Atlas worker vykonáva najviac jeden takýto test súčasne.
+
+Pre IKEv2 je podporovaný iba overiteľný PSK export `Enc`/`EncX` a úzka
+podmnožina profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH
+skupiny 21). Pre SSL-VPN je podporovaný klasický Windows XML profil s
+username/password a voliteľným realmom. SSO/SAML, interaktívne MFA a
+certifikátová autentifikácia sa odmietnu.
+Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
+spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,
+vytvorte nový plán s rovnakými vstupmi a import zopakujte.
+
+## REST API
+
+Všetky endpointy vyžadujú existujúcu Atlas administrátorskú session alebo
+operator bearer token. `tenant_id` filter len obmedzuje zoznam; nenahrádza
+autorizáciu.
+
+| Metóda a cesta | Operácia |
+|---|---|
+| `GET /api/v1/vpn/forticlient/options` | Zákazníci a ich VRF pre import. |
+| `POST /api/v1/vpn/forticlient/inspect` | Bezpečný zoznam názvov profilov. |
+| `POST /api/v1/vpn/forticlient/plan` | Overenie a plán importu bez zobrazenia secretov. |
+| `POST /api/v1/vpn/forticlient/apply` | Potvrdenie nezmeneného plánu a uloženie do OpenBao. |
+| `GET /api/v1/vpn/connections` | Stránkovaný zoznam; `tenant_id`, `limit`, `offset`. |
+| `POST /api/v1/vpn/connections` | Vytvorenie po NetBox validácii. |
+| `GET /api/v1/vpn/connections/{connection_id}` | Detail bez secret obsahu. |
+| `PATCH /api/v1/vpn/connections/{connection_id}` | Konzistentná čiastočná aktualizácia. |
+| `DELETE /api/v1/vpn/connections/{connection_id}` | Kontrolovaná deaktivácia. |
+| `POST /api/v1/vpn/connections/{connection_id}/validate` | NetBox a OpenBao referencia. |
+| `GET /api/v1/vpn/devices/{device_id}/resolve` | Tenant-safe rozlíšenie zariadenia. |
+| `GET /api/v1/vpn/assignments/options` | Tenant-scoped spojenia, Sites a aktívne Devices pre GUI. |
+| `POST /api/v1/vpn/assignments/plan` | Secret-free dry-run Site alebo Device priradenia. |
+| `POST /api/v1/vpn/assignments/apply` | Aplikuje iba potvrdený a nezmenený assignment plán. |
+
+Príklad create payloadu:
+
+```json
+{
+  "connection_id": "customer-a-primary",
+  "name": "Customer A primary VPN",
+  "tenant_id": 10,
+  "vendor": "fortinet",
+  "protocol": "ssl-vpn",
+  "driver": "forticlient",
+  "gateway_host": "vpn.customer-a.example",
+  "gateway_port": 443,
+  "auth_method": "username_password",
+  "secret_ref": "vpn/connections/customer-a-primary",
+  "management_vrf_id": 30,
+  "allowed_prefixes": ["10.10.0.0/16"],
+  "administrative_status": "planned"
+}
+```
+
+## CLI
+
+```bash
+sudo atlasctl vpn list --tenant-id 10
+sudo atlasctl vpn show customer-a-primary
+sudo atlasctl vpn resolve --device-id 101 --tenant-id 10
+sudo atlasctl vpn validate customer-a-primary
+```
+
+`resolve` iba overuje mapovanie. `validate` kontroluje NetBox vlastníctvo a
+dostupnosť OpenBao referencie; nekontroluje VPN gateway ani tunel.
+
+## Kontrolované chyby
+
+Medzi stabilné reason codes patria `connection_not_found`,
+`connection_id_conflict`, `connection_tenant_mismatch`,
+`connection_vrf_mismatch`, `management_ip_outside_allowed_prefixes`,
+`management_vrf_tenant_mismatch`, `vpn_secret_not_found`,
+`vpn_secret_validation_unavailable`, `netbox_unavailable` a
+`vpn_registry_unavailable`. Validačné chyby vstupu používajú spoločný API kód
+`validation_error`.
+
+## Manuálna akceptácia na Ubuntu VM
+
+1. Nasaďte build a overte, že backend compose obsahuje mount
+   `/run/atlas/vpn` a premennú `ATLAS_VPN_REGISTRY_FILE`.
+2. V NetBoxe vytvorte dvoch Tenantov, každý s vlastnou management VRF a Site.
+   V oboch VRF možno použiť rovnakú management IP, napríklad
+   `192.168.1.10/24`.
+3. Autorizovaným `POST /api/v1/vpn/connections` vytvorte jedno spojenie pre
+   každý Tenant. Použite odlišné `connection_id`, Tenant ID a VRF ID.
+4. Do OpenBao KV v2 mountu `atlas/` manuálne zapíšte testovací secret na
+   `vpn/connections/<connection_id>`. Produkčný secret nevkladajte do shell
+   histórie ani JSON fixture.
+5. Na každom Site nastavte jeho `atlas_connection_id`; na jednom Device
+   voliteľne nastavte iný, tenant-owned override.
+6. Spustite `sudo atlasctl vpn list`, `show`, `validate` a `resolve`. Výstupy
+   nesmú obsahovať hodnotu hesla, PSK ani privátneho kľúča.
+7. Zmeňte Site mapping na connection druhého Tenanta. Resolver musí skončiť
+   `connection_tenant_mismatch`, nie fallbackom.
+8. Obnovte Tenant, ale nastavte nesprávnu VRF alebo prefix mimo management IP.
+   Resolver musí vrátiť `connection_vrf_mismatch`, respektíve
+   `management_ip_outside_allowed_prefixes`.
+9. Odstavte OpenBao a spustite `validate`. Registry záznam musí zostať čitateľný
+   a validácia musí skončiť kontrolovaným
+   `vpn_secret_validation_unavailable`.
+10. Zavolajte `DELETE` a overte, že záznam zostal zachovaný so stavom
+    `disabled`. Na hostiteľovi sa nesmie objaviť nové rozhranie, route ani VPN
+    proces.
+
+## Stav P2 a ďalšie rozšírenie
+
+Pridanie vendora v registri nesmie automaticky aktivovať klienta. Jednorazový
+P2 test už obsahuje explicitnú maticu podporovaných kombinácií, samostatnú
+read-only OpenBao AppRole a izolovaný worker pre strongSwan alebo openfortivpn.
+Ďalšia etapa musí doplniť:
+
+- stavový automat `connecting/connected/degraded/error`;
+- retry, reconnect, audit a health kontrakty;
+- integráciu konzumentov až po potvrdenom spojení.

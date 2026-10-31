@@ -5,15 +5,17 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261029-1">
-    <script src="/static/app.js?v=20261029-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261031-1">
+    <script src="/static/app.js?v=20261031-1" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
 
     <header class="topbar">
       <div class="brand" aria-label="Aricoma Atlas">
-        <span class="brand-mark" aria-hidden="true"><span></span></span>
+        <span class="brand-mark" aria-hidden="true">
+          <img src="/static/assets/aricoma-mark.png" alt="">
+        </span>
         <div>
           <p class="brand-name">ARICOMA ATLAS</p>
           <p class="brand-subtitle">Network Infrastructure Orchestrator</p>
@@ -121,8 +123,12 @@
           </div>
           <button id="cisco-test" class="button button-secondary" type="button">Test Cisco APIs</button>
           <button id="zabbix-sync" class="button button-primary" type="button" data-requires-component="zabbix">Sync Zabbix</button>
+          <button id="inventory-structure-open" class="button button-primary" type="button">Manage tenants &amp; sites</button>
           <button id="inventory-import-open" class="button button-primary" type="button">Import devices</button>
           <button id="credential-onboarding-open" class="button button-primary" type="button">Onboard credentials</button>
+          <button id="vpn-assignment-open" class="button button-primary" type="button">Assign VPN connections</button>
+          <button id="vpn-import-open" class="button button-primary" type="button">Import FortiClient VPN</button>
+          <button id="vpn-test-open" class="button button-primary" type="button">Test VPN</button>
         </div>
         <p id="operator-result" class="operator-result" aria-live="polite">No operator action has been run.</p>
       </section>
@@ -338,21 +344,70 @@
       </section>
     </main>
 
+    <dialog id="vpn-import-dialog" class="inventory-dialog vpn-import-dialog" aria-labelledby="vpn-import-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading"><div>
+          <p class="section-kicker">VPN profile</p>
+          <h2 id="vpn-import-title">Import FortiClient VPN</h2>
+          <p>Choose the exported profile and its customer. Atlas saves the credentials securely in OpenBao.</p>
+        </div><button id="vpn-import-close" class="dialog-close" type="button" aria-label="Close VPN import">×</button></header>
+        <p id="vpn-import-message" class="vpn-import-notice" role="status" aria-live="polite">Import saves the profile; it does not connect the VPN.</p>
+        <fieldset id="vpn-import-fields" class="vpn-import-fields">
+          <section class="vpn-import-section" aria-labelledby="vpn-import-profile-heading">
+            <div class="vpn-import-section-heading"><span>1</span><div><h3 id="vpn-import-profile-heading">VPN profile</h3><p>Select a FortiClient export and the profile inside it.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-format">Profile format</label><select id="vpn-import-format"><option value="windows-xml">Windows FortiClient XML (.conf)</option><option value="macos-plist">macOS FortiClient plist</option></select></div>
+              <div class="field-group"><label for="vpn-import-file">Profile file</label><input id="vpn-import-file" type="file" accept=".conf,.xml,.plist"></div>
+              <div class="field-group"><label for="vpn-import-profile">VPN profile</label><select id="vpn-import-profile"><option value="">Choose a file first</option></select></div>
+              <div class="field-group"><label for="vpn-import-export-password">Export password <span class="vpn-optional">if required</span></label><input id="vpn-import-export-password" type="password" autocomplete="new-password" aria-describedby="vpn-export-help"><small id="vpn-export-help">Password used when the FortiClient profile was exported (EncX).</small></div>
+            </div>
+          </section>
+          <section class="vpn-import-section" aria-labelledby="vpn-import-customer-heading">
+            <div class="vpn-import-section-heading"><span>2</span><div><h3 id="vpn-import-customer-heading">Customer and network</h3><p>Choose the customer and their management VRF from NetBox. Assign the saved profile to a Site in the next step.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-tenant">Customer</label><select id="vpn-import-tenant"><option value="">Select a customer</option></select></div>
+              <div class="field-group"><label for="vpn-import-vrf">Management VRF</label><select id="vpn-import-vrf"><option value="">Select a customer first</option></select></div>
+            </div>
+          </section>
+          <section class="vpn-import-section" aria-labelledby="vpn-import-login-heading">
+            <div class="vpn-import-section-heading"><span>3</span><div><h3 id="vpn-import-login-heading">VPN sign-in</h3><p>Enter the account used to connect to this VPN.</p></div></div>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-username">VPN username</label><input id="vpn-import-username" autocomplete="off"></div>
+              <div class="field-group"><label for="vpn-import-password">VPN password</label><input id="vpn-import-password" type="password" autocomplete="new-password"></div>
+            </div>
+          </section>
+          <details id="vpn-import-advanced" class="vpn-import-advanced"><summary>Connection details <span>generated from the profile</span></summary>
+            <div class="inventory-fields">
+              <div class="field-group"><label for="vpn-import-id">Connection ID</label><input id="vpn-import-id" placeholder="customer-vpn" autocomplete="off" aria-describedby="vpn-id-help"><small id="vpn-id-help">Unique ID: lowercase letters, numbers and hyphens.</small></div>
+              <div class="field-group"><label for="vpn-import-name">Connection name</label><input id="vpn-import-name" autocomplete="off"></div>
+            </div>
+          </details>
+        </fieldset>
+        <div id="vpn-import-activity" class="inventory-activity" role="status" aria-live="polite" hidden><span class="monitoring-spinner" aria-hidden="true"></span><div><strong id="vpn-import-activity-title">Working…</strong><p id="vpn-import-activity-detail">Please wait.</p></div></div>
+        <div id="vpn-import-review" class="vpn-import-review" aria-live="polite" hidden></div>
+        <div class="vpn-import-actions"><button id="vpn-import-assign" class="button button-secondary" type="button" hidden>Assign to Sites</button><button id="vpn-import-plan" class="button button-secondary" type="button">Review import</button><button id="vpn-import-apply" class="button button-primary" type="button" disabled>Save profile</button></div>
+      </div>
+    </dialog>
+
     <dialog id="credential-onboarding-dialog" class="inventory-dialog" aria-labelledby="credential-onboarding-title">
       <div class="dialog-shell">
         <header class="dialog-heading">
           <div>
             <p class="section-kicker">OpenBao and NetBox</p>
             <h2 id="credential-onboarding-title">Onboard device credentials</h2>
-            <p>Select one or more devices from the same manufacturer, choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
+            <p>Select one tenant, then one or more devices from the same manufacturer. Choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
           </div>
           <button id="credential-onboarding-close" class="dialog-close" type="button" aria-label="Close credential window">×</button>
         </header>
 
         <div class="inventory-fields">
           <div class="field-group">
+            <label for="credential-tenant">Tenant</label>
+            <select id="credential-tenant"><option value="">Select a tenant</option></select>
+          </div>
+          <div class="field-group">
             <label for="credential-manufacturer">Manufacturer</label>
-            <select id="credential-manufacturer"><option value="">Select a manufacturer</option></select>
+            <select id="credential-manufacturer" disabled><option value="">Select a tenant first</option></select>
           </div>
           <div class="field-group">
             <label for="credential-platform">Platform</label>
@@ -375,8 +430,8 @@
             <span id="credential-device-count" class="field-help">0 selected</span>
           </div>
           <input id="credential-device-filter" type="search" autocomplete="off" placeholder="Filter devices by name">
-          <div id="credential-device-list" class="credential-device-list" role="group" aria-label="Devices from the selected manufacturer">
-            <p class="field-help">Select a manufacturer first.</p>
+          <div id="credential-device-list" class="credential-device-list" role="group" aria-label="Devices from the selected tenant and manufacturer">
+            <p class="field-help">Select a tenant first.</p>
           </div>
         </div>
 
@@ -466,11 +521,15 @@
         <div class="inventory-fields">
           <div class="field-group">
             <label for="inventory-tenant">Tenant override <span class="field-optional">optional</span></label>
-            <input id="inventory-tenant" type="text" maxlength="200" placeholder="Use table or configured default">
+            <select id="inventory-tenant">
+              <option value="">Use table or configured default</option>
+            </select>
           </div>
           <div class="field-group">
             <label for="inventory-site">Site override <span class="field-optional">optional</span></label>
-            <input id="inventory-site" type="text" maxlength="200" placeholder="Use table or configured default">
+            <select id="inventory-site" disabled>
+              <option value="">Select a tenant to override site</option>
+            </select>
           </div>
         </div>
 
@@ -561,6 +620,161 @@
           </label>
           <div class="dialog-actions">
             <button id="inventory-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
+          </div>
+        </section>
+      </div>
+    </dialog>
+
+    <dialog id="inventory-structure-dialog" class="inventory-dialog" aria-labelledby="inventory-structure-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">NetBox ownership</p>
+            <h2 id="inventory-structure-title">Manage tenants and sites</h2>
+            <p>Create a dry-run plan first, review the exact operation, then explicitly apply it.</p>
+          </div>
+          <button id="inventory-structure-close" class="dialog-close" type="button" aria-label="Close tenant and site window">×</button>
+        </header>
+        <div class="inventory-fields">
+          <div class="field-group">
+            <label for="inventory-structure-kind">Object type</label>
+            <select id="inventory-structure-kind">
+              <option value="tenant">Tenant</option>
+              <option value="site">Site</option>
+            </select>
+          </div>
+          <div id="inventory-structure-tenant-field" class="field-group" hidden>
+            <label for="inventory-structure-tenant">Tenant</label>
+            <select id="inventory-structure-tenant"></select>
+          </div>
+          <div class="field-group">
+            <label for="inventory-structure-name">Name</label>
+            <input id="inventory-structure-name" type="text" maxlength="100" autocomplete="off" required>
+          </div>
+          <div id="inventory-structure-slug-field" class="field-group">
+            <label for="inventory-structure-slug">Tenant slug <span class="field-optional">optional</span></label>
+            <input id="inventory-structure-slug" type="text" maxlength="100" pattern="[a-z0-9]+(?:-[a-z0-9]+)*" placeholder="Generated from name">
+          </div>
+          <div id="inventory-structure-group-field" class="field-group">
+            <label for="inventory-structure-group">Tenant group <span class="field-optional">optional</span></label>
+            <input id="inventory-structure-group" type="text" maxlength="100" placeholder="customers or internal">
+          </div>
+        </div>
+        <p id="inventory-structure-result" class="operator-result" aria-live="polite">No plan created.</p>
+        <label class="confirmation-row">
+          <input id="inventory-structure-confirm" type="checkbox" disabled>
+          I reviewed this exact plan and authorize the NetBox change.
+        </label>
+        <div class="dialog-actions">
+          <button id="inventory-structure-plan" class="button button-secondary" type="button">Create dry-run plan</button>
+          <button id="inventory-structure-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
+        </div>
+      </div>
+    </dialog>
+
+    <dialog id="vpn-test-dialog" class="inventory-dialog" aria-labelledby="vpn-test-title">
+      <div class="dialog-shell vpn-test-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">Isolated connectivity check</p>
+            <h2 id="vpn-test-title">Test VPN</h2>
+            <p>Atlas connects the selected VPN inside its isolated worker, checks one assigned device, and always disconnects.</p>
+          </div>
+          <button id="vpn-test-close" class="dialog-close" type="button" aria-label="Close VPN test">×</button>
+        </header>
+        <p id="vpn-test-message" class="vpn-import-notice" role="status" aria-live="polite">Choose a customer, VPN, assigned Site and proof device.</p>
+        <div class="inventory-fields">
+          <div class="field-group"><label for="vpn-test-tenant">Customer</label><select id="vpn-test-tenant"><option value="">Select a customer</option></select></div>
+          <div class="field-group"><label for="vpn-test-connection">VPN connection</label><select id="vpn-test-connection" disabled><option value="">Select a customer first</option></select></div>
+          <div class="field-group"><label for="vpn-test-site">Assigned Site</label><select id="vpn-test-site" disabled><option value="">Select a VPN first</option></select></div>
+          <div class="field-group"><label for="vpn-test-device">Proof device</label><select id="vpn-test-device" disabled><option value="">Select a Site first</option></select></div>
+          <div class="field-group"><label for="vpn-test-port">TCP port</label><input id="vpn-test-port" type="number" min="1" max="65535" value="22"><small>Use a management port known to answer, for example SSH 22 or HTTPS 443.</small></div>
+        </div>
+        <div id="vpn-test-activity" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span>
+          <div><strong>Testing VPN connectivity</strong><p>Connecting, checking the target, then disconnecting. This can take up to one minute.</p></div>
+        </div>
+        <section id="vpn-test-result" class="vpn-test-result" aria-live="polite" hidden>
+          <div class="inventory-summary-heading"><div><p class="section-kicker">Test result</p><h3 id="vpn-test-result-title">VPN test finished</h3></div><span id="vpn-test-status" class="status-pill status-pill-neutral">Unknown</span></div>
+          <dl class="vpn-test-evidence">
+            <div><dt>Tunnel</dt><dd id="vpn-test-tunnel">Not checked</dd></div>
+            <div><dt>Target</dt><dd id="vpn-test-target">Not checked</dd></div>
+            <div><dt>Assigned address</dt><dd id="vpn-test-address">—</dd></div>
+            <div><dt>Cleanup</dt><dd id="vpn-test-cleanup">Not checked</dd></div>
+          </dl>
+          <p id="vpn-test-detail" class="operator-result"></p>
+        </section>
+        <div class="dialog-actions"><button id="vpn-test-run" class="button button-primary" type="button" disabled>Connect, test and disconnect</button></div>
+      </div>
+    </dialog>
+
+    <dialog id="vpn-assignment-dialog" class="inventory-dialog" aria-labelledby="vpn-assignment-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">NetBox VPN mapping</p>
+            <h2 id="vpn-assignment-title">Assign VPN connections</h2>
+            <p>Select a customer and VPN, then choose the Sites that use it. Devices in each selected Site inherit the Site connection.</p>
+          </div>
+          <button id="vpn-assignment-close" class="dialog-close" type="button" aria-label="Close VPN assignment window">×</button>
+        </header>
+
+        <div class="inventory-fields">
+          <div class="field-group">
+            <label for="vpn-assignment-tenant">Tenant</label>
+            <select id="vpn-assignment-tenant"><option value="">Select a tenant</option></select>
+          </div>
+          <div class="field-group">
+            <label for="vpn-assignment-connection">VPN connection</label>
+            <select id="vpn-assignment-connection" disabled><option value="">Select a tenant first</option></select>
+          </div>
+          <div class="field-group">
+            <label for="vpn-assignment-target-type">Assignment scope</label>
+            <select id="vpn-assignment-target-type" disabled>
+              <option value="site">Sites (recommended)</option>
+              <option value="device">Device overrides</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="credential-device-picker">
+          <div class="field-label-row">
+            <label for="vpn-assignment-filter">Targets</label>
+            <span id="vpn-assignment-count" class="field-help">0 selected</span>
+          </div>
+          <div class="inventory-fields vpn-assignment-filter-row">
+            <input id="vpn-assignment-filter" type="search" autocomplete="off" placeholder="Filter Sites by name" disabled>
+            <button id="vpn-assignment-select-all" class="button button-secondary" type="button" disabled>Select all Sites</button>
+          </div>
+          <div id="vpn-assignment-targets" class="credential-device-list" role="group" aria-label="VPN assignment targets">
+            <p class="field-help">Select a tenant first.</p>
+          </div>
+        </div>
+
+        <div class="dialog-actions dialog-actions-plan">
+          <button id="vpn-assignment-plan" class="button button-primary" type="button" disabled>Create dry-run plan</button>
+        </div>
+        <div id="vpn-assignment-activity" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span>
+          <div><strong>Processing VPN assignment</strong><p>Atlas is validating Tenant ownership and current NetBox mappings.</p></div>
+        </div>
+        <section id="vpn-assignment-plan-result" class="inventory-plan-result" aria-live="polite" hidden>
+          <div class="inventory-summary-heading">
+            <div><p class="section-kicker">Dry-run result</p><h3>Review VPN mapping changes</h3></div>
+            <span id="vpn-assignment-plan-status" class="status-pill status-pill-neutral">Not planned</span>
+          </div>
+          <div class="table-wrap inventory-results-table">
+            <table aria-label="VPN assignment plan">
+              <thead><tr><th>Target</th><th>Current connection</th><th>Desired connection</th><th>Action</th></tr></thead>
+              <tbody id="vpn-assignment-operations"></tbody>
+            </table>
+          </div>
+          <label class="confirmation-row inventory-apply-confirmation">
+            <input id="vpn-assignment-confirm" type="checkbox" disabled>
+            I reviewed this exact plan and authorize the NetBox changes.
+          </label>
+          <div class="dialog-actions">
+            <button id="vpn-assignment-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
           </div>
         </section>
       </div>

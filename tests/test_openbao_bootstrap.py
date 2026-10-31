@@ -1,10 +1,11 @@
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import DEFAULT, Mock, call, patch
 
-from scripts import openbao_access
+from scripts import deploy_atlas, openbao_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -42,6 +43,10 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 'path "atlas/data/integrations/cisco/support-api" {\n'
                 '  capabilities = ["read"]\n'
                 '}\n\n'
+                '# P1 validates only KV metadata. Secret data is reserved for a future worker.\n'
+                'path "atlas/metadata/vpn/connections/*" {\n'
+                '  capabilities = ["read"]\n'
+                '}\n\n'
                 '# Authenticate Atlas administrators. Password hashes remain in OpenBao and are\n'
                 '# never materialized into the backend container filesystem.\n'
                 'path "atlas/data/auth/local/users/*" {\n'
@@ -61,6 +66,7 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             "redis",
             "atlas-deployer",
             'atlas/data/integrations/*',
+            'atlas/data/vpn/connections',
         ):
             self.assertNotIn(forbidden, policy.lower())
 
@@ -94,6 +100,24 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             ".runtime/",
             (ROOT / ".gitignore").read_text(encoding="utf-8").splitlines(),
         )
+
+    def test_vpn_writer_is_limited_to_one_connection_leaf(self):
+        spec = deploy_openbao.RUNTIME_ROLES['atlas-vpn-profile-writer']
+        self.assertEqual(spec['identity_file'], ROOT / '.runtime/openbao-vpn-profile-writer.json')
+        policy = spec['policy_file'].read_text(encoding='utf-8')
+        self.assertIn('atlas/data/vpn/connections/+', policy)
+        self.assertIn('"create", "read", "update"', policy)
+        self.assertNotIn('"delete"', policy)
+        self.assertNotIn('"list"', policy)
+
+    def test_vpn_worker_can_only_read_connection_leaves(self):
+        spec = deploy_openbao.RUNTIME_ROLES["atlas-vpn-worker"]
+        self.assertEqual(spec["identity_file"], ROOT / ".runtime/openbao-vpn-worker.json")
+        policy = spec["policy_file"].read_text(encoding="utf-8")
+        self.assertIn("atlas/data/vpn/connections/+", policy)
+        self.assertIn('capabilities = ["read"]', policy)
+        for capability in ('"create"', '"update"', '"delete"', '"list"'):
+            self.assertNotIn(capability, policy)
 
     def test_deployer_cannot_read_admin_recovery_password(self):
         policy = (
@@ -197,6 +221,8 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             set(deploy_openbao.RUNTIME_ROLES),
             {
                 "atlas-credential-writer",
+                "atlas-vpn-profile-writer",
+                "atlas-vpn-worker",
                 "atlas-monitoring-provisioner",
                 "atlas-backend",
                 "netbox-runtime",
@@ -259,6 +285,8 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                 call("temporary-root", "atlas-backend"),
                 call("temporary-root", "atlas-monitoring-provisioner"),
                 call("temporary-root", "atlas-credential-writer"),
+                call("temporary-root", "atlas-vpn-profile-writer"),
+                call("temporary-root", "atlas-vpn-worker"),
             ],
         )
 
@@ -268,6 +296,100 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             return_value=False,
         ):
             self.assertFalse(openbao_access.reconcile_backend_policy(client))
+
+    def test_noninteractive_runtime_reconcile_command(self):
+        client = object()
+        with patch.object(
+            openbao_access,
+            "OpenBaoClient",
+            return_value=client,
+        ) as client_factory, patch.object(
+            openbao_access,
+            "reconcile_backend_policy",
+            return_value=True,
+        ) as reconcile, patch.object(
+            openbao_access.sys,
+            "argv",
+            ["openbao_access.py", "--reconcile-runtime-roles"],
+        ):
+            openbao_access.main()
+
+        client_factory.assert_called_once_with(openbao_access.OPENBAO_URL)
+        reconcile.assert_called_once_with(client)
+
+    def test_cancelled_noninteractive_runtime_reconcile_fails(self):
+        with patch.object(
+            openbao_access,
+            "OpenBaoClient",
+            return_value=object(),
+        ), patch.object(
+            openbao_access,
+            "reconcile_backend_policy",
+            return_value=False,
+        ), patch.object(
+            openbao_access.sys,
+            "argv",
+            ["openbao_access.py", "--reconcile-runtime-roles"],
+        ), self.assertRaises(SystemExit) as raised:
+            openbao_access.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_deploy_detects_missing_or_symlinked_runtime_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = root / "valid.json"
+            valid.write_text("{}\n", encoding="utf-8")
+            missing = root / "missing.json"
+            symlink = root / "link.json"
+            symlink.symlink_to(valid)
+
+            with patch.object(
+                deploy_atlas,
+                "OPENBAO_BACKEND_RUNTIME_IDENTITIES",
+                {
+                    "valid": valid,
+                    "missing": missing,
+                    "symlink": symlink,
+                },
+            ):
+                result = deploy_atlas.missing_openbao_runtime_identities()
+
+        self.assertEqual(result, ("missing", "symlink"))
+
+    def test_deploy_reconciles_missing_runtime_identity_before_readiness(self):
+        with patch.object(
+            deploy_atlas,
+            "missing_openbao_runtime_identities",
+            side_effect=[("atlas-vpn-worker",), ()],
+        ), patch.object(deploy_atlas, "run_script") as run_script, patch.object(
+            deploy_atlas,
+            "info",
+        ) as info:
+            changed = deploy_atlas.reconcile_missing_openbao_runtime_identities()
+
+        self.assertTrue(changed)
+        info.assert_called_once_with(
+            "OpenBao runtime identity reconciliation required: atlas-vpn-worker"
+        )
+        run_script.assert_called_once_with(
+            deploy_atlas.OPENBAO_ACCESS_SCRIPT,
+            ["--reconcile-runtime-roles"],
+        )
+
+    def test_deploy_reconcile_rejects_identity_that_remains_missing(self):
+        with patch.object(
+            deploy_atlas,
+            "missing_openbao_runtime_identities",
+            side_effect=[("atlas-vpn-worker",), ("atlas-vpn-worker",)],
+        ), patch.object(deploy_atlas, "run_script"), patch.object(
+            deploy_atlas,
+            "info",
+        ), self.assertRaisesRegex(
+            RuntimeError,
+            "did not create: atlas-vpn-worker",
+        ):
+            deploy_atlas.reconcile_missing_openbao_runtime_identities()
 
     def test_controlled_root_action_revokes_token_after_failure(self):
         client = Mock()
@@ -325,6 +447,8 @@ class OpenBaoBootstrapTests(unittest.TestCase):
 
     def test_existing_install_may_lack_only_the_new_backend_identity(self):
         identities = {
+            "atlas-vpn-worker": None,
+            "atlas-vpn-profile-writer": None,
             "atlas-credential-writer": None,
             "atlas-monitoring-provisioner": None,
             "atlas-backend": None,
@@ -342,6 +466,8 @@ class OpenBaoBootstrapTests(unittest.TestCase):
                     "atlas-backend",
                     "atlas-monitoring-provisioner",
                     "atlas-credential-writer",
+                    "atlas-vpn-profile-writer",
+                    "atlas-vpn-worker",
                 },
             )
 

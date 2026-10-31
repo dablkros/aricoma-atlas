@@ -11,6 +11,12 @@ backend:
   prophylaxis_result_retention: 10000
   prophylaxis_concurrency: 4
 
+vpn_worker:
+  docker_image: "aricoma-atlas-vpn-worker:0.4.3"
+  dockerfile: "deployment/vpn/Dockerfile"
+  connect_timeout: 45
+  target_timeout: 5
+
 runtime:
   directory: ".runtime/backend"
   compose_project: "atlas-backend"
