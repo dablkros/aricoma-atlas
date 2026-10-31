@@ -19,6 +19,7 @@ RUN patch -p1 < /tmp/network-id.patch \
     && ./configure \
        --prefix=/usr/local \
        --sysconfdir=/usr/local/etc \
+       --with-systemdsystemunitdir=/usr/local/lib/systemd/system \
        --enable-systemd \
        --enable-swanctl \
        --enable-eap-identity \

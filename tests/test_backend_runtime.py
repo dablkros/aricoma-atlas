@@ -950,6 +950,17 @@ class BackendImageDefinitionTests(unittest.TestCase):
         self.assertIn("COPY --chown=atlas:atlas scripts /app/scripts", dockerfile)
         self.assertIn("--no-access-log", dockerfile)
 
+    def test_vpn_worker_systemd_unit_directory_is_explicit(self):
+        dockerfile = (ROOT / "deployment/vpn/Dockerfile").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("--enable-systemd", dockerfile)
+        self.assertIn(
+            "--with-systemdsystemunitdir=/usr/local/lib/systemd/system",
+            dockerfile,
+        )
+
 
 class InstallerContractTests(unittest.TestCase):
     def test_installer_requires_python_312_and_supported_ubuntu_releases(self):
