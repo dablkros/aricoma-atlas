@@ -553,12 +553,9 @@ class InventoryImporterTests(unittest.TestCase):
         device["platform"] = {"id": 31, "slug": "cisco-aci"}
         self.device_type["default_platform"] = None
         self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
-        self.client.objects["/api/dcim/device-roles/"].append({
-            "id": 41, "name": "Switch", "slug": "switch",
-        })
 
         report = self.importer.import_rows([
-            self.row(platform="cisco-nxos"),
+            self.row(platform="cisco-nxos", device_role="network-device"),
         ], apply=True)
 
         self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
