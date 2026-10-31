@@ -221,7 +221,11 @@ def validate_config(raw):
     worker_dockerfile = Path(vpn_worker["dockerfile"])
     if worker_dockerfile.is_absolute() or ".." in worker_dockerfile.parts:
         raise ValueError("vpn_worker.dockerfile must be a safe repository-relative path")
-    for field, minimum, maximum in (("connect_timeout", 10, 120), ("target_timeout", 1, 30)):
+    for field, minimum, maximum in (
+        ("connect_timeout", 10, 120),
+        ("mfa_timeout", 30, 300),
+        ("target_timeout", 1, 30),
+    ):
         value = vpn_worker.get(field)
         if isinstance(value, bool) or not isinstance(value, int) or not minimum <= value <= maximum:
             raise ValueError(f"vpn_worker.{field} must be an integer from {minimum} to {maximum}")
@@ -777,7 +781,14 @@ def prepare_runtime(
         "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
         "ATLAS_VPN_WORKER_URL": "http://vpn-worker:8090",
         "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
-        "ATLAS_VPN_WORKER_TIMEOUT": str(config["vpn_worker"]["connect_timeout"] + config["vpn_worker"]["target_timeout"] + 20),
+        "ATLAS_VPN_WORKER_TIMEOUT": str(
+            max(
+                config["vpn_worker"]["connect_timeout"],
+                config["vpn_worker"]["mfa_timeout"],
+            )
+            + config["vpn_worker"]["target_timeout"]
+            + 20
+        ),
         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(backend["prophylaxis_result_retention"]),
         "ATLAS_PROPHYLAXIS_CONCURRENCY": str(backend["prophylaxis_concurrency"]),
         "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
@@ -861,6 +872,7 @@ def prepare_runtime(
                         "ATLAS_VPN_WORKER_IDENTITY_FILE": "/run/secrets/atlas-vpn-worker.json",
                         "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
                         "ATLAS_VPN_CONNECT_TIMEOUT": str(config["vpn_worker"]["connect_timeout"]),
+                        "ATLAS_VPN_MFA_TIMEOUT": str(config["vpn_worker"]["mfa_timeout"]),
                         "ATLAS_VPN_TARGET_TIMEOUT": str(config["vpn_worker"]["target_timeout"]),
                     },
                     "volumes": [

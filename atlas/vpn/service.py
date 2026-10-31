@@ -247,6 +247,7 @@ class VPNRegistryService:
                     "name": connection.name,
                     "administrative_status": connection.administrative_status,
                     "management_vrf_id": connection.management_vrf_id,
+                    "auth_method": connection.auth_method,
                 }
                 for connection in connections.items
                 if connection.administrative_status != "disabled"

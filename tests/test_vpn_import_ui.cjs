@@ -7,7 +7,8 @@ const path = require('node:path');
 class Element {
   constructor() {
     this.value = ''; this.dataset = {}; this.files = []; this.disabled = false;
-    this.hidden = true; this.open = false; this.attributes = {}; this.listeners = {};
+    this.hidden = true; this.open = false; this.checked = false;
+    this.attributes = {}; this.listeners = {};
     this.classList = { toggle: () => {} };
   }
   addEventListener(type, fn) { (this.listeners[type] ||= []).push(fn); }
@@ -51,6 +52,7 @@ vm.runInContext(app.slice(start, end), context);
   assert.equal(select('name').value, 'VPN_Viena');
   select('tenant').value = '1'; select('vrf').value = '30';
   select('username').value = 'person'; select('password').value = 'secret';
+  select('mfa').checked = true;
   vm.runInContext("vpnImport.data = 'ZW5jb2RlZA=='", context);
   select('id').value = 'minedu-VPN';
   await vm.runInContext('planVPNImport()', context);
@@ -63,14 +65,16 @@ vm.runInContext(app.slice(start, end), context);
   assert.equal(select('activity').hidden, false);
   assert.equal(select('plan').disabled, true);
   assert.deepEqual(Array.from(payload.allowed_prefixes), []);
+  assert.equal(payload.external_mfa, true);
   settlePlan({tenant_id:1,management_vrf_id:30,gateway:'vpn.example',port:500,network_id:11,
-    allowed_prefixes:[],registry_action:'create',secret_action:'create',apply_allowed:true,plan_hash:'a'.repeat(64)});
+    allowed_prefixes:[],external_mfa:true,registry_action:'create',secret_action:'create',apply_allowed:true,plan_hash:'a'.repeat(64)});
   await promise;
   assert.equal(select('activity').hidden, true);
   assert.equal(select('apply').disabled, false);
   await vm.runInContext('applyVPNImport()', context);
   assert.equal(select('assign').hidden, false);
   assert.equal(select('password').value, '');
+  assert.equal(select('mfa').checked, false);
   assert.match(select('message').textContent, /not been connected/);
   console.log('VPN import state, validation, progress and Site handoff passed');
 })().catch(error => { console.error(error); process.exitCode = 1; });

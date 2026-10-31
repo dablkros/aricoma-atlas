@@ -141,6 +141,7 @@ class VPNConnectivityTestService:
             "gateway_port": connection.gateway_port or 500,
             "driver": connection.driver,
             "protocol": connection.protocol,
+            "external_mfa": connection.auth_method == "external_mfa",
             "target_ip": resolved["management_ip"],
             "target_port": target_port,
         }

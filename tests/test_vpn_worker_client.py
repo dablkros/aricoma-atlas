@@ -73,9 +73,20 @@ class VPNConnectivityServiceTests(unittest.TestCase):
 
         self.assertEqual(worker.payload["target_ip"], "10.0.0.10")
         self.assertEqual(worker.payload["secret_ref"], "vpn/connections/customer-vpn")
+        self.assertFalse(worker.payload["external_mfa"])
         self.assertNotIn("password", worker.payload)
         self.assertEqual(worker.request_id, "request-123")
         self.assertEqual(result.status, "passed")
+
+    def test_external_mfa_metadata_is_forwarded_without_secret_material(self):
+        worker = Worker()
+        record = connection(auth_method="external_mfa")
+        VPNConnectivityTestService(Registry(record=record), worker).run(
+            "customer-vpn", device_id=7, target_port=22,
+        )
+
+        self.assertTrue(worker.payload["external_mfa"])
+        self.assertNotIn("password", worker.payload)
         self.assertTrue(result.disconnected)
 
     def test_supports_classic_ssl_vpn_driver(self):

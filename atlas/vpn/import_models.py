@@ -20,6 +20,7 @@ class ProfileImportRequest(ProfileInspectRequest):
     tenant_id: int = Field(gt=0)
     management_vrf_id: int = Field(gt=0)
     allowed_prefixes: list[str] = Field(default_factory=list, max_length=128)
+    external_mfa: bool = False
     plan_hash: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')
 
     @field_validator('username', 'password', 'export_password')

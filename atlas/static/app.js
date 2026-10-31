@@ -2580,6 +2580,7 @@ const vpnImport = {
   name: document.querySelector('#vpn-import-name'),
   username: document.querySelector('#vpn-import-username'),
   password: document.querySelector('#vpn-import-password'),
+  mfa: document.querySelector('#vpn-import-mfa'),
   assign: document.querySelector('#vpn-import-assign'),
   planButton: document.querySelector('#vpn-import-plan'),
   apply: document.querySelector('#vpn-import-apply'),
@@ -2731,7 +2732,7 @@ function vpnImportPayload() {
     username: vpnImport.username.value, password: vpnImport.password.value,
     connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
     tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
-    allowed_prefixes: [],
+    allowed_prefixes: [], external_mfa: vpnImport.mfa.checked,
   };
 }
 
@@ -2748,7 +2749,8 @@ async function planVPNImport() {
     if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
     vpnImport.plan = result;
     const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
-    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    const mfa = result.external_mfa ? '; push MFA: enabled' : '';
+    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
     vpnImportMessage('Review the settings, then save the profile.');
@@ -2793,6 +2795,7 @@ async function applyVPNImport() {
     vpnImport.exportPassword.value = '';
     vpnImport.username.value = '';
     vpnImport.password.value = '';
+    vpnImport.mfa.checked = false;
     vpnImport.data = null;
     vpnImport.file.value = '';
     resetVPNImportPlan();
@@ -2815,6 +2818,7 @@ vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport
 vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
 vpnImport.dialog.addEventListener('close', () => {
   vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
+  vpnImport.mfa.checked = false;
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
 vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
@@ -2822,7 +2826,8 @@ vpnImport.format.addEventListener('change', inspectVPNImportFile);
 vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
 vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
 for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
-                     vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password]) {
+                     vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password,
+                     vpnImport.mfa]) {
   const changed = () => { field.removeAttribute('aria-invalid'); resetVPNImportPlan(); };
   field.addEventListener('input', changed);
   field.addEventListener('change', changed);
@@ -2977,13 +2982,25 @@ async function runVPNTest() {
   resetVPNTestResult();
   updateVPNTestRun();
   elements.vpnTestActivity.hidden = false;
-  elements.vpnTestActivityTitle.textContent = "Waiting for the isolated VPN worker";
-  elements.vpnTestActivityDetail.textContent = "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
-  elements.vpnTestMessage.textContent = "The worker is connecting and will disconnect automatically after the check.";
+  const selectedConnection = (state.vpnTestOptions?.connections || []).find(
+    (item) => item.connection_id === elements.vpnTestConnection.value,
+  );
+  const usesMfa = selectedConnection?.auth_method === "external_mfa";
+  elements.vpnTestActivityTitle.textContent = usesMfa
+    ? "Waiting for MFA approval"
+    : "Waiting for the isolated VPN worker";
+  elements.vpnTestActivityDetail.textContent = usesMfa
+    ? "Approve the VPN push notification · 0 s elapsed. Atlas will wait up to two minutes."
+    : "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
+  elements.vpnTestMessage.textContent = usesMfa
+    ? "Approve the MFA push notification. Atlas will test the device and disconnect automatically."
+    : "The worker is connecting and will disconnect automatically after the check.";
   const startedAt = Date.now();
   const activityTimer = window.setInterval(() => {
     const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    elements.vpnTestActivityDetail.textContent = `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
+    elements.vpnTestActivityDetail.textContent = usesMfa
+      ? `Approve the VPN push notification · ${elapsed} s elapsed. Atlas is waiting for authentication.`
+      : `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
   }, 1000);
   const connectionId = elements.vpnTestConnection.value;
   try {
@@ -3001,7 +3018,9 @@ async function runVPNTest() {
     elements.vpnTestTunnel.textContent = result.tunnel_established ? "IKE and CHILD SA established" : "Not established";
     elements.vpnTestTarget.textContent = result.target_reachable
       ? `${result.target_ip}:${result.target_port} reachable`
-      : `${result.target_ip}:${result.target_port} did not answer`;
+      : result.tunnel_established
+        ? `${result.target_ip}:${result.target_port} did not answer`
+        : "Not tested — tunnel was not established";
     elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
     elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
     elements.vpnTestDetail.textContent = `${result.message} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;

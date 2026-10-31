@@ -13,7 +13,7 @@ from atlas.vpn.forticlient_profile import (
     decode_macos_enc, decode_windows_encx, parse_forticlient_any_profile,
 )
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
-from atlas.vpn.models import VPNConnectionCreate
+from atlas.vpn.models import VPNConnectionCreate, VPNConnectionPatch
 from atlas.vpn.service import VPNRegistryError
 from atlas.vpn.strongswan_config import VPNSecrets, validate_profile
 
@@ -94,7 +94,7 @@ class VPNProfileImportService:
                     connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
                     vendor='fortinet', protocol='ssl-vpn', driver='openfortivpn',
                     gateway_host=p.gateway, gateway_port=p.gateway_port,
-                    auth_method='username_password',
+                    auth_method=('external_mfa' if body.external_mfa else 'username_password'),
                     secret_ref=f'vpn/connections/{body.connection_id}',
                     management_vrf_id=body.management_vrf_id,
                     allowed_prefixes=body.allowed_prefixes, administrative_status='planned',
@@ -117,7 +117,8 @@ class VPNProfileImportService:
             record = VPNConnectionCreate(
                 connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
                 vendor='fortinet', protocol='ipsec-ikev2', driver='strongswan',
-                gateway_host=p.gateway, gateway_port=p.gateway_port, auth_method='psk',
+                gateway_host=p.gateway, gateway_port=p.gateway_port,
+                auth_method=('external_mfa' if body.external_mfa else 'psk'),
                 secret_ref=f'vpn/connections/{body.connection_id}',
                 management_vrf_id=body.management_vrf_id, allowed_prefixes=body.allowed_prefixes,
                 administrative_status='planned',
@@ -150,10 +151,16 @@ class VPNProfileImportService:
                 raise
             existing = None
         desired = record.model_dump(mode='json')
+        registry_action = 'create'
         if existing is not None:
             current = existing.model_dump(include=set(desired), mode='json')
             if current != desired:
-                raise VPNImportError('vpn_connection_conflict', 409)
+                changed = {key for key in desired if current.get(key) != desired.get(key)}
+                if changed != {'auth_method'}:
+                    raise VPNImportError('vpn_connection_conflict', 409)
+                registry_action = 'update'
+            else:
+                registry_action = 'unchanged'
         try:
             current_secret, metadata = self.writer.read_secret_with_metadata(record.secret_ref)
         except DependencyError as exc:
@@ -173,7 +180,8 @@ class VPNProfileImportService:
                 'profile_type': record.protocol,
                 'network_id': getattr(profile, 'network_id', None),
                 'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
-                'registry_action': 'unchanged' if existing else 'create',
+                'external_mfa': body.external_mfa,
+                'registry_action': registry_action,
                 'secret_action': 'unchanged' if current_secret is not None else 'create',
                 'secret_version': version, 'runtime_status': 'not_deployed', 'apply_allowed': True}
 
@@ -183,6 +191,11 @@ class VPNProfileImportService:
         record, secret, _ = self._values(body)
         if expected_plan['registry_action'] == 'create':
             self.registry.create(record)
+        elif expected_plan['registry_action'] == 'update':
+            self.registry.patch(
+                record.connection_id,
+                VPNConnectionPatch(auth_method=record.auth_method),
+            )
         if expected_plan['secret_action'] == 'create':
             try:
                 self.writer.write_secret(record.secret_ref, secret, cas=expected_plan['secret_version'])

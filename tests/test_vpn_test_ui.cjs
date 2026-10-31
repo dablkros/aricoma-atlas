@@ -23,7 +23,7 @@ elements.vpnTestPort.value = '22';
 const state = {vpnTestOptions:null,vpnTestBusy:false};
 let calls = [];
 const options = {
-  connections:[{connection_id:'customer-vpn',name:'Customer VPN'}],
+  connections:[{connection_id:'customer-vpn',name:'Customer VPN',auth_method:'external_mfa'}],
   sites:[{id:20,name:'DC',connection_id:'customer-vpn'}],
   devices:[{id:7,name:'SW01',site_id:20}],
 };

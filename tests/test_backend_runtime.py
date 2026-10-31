@@ -35,6 +35,7 @@ def backend_config(**overrides):
             "docker_image": f"aricoma-atlas-vpn-worker:{__version__}",
             "dockerfile": "deployment/vpn/Dockerfile",
             "connect_timeout": 45,
+            "mfa_timeout": 120,
             "target_timeout": 5,
         },
         "runtime": {
@@ -692,6 +693,9 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(worker["group_add"], [str(os.getegid())])
         self.assertNotIn("devices", worker)
         self.assertTrue(worker["read_only"])
+        self.assertEqual(worker["environment"]["ATLAS_VPN_CONNECT_TIMEOUT"], "45")
+        self.assertEqual(worker["environment"]["ATLAS_VPN_MFA_TIMEOUT"], "120")
+        self.assertEqual(worker["environment"]["ATLAS_VPN_TARGET_TIMEOUT"], "5")
         self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
         self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))
         self.assertIn("healthcheck", service)

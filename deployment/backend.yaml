@@ -15,6 +15,7 @@ vpn_worker:
   docker_image: "aricoma-atlas-vpn-worker:0.4.3"
   dockerfile: "deployment/vpn/Dockerfile"
   connect_timeout: 45
+  mfa_timeout: 120
   target_timeout: 5
 
 runtime:

@@ -55,6 +55,13 @@ class Registry:
         self.value = VPNConnectionRecord(**value.model_dump(), id=UUID(int=1), tenant_slug='customer',
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
         return self.value
+    def patch(self, name, changes):
+        if self.value is None or self.value.connection_id != name:
+            raise VPNRegistryError('connection_not_found', 404)
+        values = self.value.model_dump()
+        values.update(changes.model_dump(exclude_unset=True))
+        self.value = VPNConnectionRecord(**values)
+        return self.value
 
 
 class Writer:
@@ -134,6 +141,18 @@ class VPNImportTests(unittest.TestCase):
                          ('openfortivpn', 'username_password'))
         self.assertNotIn('psk_base64', self.writer.secret)
         self.assertEqual(self.writer.secret['profile']['realm'], 'staff')
+
+    def test_push_mfa_is_explicit_and_can_update_existing_registry_record(self):
+        body = request()
+        self.service.apply(body, self.service.plan(body))
+
+        mfa_body = body.model_copy(update={'external_mfa': True})
+        plan = self.service.plan(mfa_body)
+
+        self.assertEqual(plan['registry_action'], 'update')
+        self.assertTrue(plan['external_mfa'])
+        self.service.apply(mfa_body, plan)
+        self.assertEqual(self.registry.value.auth_method, 'external_mfa')
 
     def test_windows_ssl_sso_is_explicitly_rejected(self):
         xml = (b'<root><connection><name>sso</name><server>ssl.example.test</server>'

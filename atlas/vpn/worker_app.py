@@ -53,6 +53,7 @@ class WorkerTestRequest(BaseModel):
     gateway_port: int = Field(ge=1, le=65535)
     driver: str
     protocol: str
+    external_mfa: bool = False
     target_ip: str
     target_port: int = Field(ge=1, le=65535)
 
@@ -83,6 +84,7 @@ class WorkerSettings:
         self.charon = os.environ.get("ATLAS_CHARON_BIN", "/usr/local/sbin/charon-systemd")
         self.runtime = Path(os.environ.get("ATLAS_VPN_WORKER_RUNTIME", "/run/atlas-vpn-worker"))
         self.connect_timeout = int(os.environ.get("ATLAS_VPN_CONNECT_TIMEOUT", "45"))
+        self.mfa_timeout = int(os.environ.get("ATLAS_VPN_MFA_TIMEOUT", "120"))
         self.target_timeout = float(os.environ.get("ATLAS_VPN_TARGET_TIMEOUT", "5"))
         self.openfortivpn = os.environ.get("ATLAS_OPENFORTIVPN_BIN", "/usr/bin/openfortivpn")
 
@@ -377,7 +379,10 @@ def test_vpn(
                     stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                     stderr=subprocess.DEVNULL, close_fds=True,
                 )
-                deadline = time.monotonic() + settings.connect_timeout
+                connection_timeout = (
+                    settings.mfa_timeout if body.external_mfa else settings.connect_timeout
+                )
+                deadline = time.monotonic() + connection_timeout
                 assigned = None
                 while time.monotonic() < deadline and ssl_process.poll() is None:
                     ssl_interface, assigned = _ssl_address(previous_links)
@@ -402,6 +407,9 @@ def test_vpn(
             return result
 
         profile, credentials = _profile(secret, body)
+        connection_timeout = (
+            settings.mfa_timeout if body.external_mfa else settings.connect_timeout
+        )
         # The requested proof target is the only customer prefix installed for this test.
         swanctl_config = render_swanctl(profile, credentials, (f"{body.target_ip}/32",))
         daemon_config = render_fortinet_daemon_fragment(profile.network_id)
@@ -426,18 +434,26 @@ def test_vpn(
                 raise RuntimeError("charon_start_failed")
             _run([settings.swanctl, "--load-conns", "--file", str(config_path)])
             _run([settings.swanctl, "--load-creds", "--file", str(config_path)])
-            initiated = _run(
-                [settings.swanctl, "--initiate", "--child", "vpn"],
-                timeout=settings.connect_timeout, check=False,
+            deadline = time.monotonic() + connection_timeout
+            _run(
+                [
+                    settings.swanctl, "--initiate", "--child", "vpn",
+                    "--timeout", str(connection_timeout),
+                ],
+                timeout=connection_timeout + 5, check=False,
             )
             ike, child, assigned = _sas()
+            # A push-MFA exchange may continue in charon after the VICI command
+            # returns. Poll the existing negotiation only; never re-initiate it,
+            # because that could generate duplicate push notifications.
+            while body.external_mfa and not (ike and child) and time.monotonic() < deadline:
+                time.sleep(min(0.5, max(0.0, deadline - time.monotonic())))
+                ike, child, assigned = _sas()
             result.update(tunnel_established=bool(ike and child), assigned_address=assigned)
             if not ike:
                 result.update(failure_stage="ike", message="IKE authentication did not establish.")
             elif not child:
                 result.update(failure_stage="child", message="IKE established, but the CHILD SA was not installed.")
-            elif initiated.returncode != 0:
-                result.update(failure_stage="child", message="The VPN negotiation did not complete cleanly.")
             else:
                 try:
                     with socket.create_connection(
