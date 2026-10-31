@@ -12,7 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator, model_valida
 VPNVendor = Literal["fortinet", "checkpoint", "generic"]
 VPNProtocol = Literal["ipsec-ikev2", "ssl-vpn", "wireguard", "openvpn"]
 VPNDriver = Literal[
-    "strongswan", "forticlient", "checkpoint-snx", "wireguard", "openvpn"
+    "strongswan", "openfortivpn", "forticlient", "checkpoint-snx", "wireguard", "openvpn"
 ]
 VPNAuthMethod = Literal["username_password", "certificate", "psk", "external_mfa"]
 VPNAdministrativeStatus = Literal["planned", "enabled", "disabled"]
@@ -166,7 +166,7 @@ class VPNConnectivityTestResult(BaseModel):
     disconnected: bool
     duration_ms: int = Field(ge=0)
     failure_stage: Literal[
-        "validation", "worker", "ike", "child", "target", "cleanup"
+        "validation", "worker", "ike", "child", "tunnel", "target", "cleanup"
     ] | None = None
     message: str = Field(min_length=1, max_length=300)
 

@@ -1,4 +1,4 @@
-# FortiClient IPsec: izolovaný pilot
+# FortiClient IPsec a klasické SSL-VPN: izolovaný pilot
 
 Tento dokument opisuje implementovaný prvý P2 rez: samostatný worker, ktorý
 na žiadosť GUI vytvorí jeden dočasný tunel, overí jeden NetBox Device a tunel
@@ -13,6 +13,14 @@ gateway metadata, cieľovú IPv4 adresu a TCP port; nedostane VPN heslá cez API
 Vlastnou read-only AppRole identitou načíta presný OpenBao leaf, vytvorí
 krátkodobý swanctl config, spustí patched strongSwan 6.1.0, vyžiada CHILD SA a
 otestuje TCP spojenie. Výsledok odlišuje vytvorený tunel od dostupnosti cieľa.
+
+Windows FortiClient XML s klasickým SSL-VPN username/password profilom sa
+importuje ako `ssl-vpn` + `openfortivpn`. Worker odovzdá heslo iba cez dočasný
+konfiguračný súbor `0600`, spustí PPP/TLS klienta, nájde nové PPP rozhranie,
+vykoná rovnaký TCP test a proces aj rozhranie ukončí. SSO/SAML, interaktívne
+MFA, klientsky certifikát a macOS SSL profil nie sú v tomto reze podporované.
+TLS overovanie sa nevypína a import neukladá exportné heslo ani PSK, pretože
+klasické SSL-VPN ich nepoužíva.
 
 `finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
 workerovom network namespace a odstráni profilový fragment. Globálny zámok
@@ -59,8 +67,8 @@ shell history. OpenBao má používať samostatnú identitu workera so scope na 
 data; existujúca metadata-only identita backendu nesmie dostať wildcard práva.
 Dešifrovanie `Enc` a `EncX` robí kontrolu integrity a skončí chybou pred
 použitím pri nezhode. Exportné heslo sa odlišuje od používateľského VPN hesla.
-Zostavený swanctl config je citlivý a smie existovať iba v privátnej
-krátkodobej pamäti/súborovom priestore workera.
+Zostavený swanctl alebo openfortivpn config je citlivý a smie existovať iba v
+privátnom krátkodobom súborovom priestore workera s režimom `0600`.
 
 Komunikačné rozhranie workeru musí byť explicitne typované, overovať klienta a
 nesmie poskytovať generické vykonávanie shell príkazov alebo Docker socket.
@@ -72,8 +80,11 @@ riešiť v izolovanom priestore, nie prepisovaním DNS fyzického hostiteľa.
 ## Zostávajúca akceptácia a ďalší P2 rozsah
 
 Akceptácia na Ubuntu VM musí overiť reálny build patched image, IKE/CHILD,
-úspešný aj neúspešný TCP cieľ, timeout, cleanup a druhý súbežný test. Následne
-treba doplniť skutočné vykonávanie existujúceho Ansible backendu v rovnakom
+úspešný aj neúspešný TCP cieľ, timeout a cleanup aj druhý súbežný test.
+Samostatne treba overiť aj reálny FortiGate SSL-VPN profil, certifikačný reťazec,
+pridelenú PPP adresu, routy a dostupnosť cieľa. Hostiteľ musí poskytovať
+`/dev/ppp`; compose ho pripája iba workeru. Potom treba doplniť skutočné
+vykonávanie existujúceho Ansible backendu v rovnakom
 network namespace a dlhšie žijúci stavový automat pre produkčné úlohy.
 Širšia akceptácia musí overiť aspoň dva Tenants s prekrývajúcimi sa
 adresami, reconnect a rekey, DNS, zabránenie úniku prevádzky, cleanup, chyby

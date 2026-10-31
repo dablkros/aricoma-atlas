@@ -39,6 +39,15 @@ class FortiClientProfile:
     encrypted_auth_info: str = field(repr=False)
 
 
+@dataclass(frozen=True)
+class FortiClientSSLProfile:
+    name: str
+    gateway: str
+    gateway_port: int
+    realm: str | None
+    sso_enabled: bool
+
+
 def _integer(value, name, minimum, maximum):
     try:
         if isinstance(value, bool):
@@ -88,11 +97,18 @@ def _plist(data, name):
         raise FortiClientProfileError("invalid_or_missing_profile") from None
 
 
-def _xml(data, name):
+def _xml_root(data):
     try:
-        root = SafeET.fromstring(data)
+        return SafeET.fromstring(data)
+    except Exception:
+        raise FortiClientProfileError("invalid_or_missing_profile") from None
+
+
+def _xml_ipsec(root, name):
+    try:
         matches = [entry for entry in root.iter('connection')
-                   if (entry.findtext('name') or '').strip() == name]
+                   if entry.find('ike_settings') is not None
+                   and (entry.findtext('name') or '').strip() == name]
         if len(matches) != 1:
             raise FortiClientProfileError("ambiguous_or_missing_profile")
         c = matches[0]
@@ -128,15 +144,60 @@ def _xml(data, name):
         raise FortiClientProfileError("invalid_or_missing_profile") from None
 
 
-def parse_forticlient_profile(data: bytes, name: str, *, format: str):
+def _ssl_server(value):
+    value = _required(value, "gateway")
+    if value.count(":") > 1:
+        raise FortiClientProfileError("unsupported_ssl_gateway")
+    if ":" not in value:
+        return value, 443
+    host, port = value.rsplit(":", 1)
+    return _required(host, "gateway"), _integer(port, "gateway_port", 1, 65535)
+
+
+def _xml_ssl(root, name):
+    matches = [entry for entry in root.iter('connection')
+               if entry.find('ike_settings') is None
+               and entry.find('server') is not None
+               and (entry.findtext('name') or '').strip() == name]
+    if len(matches) != 1:
+        raise FortiClientProfileError("ambiguous_or_missing_profile")
+    entry = matches[0]
+    gateway, port = _ssl_server(entry.findtext('server'))
+    realm = (entry.findtext('realm') or '').strip() or None
+    if realm is not None:
+        realm = _required(realm, "realm")
+    sso_text = (entry.findtext('sso_enabled') or '0').strip()
+    return FortiClientSSLProfile(
+        name=name, gateway=gateway, gateway_port=port, realm=realm,
+        sso_enabled=_integer(sso_text, "sso", 0, 1) == 1,
+    )
+
+
+def parse_forticlient_any_profile(data: bytes, name: str, *, format: str):
     if not isinstance(data, bytes) or len(data) > _MAX_BYTES:
         raise FortiClientProfileError("invalid_profile_size")
     name = _required(name, "profile_name")
     if format == 'macos-plist':
         return _plist(data, name)
-    if format == 'windows-xml':
-        return _xml(data, name)
-    raise FortiClientProfileError("unsupported_profile_format")
+    if format != 'windows-xml':
+        raise FortiClientProfileError("unsupported_profile_format")
+    root = _xml_root(data)
+    ipsec = [entry for entry in root.iter('connection')
+             if entry.find('ike_settings') is not None
+             and (entry.findtext('name') or '').strip() == name]
+    ssl = [entry for entry in root.iter('connection')
+           if entry.find('ike_settings') is None and entry.find('server') is not None
+           and (entry.findtext('name') or '').strip() == name]
+    if bool(ipsec) == bool(ssl):
+        raise FortiClientProfileError("ambiguous_or_missing_profile")
+    return _xml_ipsec(root, name) if ipsec else _xml_ssl(root, name)
+
+
+def parse_forticlient_profile(data: bytes, name: str, *, format: str):
+    profile = parse_forticlient_any_profile(data, name, format=format)
+    if not isinstance(profile, FortiClientProfile):
+        raise FortiClientProfileError("unsupported_profile_type")
+    return profile
 
 
 def _blob(value, prefix):

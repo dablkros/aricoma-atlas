@@ -9,8 +9,8 @@ from defusedxml import ElementTree as SafeET
 
 from atlas.services.errors import DependencyError
 from atlas.vpn.forticlient_profile import (
-    FortiClientProfileError, decode_macos_enc, decode_windows_encx,
-    parse_forticlient_profile,
+    FortiClientProfile, FortiClientSSLProfile, FortiClientProfileError,
+    decode_macos_enc, decode_windows_encx, parse_forticlient_any_profile,
 )
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
 from atlas.vpn.models import VPNConnectionCreate
@@ -85,7 +85,27 @@ class VPNProfileImportService:
 
     def _values(self, body: ProfileImportRequest):
         try:
-            p = parse_forticlient_profile(profile_bytes(body), body.profile_name, format=body.format)
+            p = parse_forticlient_any_profile(profile_bytes(body), body.profile_name, format=body.format)
+            username, password = body.username.get_secret_value(), body.password.get_secret_value()
+            if isinstance(p, FortiClientSSLProfile):
+                if p.sso_enabled:
+                    raise VPNImportError('unsupported_ssl_sso')
+                record = VPNConnectionCreate(
+                    connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
+                    vendor='fortinet', protocol='ssl-vpn', driver='openfortivpn',
+                    gateway_host=p.gateway, gateway_port=p.gateway_port,
+                    auth_method='username_password',
+                    secret_ref=f'vpn/connections/{body.connection_id}',
+                    management_vrf_id=body.management_vrf_id,
+                    allowed_prefixes=body.allowed_prefixes, administrative_status='planned',
+                )
+                profile = asdict(p)
+                secret = {'schema_version': 1, 'profile_type': 'ssl-vpn',
+                          'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
+                          'profile': profile, 'username': username, 'password': password}
+                return record, secret, p
+            if not isinstance(p, FortiClientProfile):
+                raise VPNImportError('unsupported_profile_type')
             if p.encrypted_auth_info.startswith('EncX '):
                 if body.export_password is None:
                     raise VPNImportError('vpn_export_password_required')
@@ -94,7 +114,6 @@ class VPNProfileImportService:
                 psk = decode_macos_enc(p.encrypted_auth_info)
             else:
                 raise VPNImportError('vpn_secret_format_unsupported')
-            username, password = body.username.get_secret_value(), body.password.get_secret_value()
             record = VPNConnectionCreate(
                 connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
                 vendor='fortinet', protocol='ipsec-ikev2', driver='strongswan',
@@ -150,7 +169,9 @@ class VPNProfileImportService:
             raise VPNImportError('vpn_secret_conflict', 409)
         return {'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
                 'management_vrf_id': record.management_vrf_id, 'gateway': record.gateway_host,
-                'port': record.gateway_port, 'network_id': profile.network_id,
+                'port': record.gateway_port,
+                'profile_type': record.protocol,
+                'network_id': getattr(profile, 'network_id', None),
                 'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
                 'registry_action': 'unchanged' if existing else 'create',
                 'secret_action': 'unchanged' if current_secret is not None else 'create',

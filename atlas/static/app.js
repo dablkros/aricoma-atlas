@@ -2686,7 +2686,8 @@ async function planVPNImport() {
     });
     if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
     vpnImport.plan = result;
-    vpnImport.review.textContent = `Customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}; Network ID ${result.network_id}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
+    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
     vpnImportMessage('Review the settings, then save the profile.');
@@ -2704,6 +2705,7 @@ async function planVPNImport() {
       unsupported_username: 'The username contains unsupported characters.',
       unsupported_local_id: 'The local ID contains unsupported characters.',
       unsupported_auth_method: 'This authentication method is not supported.',
+      unsupported_ssl_sso: 'This SSL-VPN profile uses SSO/SAML, which the Atlas worker cannot automate.',
       invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
       invalid_decrypted_secret: 'The decrypted PSK is invalid.',
     };

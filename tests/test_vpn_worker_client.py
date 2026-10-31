@@ -70,6 +70,17 @@ class VPNConnectivityServiceTests(unittest.TestCase):
         self.assertEqual(result.status, "passed")
         self.assertTrue(result.disconnected)
 
+    def test_supports_classic_ssl_vpn_driver(self):
+        worker = Worker()
+        record = connection(protocol="ssl-vpn", driver="openfortivpn",
+                            gateway_port=443, auth_method="username_password")
+        result = VPNConnectivityTestService(Registry(record=record), worker).run(
+            "customer-vpn", device_id=7, target_port=443,
+        )
+        self.assertEqual((worker.payload["driver"], worker.payload["protocol"]),
+                         ("openfortivpn", "ssl-vpn"))
+        self.assertEqual(result.status, "passed")
+
 
 class VPNWorkerClientTests(unittest.TestCase):
     def test_rejects_invalid_local_token_without_network_call(self):

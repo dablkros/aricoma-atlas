@@ -18,7 +18,7 @@ klienta. Preto je `runtime_status` vždy `not_deployed`.
 | `tenant_slug` | Pri čítaní odvodený z NetBoxu, neukladá sa ako zdroj pravdy. |
 | `vendor` | `fortinet`, `checkpoint` alebo `generic`. |
 | `protocol` | `ipsec-ikev2`, `ssl-vpn`, `wireguard` alebo `openvpn`. |
-| `driver` | `strongswan`, `forticlient`, `checkpoint-snx`, `wireguard` alebo `openvpn`. |
+| `driver` | `strongswan`, `openfortivpn`, `forticlient`, `checkpoint-snx`, `wireguard` alebo `openvpn`. |
 | `gateway_host`, `gateway_port` | Netajný cieľ VPN gateway. |
 | `auth_method` | `username_password`, `certificate`, `psk` alebo `external_mfa`. |
 | `secret_ref` | Presná referencia `vpn/connections/<connection_id>`. |
@@ -61,7 +61,10 @@ Resolver postupuje striktne:
 
 Nepriradené zariadenie zostáva platným NetBox objektom a resolver vráti
 `resolution_status=unmapped`. Neexistuje automatický fallback na iné spojenie,
-Tenant ani VRF. Register rozlišuje prekrývajúce sa IP adresy pomocou Tenant a VRF; sieťovú izoláciu počas prevádzky musí ešte zabezpečiť budúci VPN worker.
+Tenant ani VRF. Register rozlišuje prekrývajúce sa IP adresy pomocou Tenant a
+VRF; jednorazový P2 test spúšťa tunel v izolovanom worker kontajneri.
+Produkčné vykonávanie Ansible úloh cez tento sieťový priestor ešte nie je
+implementované.
 
 ### Operations UI assignment flow
 
@@ -120,7 +123,8 @@ import bezpečne odmietnutý; existujúci register zostáva dostupný.
    možno ich upraviť. Prefixy sa pri GUI importe nezadávajú: cieľové zariadenia
    určí priradená Site a ich aktuálna management IP v NetBoxe. Zadajte VPN meno
    a heslo. Pri formáte `EncX` zadajte
-   aj heslo použité pri exporte; `Enc` ho nevyžaduje.
+   aj heslo použité pri exporte; `Enc` ho nevyžaduje. Klasický Windows
+   SSL-VPN profil s menom/heslom exportné heslo ani PSK nepotrebuje.
 4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
    uložia do OpenBao, exportné heslo ani pôvodný súbor sa neukladajú. Plán a
    odpoveď neobsahujú heslá. Súbor sa spracuje v pamäti a jeho limit je 2 MiB.
@@ -130,12 +134,14 @@ import bezpečne odmietnutý; existujúci register zostáva dostupný.
    nepripája a nemení routing.
 6. V **Test VPN** vyberte zákazníka, spojenie, priradenú Site, aktívny Device a
    management TCP port. Worker vytvorí tunel vo vlastnom network namespace,
-   oddelene zobrazí IKE/CHILD a dostupnosť cieľa a následne tunel ukončí. Jeden
+   oddelene zobrazí stav tunela a dostupnosť cieľa a následne tunel ukončí. Jeden
    Atlas worker vykonáva najviac jeden takýto test súčasne.
 
-Podporovaný je iba overiteľný PSK export `Enc`/`EncX` a úzka podmnožina
-IKEv2 profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH skupiny
-21); nepodporované nastavenia, SSO a certifikátová autentifikácia sa odmietnu.
+Pre IKEv2 je podporovaný iba overiteľný PSK export `Enc`/`EncX` a úzka
+podmnožina profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH
+skupiny 21). Pre SSL-VPN je podporovaný klasický Windows XML profil s
+username/password a voliteľným realmom. SSO/SAML, interaktívne MFA a
+certifikátová autentifikácia sa odmietnu.
 Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
 spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,
 vytvorte nový plán s rovnakými vstupmi a import zopakujte.
@@ -233,14 +239,13 @@ Medzi stabilné reason codes patria `connection_not_found`,
     `disabled`. Na hostiteľovi sa nesmie objaviť nové rozhranie, route ani VPN
     proces.
 
-## Rozšírenie o vendora a P2
+## Stav P2 a ďalšie rozšírenie
 
-Pridanie vendora v P1 znamená rozšíriť validované katalógové hodnoty a testy;
-nesmie automaticky aktivovať klienta. P2 VPN Worker musí samostatne doplniť:
+Pridanie vendora v registri nesmie automaticky aktivovať klienta. Jednorazový
+P2 test už obsahuje explicitnú maticu podporovaných kombinácií, samostatnú
+read-only OpenBao AppRole a izolovaný worker pre strongSwan alebo openfortivpn.
+Ďalšia etapa musí doplniť:
 
-- explicitnú maticu podporovaných vendor/protocol/driver kombinácií;
-- vlastnú OpenBao AppRole s prístupom iba k potrebným secretom;
-- izoláciu procesov/siete a routing model schválený pre multi-tenant prevádzku;
 - stavový automat `connecting/connected/degraded/error`;
 - retry, reconnect, audit a health kontrakty;
 - integráciu konzumentov až po potvrdenom spojení.

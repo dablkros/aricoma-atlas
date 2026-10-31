@@ -37,7 +37,7 @@ ENV DEBIAN_FRONTEND=noninteractive \
 
 RUN apt-get update \
     && apt-get install -y --no-install-recommends \
-       ca-certificates iproute2 libssl3 libsystemd0 python3 python3-venv \
+       ca-certificates iproute2 libssl3 libsystemd0 openfortivpn ppp python3 python3-venv \
     && rm -rf /var/lib/apt/lists/* \
     && python3 -m venv /opt/venv
 

@@ -85,6 +85,7 @@ class VPNImportTests(unittest.TestCase):
         again = self.service.plan(body)
         self.assertEqual((again['registry_action'], again['secret_action']), ('unchanged', 'unchanged'))
         self.assertEqual(self.writer.secret['tenant_id'], 1)
+        self.assertNotIn('profile_type', self.writer.secret)
         self.assertNotIn('encrypted_auth_info', self.writer.secret['profile'])
 
     def test_windows_encx_requires_valid_export_password(self):
@@ -114,6 +115,36 @@ class VPNImportTests(unittest.TestCase):
         self.service.apply(body, self.service.plan(body))
         self.assertEqual(base64.b64decode(self.writer.secret['psk_base64']), b'example-psk')
         self.assertNotIn('export_password', self.writer.secret)
+
+    def test_windows_classic_ssl_vpn_import_needs_no_psk(self):
+        xml = (b'<forticlient_configuration><vpn><sslvpn><connections><connection>'
+               b'<name>office-ssl</name><server>ssl.example.test:10443</server>'
+               b'<realm>staff</realm><sso_enabled>0</sso_enabled>'
+               b'</connection></connections></sslvpn></vpn></forticlient_configuration>')
+        body = request().model_copy(update={
+            'format': 'windows-xml',
+            'profile_base64': SecretStr(base64.b64encode(xml).decode()),
+            'profile_name': 'office-ssl', 'export_password': None,
+        })
+        plan = self.service.plan(body)
+        self.assertEqual((plan['profile_type'], plan['network_id'], plan['port']),
+                         ('ssl-vpn', None, 10443))
+        self.service.apply(body, plan)
+        self.assertEqual((self.registry.value.driver, self.registry.value.auth_method),
+                         ('openfortivpn', 'username_password'))
+        self.assertNotIn('psk_base64', self.writer.secret)
+        self.assertEqual(self.writer.secret['profile']['realm'], 'staff')
+
+    def test_windows_ssl_sso_is_explicitly_rejected(self):
+        xml = (b'<root><connection><name>sso</name><server>ssl.example.test</server>'
+               b'<sso_enabled>1</sso_enabled></connection></root>')
+        body = request().model_copy(update={
+            'format': 'windows-xml',
+            'profile_base64': SecretStr(base64.b64encode(xml).decode()),
+            'profile_name': 'sso',
+        })
+        with self.assertRaisesRegex(VPNImportError, 'unsupported_ssl_sso'):
+            self.service.plan(body)
 
     def test_import_can_use_site_membership_without_entering_prefixes(self):
         body = request().model_copy(update={'allowed_prefixes': []})

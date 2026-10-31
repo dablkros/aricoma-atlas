@@ -680,6 +680,7 @@ class BackendRuntimeTests(unittest.TestCase):
         worker = data["services"]["vpn-worker"]
         self.assertEqual(worker["cap_drop"], ["ALL"])
         self.assertEqual(worker["cap_add"], ["NET_ADMIN", "NET_RAW"])
+        self.assertEqual(worker["devices"], ["/dev/ppp:/dev/ppp"])
         self.assertTrue(worker["read_only"])
         self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
         self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))

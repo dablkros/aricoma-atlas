@@ -849,6 +849,7 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
                         f"{vpn_worker_identity_file}:/run/secrets/atlas-vpn-worker.json:ro",
                         f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
                     ],
+                    "devices": ["/dev/ppp:/dev/ppp"],
                     "networks": {"openbao": {}, "vpn_control": {}},
                     "read_only": True,
                     "tmpfs": ["/run:rw,nosuid,nodev,size=32m,mode=755", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"],

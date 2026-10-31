@@ -67,7 +67,11 @@ class VPNConnectivityTestService:
         connection = self.registry.get(connection_id)
         if connection.administrative_status == "disabled":
             raise VPNWorkerError("connection_disabled", 409)
-        if connection.driver != "strongswan" or connection.protocol != "ipsec-ikev2":
+        supported = {
+            ("strongswan", "ipsec-ikev2"),
+            ("openfortivpn", "ssl-vpn"),
+        }
+        if (connection.driver, connection.protocol) not in supported:
             raise VPNWorkerError("vpn_driver_not_testable", 409)
         try:
             resolved = self.registry.resolve_device(
@@ -83,6 +87,8 @@ class VPNConnectivityTestService:
             "secret_ref": connection.secret_ref,
             "gateway_host": connection.gateway_host,
             "gateway_port": connection.gateway_port or 500,
+            "driver": connection.driver,
+            "protocol": connection.protocol,
             "target_ip": resolved["management_ip"],
             "target_port": target_port,
         }
