@@ -1,10 +1,11 @@
 import importlib.util
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import DEFAULT, Mock, call, patch
 
-from scripts import openbao_access
+from scripts import deploy_atlas, openbao_access
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -295,6 +296,100 @@ class OpenBaoBootstrapTests(unittest.TestCase):
             return_value=False,
         ):
             self.assertFalse(openbao_access.reconcile_backend_policy(client))
+
+    def test_noninteractive_runtime_reconcile_command(self):
+        client = object()
+        with patch.object(
+            openbao_access,
+            "OpenBaoClient",
+            return_value=client,
+        ) as client_factory, patch.object(
+            openbao_access,
+            "reconcile_backend_policy",
+            return_value=True,
+        ) as reconcile, patch.object(
+            openbao_access.sys,
+            "argv",
+            ["openbao_access.py", "--reconcile-runtime-roles"],
+        ):
+            openbao_access.main()
+
+        client_factory.assert_called_once_with(openbao_access.OPENBAO_URL)
+        reconcile.assert_called_once_with(client)
+
+    def test_cancelled_noninteractive_runtime_reconcile_fails(self):
+        with patch.object(
+            openbao_access,
+            "OpenBaoClient",
+            return_value=object(),
+        ), patch.object(
+            openbao_access,
+            "reconcile_backend_policy",
+            return_value=False,
+        ), patch.object(
+            openbao_access.sys,
+            "argv",
+            ["openbao_access.py", "--reconcile-runtime-roles"],
+        ), self.assertRaises(SystemExit) as raised:
+            openbao_access.main()
+
+        self.assertEqual(raised.exception.code, 1)
+
+    def test_deploy_detects_missing_or_symlinked_runtime_identities(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            valid = root / "valid.json"
+            valid.write_text("{}\n", encoding="utf-8")
+            missing = root / "missing.json"
+            symlink = root / "link.json"
+            symlink.symlink_to(valid)
+
+            with patch.object(
+                deploy_atlas,
+                "OPENBAO_BACKEND_RUNTIME_IDENTITIES",
+                {
+                    "valid": valid,
+                    "missing": missing,
+                    "symlink": symlink,
+                },
+            ):
+                result = deploy_atlas.missing_openbao_runtime_identities()
+
+        self.assertEqual(result, ("missing", "symlink"))
+
+    def test_deploy_reconciles_missing_runtime_identity_before_readiness(self):
+        with patch.object(
+            deploy_atlas,
+            "missing_openbao_runtime_identities",
+            side_effect=[("atlas-vpn-worker",), ()],
+        ), patch.object(deploy_atlas, "run_script") as run_script, patch.object(
+            deploy_atlas,
+            "info",
+        ) as info:
+            changed = deploy_atlas.reconcile_missing_openbao_runtime_identities()
+
+        self.assertTrue(changed)
+        info.assert_called_once_with(
+            "OpenBao runtime identity reconciliation required: atlas-vpn-worker"
+        )
+        run_script.assert_called_once_with(
+            deploy_atlas.OPENBAO_ACCESS_SCRIPT,
+            ["--reconcile-runtime-roles"],
+        )
+
+    def test_deploy_reconcile_rejects_identity_that_remains_missing(self):
+        with patch.object(
+            deploy_atlas,
+            "missing_openbao_runtime_identities",
+            side_effect=[("atlas-vpn-worker",), ("atlas-vpn-worker",)],
+        ), patch.object(deploy_atlas, "run_script"), patch.object(
+            deploy_atlas,
+            "info",
+        ), self.assertRaisesRegex(
+            RuntimeError,
+            "did not create: atlas-vpn-worker",
+        ):
+            deploy_atlas.reconcile_missing_openbao_runtime_identities()
 
     def test_controlled_root_action_revokes_token_after_failure(self):
         client = Mock()

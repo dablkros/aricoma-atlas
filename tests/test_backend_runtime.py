@@ -970,6 +970,16 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("24.04|26.04", installer)
         self.assertNotIn("22.04|24.04", installer)
 
+    def test_update_reconciles_missing_openbao_runtime_identities(self):
+        update = (ROOT / "update.sh").read_text(encoding="utf-8")
+        atlasctl = (ROOT / "bin/atlasctl").read_text(encoding="utf-8")
+        deploy = (ROOT / "scripts/deploy_atlas.py").read_text(encoding="utf-8")
+
+        self.assertIn("exec /usr/local/sbin/atlasctl deploy", update)
+        self.assertIn("missing_openbao_runtime_identities", deploy)
+        self.assertIn("--reconcile-runtime-roles", deploy)
+        self.assertIn("--reconcile-runtime-roles", atlasctl)
+
 
 if __name__ == "__main__":
     unittest.main()

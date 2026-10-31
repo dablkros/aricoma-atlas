@@ -770,8 +770,16 @@ def main():
             if not show_admin_recovery_password(client):
                 raise SystemExit(1)
             return
+        if sys.argv[1:] == ["--reconcile-runtime-roles"]:
+            client = OpenBaoClient(OPENBAO_URL)
+            if not reconcile_backend_policy(client):
+                raise SystemExit(1)
+            return
         if sys.argv[1:]:
-            raise SystemExit("Usage: openbao_access.py [--show-admin-password]")
+            raise SystemExit(
+                "Usage: openbao_access.py "
+                "[--show-admin-password|--reconcile-runtime-roles]"
+            )
         menu()
 
     except KeyboardInterrupt:

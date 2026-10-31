@@ -28,7 +28,7 @@ Usage:
   sudo atlasctl components add oxidized|zabbix
   sudo atlasctl deploy [deploy_atlas.py options]
   sudo atlasctl status
-  sudo atlasctl openbao
+  sudo atlasctl openbao [reconcile-runtime]
   sudo atlasctl oxidized reconcile
   sudo atlasctl oxidized host-key scan HOST [--port PORT] [--legacy-ssh]
   sudo atlasctl oxidized host-key accept HOST SHA256:FINGERPRINT [--port PORT] [--legacy-ssh]
@@ -65,7 +65,7 @@ Commands:
   components add        Permanently add an optional component.
   deploy                Deploy or reconcile the full Atlas stack.
   status                Show Atlas container and Oxidized inventory state.
-  openbao               Open the interactive OpenBao access helper.
+  openbao               Open OpenBao access or reconcile runtime roles.
   oxidized reconcile    Reconcile Oxidized runtime/inventory state.
   oxidized host-key     Scan or explicitly accept an SSH host key.
   oxidized logs         Show Oxidized container logs.
@@ -455,6 +455,13 @@ main() {
             ;;
         openbao)
             shift
+            if [[ "${1:-}" == "reconcile-runtime" ]]; then
+                shift
+                [[ $# -eq 0 ]] || die "openbao reconcile-runtime accepts no options"
+                run_python_as_atlas \
+                    "${ATLAS_ROOT}/scripts/openbao_access.py" \
+                    --reconcile-runtime-roles
+            fi
             run_python_as_atlas "${ATLAS_ROOT}/scripts/openbao_access.py" "$@"
             ;;
         inventory)

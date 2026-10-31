@@ -110,11 +110,14 @@ odlišnú read-only identitu `atlas-vpn-worker`, ktorá môže načítať iba le
 
 ## Import FortiClient profilu v Operations UI
 
-Na existujúcej inštalácii po aktualizácii zdrojového kódu spustite
-`sudo atlasctl openbao`, vyberte `2. Reconcile Atlas backend roles` a dokončite
-quorum. Potom spustite `sudo atlasctl deploy`, aby backend pripojil novú
-identitu. Nová inštalácia ju pripraví v rámci bootstrapu. Bez identity bude
-import bezpečne odmietnutý; existujúci register zostáva dostupný.
+Na existujúcej inštalácii `sudo ./update.sh` rozpozná chýbajúcu runtime
+identitu a pred deployom spustí quorum-controlled reconcile. Operátor zadá
+požadované unseal shares; dočasný root token sa po akcii revokuje. Rovnaký krok
+možno spustiť samostatne cez `sudo atlasctl openbao reconcile-runtime` alebo
+interaktívne cez `sudo atlasctl openbao`, voľbu
+`2. Reconcile Atlas backend roles`. Nová inštalácia identity pripraví v rámci
+bootstrapu. Bez identity bude import bezpečne odmietnutý; existujúci register
+zostáva dostupný.
 
 1. V NetBoxe pripravte zákazníka (Tenant) a jeho vlastnú management VRF.
 2. V Operations UI otvorte **Import FortiClient VPN** a nahrajte exportovaný
