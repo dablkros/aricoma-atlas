@@ -42,6 +42,7 @@ Usage:
   sudo atlasctl vpn show CONNECTION_ID
   sudo atlasctl vpn resolve --device-id ID [--tenant-id ID]
   sudo atlasctl vpn validate CONNECTION_ID
+  sudo atlasctl vpn logs [docker compose logs options]
   sudo atlasctl inventory tenant add --name NAME [--group GROUP] [--dry-run]
   sudo atlasctl inventory site add --tenant TENANT --name NAME [--dry-run]
   sudo atlasctl inventory site set-default --tenant TENANT --name NAME [--dry-run|--apply]
@@ -74,7 +75,7 @@ Commands:
   zabbix credentials    Show the HTTPS URL and administrator login.
   zabbix logs           Show Zabbix server, web, and database logs.
   integrations cisco    Test Cisco OAuth and Support API entitlements.
-  vpn                    Inspect and validate the VPN Connection Registry.
+  vpn                    Inspect VPN connections and worker logs.
   inventory             Manage tenants, sites, Device Types and device imports.
   prophylaxis logs      Show safe prophylaxis and Ansible diagnostic events.
   backend logs          Show Atlas backend container logs.
@@ -313,6 +314,12 @@ oxidized_logs() {
 backend_logs() {
     [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
     exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend logs "$@" backend
+}
+
+vpn_worker_logs() {
+    [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
+    exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
+        logs "$@" vpn-worker
 }
 
 prophylaxis_logs() {
@@ -583,6 +590,10 @@ main() {
             case "${1:-}" in
                 list|show|resolve|validate)
                     run_python_as_atlas "${ATLAS_ROOT}/scripts/vpn_cli.py" "$@"
+                    ;;
+                logs)
+                    shift
+                    vpn_worker_logs "$@"
                     ;;
                 *)
                     usage

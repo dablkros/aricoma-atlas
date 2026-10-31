@@ -79,6 +79,10 @@ riešiť v izolovanom priestore, nie prepisovaním DNS fyzického hostiteľa.
 
 ## Zostávajúca akceptácia a ďalší P2 rozsah
 
+Startup workeru a jeho healthcheck možno diagnostikovať podporovaným príkazom
+`sudo atlasctl vpn logs --tail=200`. Výstup môže obsahovať technické chyby
+procesov, nesmie však obsahovať PSK ani používateľské heslá.
+
 Akceptácia na Ubuntu VM musí overiť reálny build patched image, IKE/CHILD,
 úspešný aj neúspešný TCP cieľ, timeout a cleanup aj druhý súbežný test.
 Samostatne treba overiť aj reálny FortiGate SSL-VPN profil, certifikačný reťazec,

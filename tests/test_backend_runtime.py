@@ -961,6 +961,13 @@ class BackendImageDefinitionTests(unittest.TestCase):
             dockerfile,
         )
 
+    def test_vpn_worker_declares_yaml_runtime_dependency(self):
+        requirements = (ROOT / "deployment/vpn/requirements.txt").read_text(
+            encoding="utf-8"
+        ).splitlines()
+
+        self.assertIn("PyYAML==6.0.3", requirements)
+
 
 class InstallerContractTests(unittest.TestCase):
     def test_installer_requires_python_312_and_supported_ubuntu_releases(self):
@@ -979,6 +986,8 @@ class InstallerContractTests(unittest.TestCase):
         self.assertIn("missing_openbao_runtime_identities", deploy)
         self.assertIn("--reconcile-runtime-roles", deploy)
         self.assertIn("--reconcile-runtime-roles", atlasctl)
+        self.assertIn("vpn_worker_logs", atlasctl)
+        self.assertIn('logs "$@" vpn-worker', atlasctl)
 
 
 if __name__ == "__main__":
