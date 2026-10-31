@@ -8,7 +8,7 @@
   "local_device_types_sha256": "d00d759996b6d4322fd49b7c7d07d686aa5960c070e2dbeee2d505db547904fe",
   "vendors": {
     "Cisco": {
-      "count": 242,
+      "count": 282,
       "patterns": [
         "CBS*.yaml",
         "CBS*.yml",
@@ -32,6 +32,9 @@
         "C9500-*.yaml",
         "C9500X-*.yaml",
         "Catalyst-9500X-*.yaml",
+        "C1200-*.yaml",
+        "C1300-*.yaml",
+        "C1300X-*.yaml",
         "ISR4*.yaml",
         "C8200-*.yaml",
         "C8300-*.yaml"
@@ -131,16 +134,18 @@
       ]
     }
   },
-  "total": 865,
-  "platform_mapping_sha256": "f5d0dad3ab2f5813224ab979e7492aa25f9f8e848ef09a7611a64021aa119050",
+  "total": 905,
+  "platform_mapping_sha256": "05293613c355e1ed1e2d6568d0a7f2011fba2d8ff67443a6c908148823ed1517",
   "platforms": {
-    "mapped": 669,
+    "mapped": 709,
     "unmapped": 196,
     "by_platform": {
       "aruba-aos-cx": 68,
       "aruba-aos-switch": 41,
       "checkpoint-gaia": 25,
       "checkpoint-gaia-embedded": 16,
+      "cisco-catalyst-1200": 4,
+      "cisco-catalyst-1300": 36,
       "cisco-cbs": 2,
       "cisco-cbs250-350": 22,
       "cisco-ios": 20,

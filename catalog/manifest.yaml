@@ -48,6 +48,10 @@ vendors:
         - "C9500X-*.yaml"
         - "Catalyst-9500X-*.yaml"
 
+        - "C1200-*.yaml"
+        - "C1300-*.yaml"
+        - "C1300X-*.yaml"
+
         - "ISR4*.yaml"
         - "C8200-*.yaml"
         - "C8300-*.yaml"

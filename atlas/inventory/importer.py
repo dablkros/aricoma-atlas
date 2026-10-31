@@ -314,10 +314,38 @@ class InventoryImporter:
             matches = self._all("/api/dcim/platforms/", {"slug": row.platform})
             if len(matches) != 1:
                 raise InventoryInvalid("platform_not_found_or_ambiguous")
-            if platform_id != matches[0].get("id"):
+            selected = matches[0]
+            if platform_id is not None and platform_id != selected.get("id"):
                 raise InventoryConflict("platform_not_verified_for_device_type")
-            return matches[0]
-        return platform if isinstance(platform, dict) and platform_id is not None else None
+            if platform_id is None:
+                device_manufacturer = device_type.get("manufacturer")
+                platform_manufacturer = selected.get("manufacturer")
+                device_manufacturer_id = related_id(device_manufacturer)
+                platform_manufacturer_id = related_id(platform_manufacturer)
+                device_manufacturer_name = (
+                    str(device_manufacturer.get("name", ""))
+                    if isinstance(device_manufacturer, dict) else ""
+                )
+                platform_manufacturer_name = (
+                    str(platform_manufacturer.get("name", ""))
+                    if isinstance(platform_manufacturer, dict) else ""
+                )
+                same_manufacturer = (
+                    device_manufacturer_id is not None
+                    and platform_manufacturer_id is not None
+                    and device_manufacturer_id == platform_manufacturer_id
+                ) or (
+                    device_manufacturer_name
+                    and platform_manufacturer_name
+                    and normalized_name(device_manufacturer_name)
+                    == normalized_name(platform_manufacturer_name)
+                )
+                if not same_manufacturer:
+                    raise InventoryConflict("platform_manufacturer_mismatch")
+            return selected
+        if isinstance(platform, dict) and platform_id is not None:
+            return platform
+        raise InventoryInvalid("platform_not_selected")
 
     def _resolve_role(self, row: InventoryRow, device_type: dict, platform: dict | None) -> dict:
         model = str(device_type.get("model", ""))
@@ -421,13 +449,35 @@ class InventoryImporter:
     @staticmethod
     def _device_conflict(device: dict, payload: dict) -> str | None:
         for field in ("tenant", "site", "device_type", "role", "platform"):
-            if field in payload and related_id(device.get(field)) != payload[field]:
+            current = related_id(device.get(field))
+            if (
+                field in payload
+                and current != payload[field]
+                and not (field == "platform" and current is None)
+            ):
                 return f"existing_device_{field}_conflict"
         status = device.get("status")
         status_value = status.get("value") if isinstance(status, dict) else status
         if status_value not in (None, "active"):
             return "existing_device_status_conflict"
         return None
+
+    def _ensure_device_platform(
+        self, device: dict, platform: dict | None, *, apply: bool
+    ) -> bool:
+        desired = related_id(platform)
+        current = related_id(device.get("platform"))
+        if desired is None or current == desired:
+            return False
+        if current is not None:
+            raise InventoryConflict("existing_device_platform_conflict")
+        if apply:
+            updated = self.client.patch(
+                f"/api/dcim/devices/{device['id']}/", {"platform": desired}
+            )
+            device.clear()
+            device.update(updated)
+        return True
 
     def _validate_planned_management(
         self, address: str, vrf: dict | None, tenant: dict
@@ -628,10 +678,14 @@ class InventoryImporter:
                 payload = self._device_payload(hostname, tenant, site, device_type, role, platform)
                 device = self._existing_device(hostname, tenant, site)
                 created = device is None
+                platform_changed = False
                 if device is not None:
                     conflict = self._device_conflict(device, payload)
                     if conflict:
                         raise InventoryConflict(conflict)
+                    platform_changed = self._ensure_device_platform(
+                        device, platform, apply=apply,
+                    )
                 elif apply:
                     device = self.client.post("/api/dcim/devices/", payload)
                 if device is None:
@@ -656,10 +710,22 @@ class InventoryImporter:
                 changed, ids = self._management_state(
                     device, address, vrf, tenant, apply=apply
                 )
-                status = ImportStatus.CREATE if created or changed else ImportStatus.UNCHANGED
+                status = (
+                    ImportStatus.CREATE
+                    if created or changed
+                    else ImportStatus.UPDATE
+                    if platform_changed
+                    else ImportStatus.UNCHANGED
+                )
                 results.append(RowResult(
                     **base,
-                    operation="CREATE" if status == ImportStatus.CREATE else "UNCHANGED",
+                    operation=(
+                        "CREATE"
+                        if status == ImportStatus.CREATE
+                        else "ASSIGN_PLATFORM"
+                        if status == ImportStatus.UPDATE
+                        else "UNCHANGED"
+                    ),
                     status=status,
                     object_ids=ids,
                 ))

@@ -83,9 +83,17 @@ class InventoryImporterTests(unittest.TestCase):
             "id": 11, "name": "Zilina Office", "slug": "zilina-office",
             "tenant": {"id": 1},
         }
-        self.platform = {"id": 30, "name": "Cisco IOS", "slug": "cisco-ios"}
+        self.platform = {
+            "id": 30,
+            "name": "Cisco IOS",
+            "slug": "cisco-ios",
+            "manufacturer": {"id": 50, "name": "Cisco"},
+        }
         self.device_type = {
-            "id": 20, "model": "C9500-48Y4C", "default_platform": self.platform,
+            "id": 20,
+            "model": "C9500-48Y4C",
+            "manufacturer": {"id": 50, "name": "Cisco"},
+            "default_platform": self.platform,
         }
         self.role = {"id": 40, "name": "Network Device", "slug": "network-device"}
         self.default_vrf = {
@@ -306,7 +314,7 @@ class InventoryImporterTests(unittest.TestCase):
         )
         self.assertEqual(created_device["role"], switch_role["id"])
 
-    def test_manufacturer_prefixed_csv_model_resolves_existing_device_type(self):
+    def test_defaultless_device_type_requires_explicit_platform(self):
         self.device_type.update({
             "manufacturer": {"id": 50, "name": "F5"},
             "model": "BIG-IP r4800",
@@ -319,7 +327,33 @@ class InventoryImporterTests(unittest.TestCase):
             self.row(model="F5 BIG-IP r4800"),
         ])
 
+        self.assertEqual(report.rows[0].status, ImportStatus.INVALID)
+        self.assertEqual(report.rows[0].reason, "platform_not_selected")
+
+    def test_nexus_explicit_nxos_is_allowed_for_defaultless_device_type(self):
+        self.device_type.update({
+            "model": "Nexus 93360YC-FX2",
+            "slug": "cisco-n9k-c93360yc-fx2",
+            "default_platform": None,
+        })
+        self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+
+        report = self.importer.import_rows([
+            self.row(model="Nexus 93360YC-FX2", platform="cisco-nxos"),
+        ])
+
         self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+
+    def test_explicit_platform_rejects_device_type_manufacturer_mismatch(self):
+        self.device_type["default_platform"] = None
+        self.platform["manufacturer"] = {"id": 51, "name": "HPE"}
+
+        report = self.importer.import_rows([
+            self.row(platform="cisco-ios"),
+        ])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "platform_manufacturer_mismatch")
 
     def test_07_row_site_is_used(self):
         report = self.importer.import_rows([self.row(site="zilina-office")])
@@ -483,6 +517,47 @@ class InventoryImporterTests(unittest.TestCase):
         self.assertEqual(first.rows[0].status, ImportStatus.CREATE)
         self.assertEqual(second.rows[0].status, ImportStatus.UNCHANGED)
         self.assertEqual(len(self.client.writes), writes_after_first)
+
+    def test_existing_device_with_missing_platform_is_enriched_without_overwrite(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = None
+
+        planned = self.importer.import_rows([self.row()])
+        applied = self.importer.import_rows([self.row()], apply=True)
+
+        self.assertEqual(planned.rows[0].status, ImportStatus.UPDATE)
+        self.assertEqual(planned.rows[0].operation, "ASSIGN_PLATFORM")
+        self.assertEqual(applied.rows[0].status, ImportStatus.UPDATE)
+        self.assertEqual(device["platform"], self.platform["id"])
+
+    def test_existing_non_null_platform_is_never_overwritten(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = {"id": 31, "slug": "cisco-nxos"}
+        writes_before = copy.deepcopy(self.client.writes)
+
+        report = self.importer.import_rows([self.row()], apply=True)
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "existing_device_platform_conflict")
+        self.assertEqual(device["platform"]["id"], 31)
+        self.assertEqual(self.client.writes, writes_before)
+
+    def test_existing_aci_platform_is_not_overwritten_by_explicit_nxos(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = {"id": 31, "slug": "cisco-aci"}
+        self.device_type["default_platform"] = None
+        self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+
+        report = self.importer.import_rows([
+            self.row(platform="cisco-nxos"),
+        ], apply=True)
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "existing_device_platform_conflict")
+        self.assertEqual(device["platform"]["slug"], "cisco-aci")
 
     def test_17_partial_api_failure_is_isolated_per_row(self):
         self.client.fail_endpoint = "/api/dcim/devices/"

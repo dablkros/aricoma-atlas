@@ -34,6 +34,14 @@ hint.
 
 Unknown types receive a null default. If a rule is removed, the next provisioning clears the catalog-managed Device Type default; it never clears any Device platform. Existing platform names/customizations are preserved. A conflicting manufacturer on an existing platform slug fails explicitly. Single-type imports provision platforms only for the selected manufacturer. The existing baseline provisioner reports custom-field drift instead of silently overwriting operator customization.
 
+The inventory importer treats a null Device Type default as an unresolved
+operator decision, not as permission to create a Device without a platform.
+The Operations UI or optional CSV `Platform` column can select an exact
+platform for an individual row only when its manufacturer matches the Device
+Type manufacturer. The reviewed dry-run records `ASSIGN_PLATFORM` for an
+existing Device whose platform is null. Apply patches only that empty field;
+an existing non-null Device platform is never overwritten automatically.
+
 ## Platform rules and audit
 
 Rules explicitly match `model` or `slug`, scoped by the catalog manufacturer, **only at build/provision time**. Matching is case-sensitive. Conflicting matches to different platforms are fatal. There is no manufacturer-wide fallback.
@@ -42,9 +50,10 @@ The reviewed catalog uses names such as `Catalyst 9500-48Y4C`, `FortiGate 60F` a
 
 **Fact (reproducible catalog audit):** pinned upstream
 `517549215455824be5e3b89965353fd2210cc20c` plus the reviewed local
-`CBS350-12XT` supplement selects 242 Cisco, 162 Fortinet, 290 Juniper, 21
-Sophos, 109 HPE Aruba switch and 41 Check Point types: 865 total,
-**669 mapped / 196 unmapped**. The HPE selection is
+`CBS350-12XT` supplement selects 282 Cisco, 162 Fortinet, 290 Juniper, 21
+Sophos, 109 HPE Aruba switch and 41 Check Point types: 905 total,
+**709 mapped / 196 unmapped**. Cisco includes four pinned C1200 and 36 pinned
+C1300/C1300X definitions. The HPE selection is
 intentionally limited to 68 AOS-CX and 41 AOS-Switch definitions; it does not
 import HPE servers, storage, AP/IAP, mobility controllers, Instant On,
 EdgeConnect or Comware devices. The Check Point selection is intentionally
@@ -55,9 +64,18 @@ build report contains every unmapped model.
 |---|---|---:|---|
 | Cisco IOS | `cisco-ios` | 20 | `ios` |
 | Cisco IOS XE | `cisco-ios-xe` | 155 | `ios` |
+| Cisco IOS XR | `cisco-ios-xr` | 0 | unsupported/unmapped |
 | Cisco NX-OS | `cisco-nxos` | 0 | `nxos` |
+| Cisco ACI | `cisco-aci` | 0 | unsupported/unmapped |
+| Cisco ASA | `cisco-asa` | 0 | unsupported/unmapped |
+| Cisco Firepower Threat Defense | `cisco-ftd` | 0 | unsupported/unmapped |
+| Cisco Firepower eXtensible OS | `cisco-fxos` | 0 | unsupported/unmapped |
 | Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
 | Cisco CBS250/350 | `cisco-cbs250-350` | 22 after catalog rebuild | `ciscosmb` (experimental) |
+| Cisco Catalyst 1200 firmware | `cisco-catalyst-1200` | 4 | unsupported/unmapped |
+| Cisco Catalyst 1300 firmware | `cisco-catalyst-1300` | 36 | unsupported/unmapped |
+| Cisco AireOS | `cisco-aireos` | 0 | unsupported/unmapped |
+| Cisco Viptela OS | `cisco-viptela` | 0 | unsupported/unmapped |
 | FortiOS | `fortios` | 91 | `fortigate` |
 | FortiAP | `fortiap` | 21 | unsupported/unmapped |
 | FortiAnalyzer | `fortianalyzer` | 3 | unsupported/unmapped |
@@ -70,12 +88,49 @@ build report contains every unmapped model.
 | Check Point Gaia | `checkpoint-gaia` | 25 | `gaiaos` |
 | Check Point Gaia Embedded | `checkpoint-gaia-embedded` | 16 | unsupported/unmapped |
 
-Sixteen platform objects are prepared by a complete bootstrap. Actual
+Twenty-five platform objects are prepared by a complete bootstrap. Actual
 create/existing counts depend on the target NetBox and are printed by its
-dry-run. NX-OS is available for an explicitly configured Device, but no Nexus
-is selected by the current manifest, so there is no fabricated Nexus catalog
-test or broad N9K rule. An N9K name alone also does not settle NX-OS versus
-ACI.
+dry-run. NX-OS and ACI are available for an explicitly configured Device, but
+no Nexus is selected by the current manifest, so there is no broad N9K rule.
+An N9K name alone does not settle NX-OS versus ACI. C1200 and C1300/C1300X use
+their own firmware platform identities and are not labeled IOS, IOS XE or CBS.
+Those identities do not imply a working Oxidized, Ansible or Zabbix driver.
+
+## Platform layers are separate contracts
+
+| Layer | Meaning | Automatic implication |
+|---|---|---|
+| NetBox Platform | Operating-system identity available for a Device | None |
+| Device Type Default Platform | Reviewed build-time default for new Devices of that exact family | Inherited only when NetBox creates a new Device without an explicit platform |
+| Device Platform | Explicit operational identity of one Device | Preserved by Atlas; a non-null value is never silently replaced |
+| Oxidized model | Version-pinned configuration-backup driver | Exists only in `oxidized_platform_mapping` |
+| Ansible/Profylaxia profile | Connection plugin, transport and allow-listed collectors | Exists only in the profylaxia platform registry |
+| Zabbix template | Monitoring contract and metric keys | Exists only in `catalog/zabbix.yaml` |
+
+Therefore a newly defined NetBox Platform is inventory metadata until each
+consumer receives and passes its own compatibility validation.
+
+### Cisco consumer support matrix
+
+| Platform slug | Oxidized | Ansible/Profylaxia | Zabbix |
+|---|---|---|---|
+| `cisco-ios` | `ios` | supported profile | Cisco IOS template |
+| `cisco-ios-xe` | `ios` | supported profile | Cisco IOS template |
+| `cisco-ios-xr` | unmapped | unsupported | unmapped |
+| `cisco-nxos` | `nxos` | supported profile | unmapped |
+| `cisco-aci` | unmapped | unsupported | unmapped |
+| `cisco-asa` | unmapped | supported profile | unmapped |
+| `cisco-ftd` | unmapped | unsupported | unmapped |
+| `cisco-fxos` | unmapped | unsupported | unmapped |
+| `cisco-cbs` | `ciscosmb` experimental | supported profile | generic SNMP template |
+| `cisco-cbs250-350` | `ciscosmb` experimental | supported profile | Atlas CBS250/350 template |
+| `cisco-catalyst-1200` | unmapped | unsupported | unmapped |
+| `cisco-catalyst-1300` | unmapped | unsupported | unmapped |
+| `cisco-aireos` | unmapped | unsupported | unmapped |
+| `cisco-viptela` | unmapped | unsupported | unmapped |
+
+This matrix reports only explicit current Atlas mappings; it is not a claim
+that the vendor operating system could never be integrated with the consumer.
 
 All pinned Sophos Device Types are cataloged. XG/XGS are assigned
 `sophos-sfos`, AP6/APX are assigned `sophos-ap`, and SD-RED is assigned
@@ -155,7 +210,7 @@ sudo atlasctl status
 `atlasctl deploy` invokes the existing NetBox bootstrap with `--apply`. The
 expected catalog-build lines are `Check Point 41 device types`,
 `checkpoint-gaia: 25`, `checkpoint-gaia-embedded: 16`, and `Platform mapped:
-669; unmapped: 196`. The platform create/existing counts depend on the target
+709; unmapped: 196`. The platform create/existing counts depend on the target
 NetBox. In NetBox, verify manufacturer `Check Point`, both platform slugs, and
 the imported Device Type defaults. Existing Devices are not changed.
 
@@ -294,7 +349,7 @@ Local unit tests cover repeated provisioning with no extra writes, read-only dry
 
 GitHub CI additionally tests the declared model files **inside the deployed image**, fresh NetBox provisioning, native Device platform inheritance, a manual Device override, stable IDs after redeployment and real OpenBao credential reads / missing-profile behavior. The complete existing deployment, ingress and upgrade checks remain enabled. CI results must be read from the PR; this document does not imply a test passed before it ran.
 
-Primary evidence reviewed 2026-10-19:
+Primary evidence reviewed through 2026-10-31:
 
 - [Pinned community Device Type Library](https://github.com/netbox-community/devicetype-library/tree/517549215455824be5e3b89965353fd2210cc20c/device-types) — actual models/slugs and vendor datasheet links.
 - [NetBox v4.7.1 model implementation](https://github.com/netbox-community/netbox/blob/v4.7.1/netbox/dcim/models/devices.py) — native defaults and inheritance.
@@ -302,6 +357,7 @@ Primary evidence reviewed 2026-10-19:
 - [HPE Aruba AOS-CX 10.15 supported platforms](https://www.arubanetworks.com/techdocs/AOS-CX/10.15/PDF/security_4100i-6000-6100.pdf) and [AOS-CX 10.14 platform guide](https://www.arubanetworks.com/techdocs/AOS-CX/10.14/PDF/vxlan.pdf) — reviewed switch-family OS boundary.
 - [Zabbix 7.0 Aruba CX 8300s template](https://git.zabbix.com/projects/ZBX/repos/zabbix/browse/templates/net/aruba/aruba_cx8300s_snmp?at=release%2F7.0) — reason for retaining the generic SNMP template across the broader Aruba selection.
 - [Cisco Catalyst 9000 release guidance](https://www.cisco.com/c/en/us/support/docs/switches/catalyst-9300-series-switches/214814-recommended-releases-for-catalyst-9200-9.html), [3850 IOS XE release notes](https://www.cisco.com/c/en/us/support/switches/catalyst-3850-series-switches/products-release-notes-list.html), [8200/8300 IOS XE releases](https://www.cisco.com/c/en/us/support/routers/catalyst-8300-series-edge-platforms/series.html).
+- [Cisco Catalyst 1200 support and firmware documentation](https://www.cisco.com/c/en/us/support/switches/catalyst-1200-series-switches/series.html), [Catalyst 1300 CLI guide](https://www.cisco.com/c/en/us/td/docs/switches/campus-lan-switches-access/Catalyst-1200-and-1300-Switches/cli/C1300-cli.html), and [Catalyst C1300X 4.10 administration guide](https://www.cisco.com/c/en/us/td/docs/switches/campus-lan-switches-access/Catalyst-1300x/Release4_10_0_82/c1300x-administration-guide/m_get-to-know-your-switch.html) — separate firmware families, not IOS/IOS XE defaults.
 - [Juniper QFX5130 system overview](https://www.juniper.net/documentation/us/en/hardware/qfx5130/topics/topic-map/qfx5130-system-overview.html) — Junos OS Evolved, reason for avoiding a broad QFX rule; [QFX5200](https://www.juniper.net/documentation/product/us/en/qfx5200/), [EX4100](https://www.juniper.net/documentation/product/us/en/ex4100/), [EX4000 hardware compatibility](https://pathfinder.juniper.net/hct/product/EX4000).
 - [Check Point R82.10 supported environments](https://sc1.checkpoint.com/documents/R82.10/WebAdminGuides/EN/CP_R82.10_RN/Content/Topics-RN/Supported-Environments.htm) — current Gaia gateway, management and Maestro platform boundary; [Maestro MHO-140 hardware guide](https://sc1.checkpoint.com/documents/Appliances/GSG_Maestro/EN/Topics/MHO-140-Rear-Panel.htm) — Gaia OS on the orchestrator.
 - [Check Point R81.10.X Spark overview](https://sc1.checkpoint.com/documents/SMB_R81.10.X/AdminGuides_Centrally_Managed/EN/Content/Topics/Overview.htm) and [R82.00.X Spark overview](https://sc1.checkpoint.com/documents/Appliances/Quantum_Spark_R82.00.X/AdminGuides_Locally_Managed/EN/Content/Topics/Overview.htm) — Gaia Embedded family and the 2500 appliance models.

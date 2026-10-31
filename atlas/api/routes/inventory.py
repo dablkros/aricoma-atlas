@@ -4,6 +4,7 @@ import hashlib
 import json
 import logging
 import os
+from dataclasses import replace
 from pathlib import Path
 import tempfile
 
@@ -20,7 +21,11 @@ from atlas.api.schemas.inventory import (
 )
 from atlas.inventory.config import load_inventory_config
 from atlas.inventory.importer import (
-    InventoryConflict, InventoryImporter, InventoryInvalid, related_id, slugify,
+    InventoryConflict,
+    InventoryImporter,
+    InventoryInvalid,
+    related_id,
+    slugify,
 )
 from atlas.inventory.parser import parse_inventory_table
 from atlas.services.errors import DependencyError
@@ -61,7 +66,12 @@ def authorized(request: Request) -> None:
 
 def _hash(body: InventoryTableRequest) -> str:
     canonical = json.dumps(
-        {"table": body.table, "tenant": body.tenant, "site": body.site},
+        {
+            "table": body.table,
+            "tenant": body.tenant,
+            "site": body.site,
+            "platform_overrides": body.platform_overrides,
+        },
         sort_keys=True, separators=(",", ":"), ensure_ascii=False,
     )
     return hashlib.sha256(canonical.encode()).hexdigest()
@@ -116,6 +126,36 @@ def sites(request: Request, tenant: str) -> list[dict]:
         for item in values if isinstance(item, dict)
         and related_id(item.get("tenant")) == owner["id"]
     ]
+
+
+@router.get("/platforms", dependencies=[Depends(authorized)])
+def platforms(request: Request) -> list[dict]:
+    try:
+        values = request.app.state.dependencies.netbox.get_all("/api/dcim/platforms/")
+    except DependencyError as exc:
+        raise _inventory_error(exc) from None
+    options = []
+    for item in values:
+        if not isinstance(item, dict):
+            continue
+        manufacturer = item.get("manufacturer")
+        options.append({
+            "id": item.get("id"),
+            "name": item.get("name"),
+            "slug": item.get("slug"),
+            "manufacturer_id": related_id(manufacturer),
+            "manufacturer": (
+                manufacturer.get("name")
+                if isinstance(manufacturer, dict) else None
+            ),
+        })
+    return sorted(
+        options,
+        key=lambda item: (
+            str(item.get("manufacturer") or "").casefold(),
+            str(item.get("name") or item.get("slug") or "").casefold(),
+        ),
+    )
 
 
 @router.get("/devices/{device_id}/connection", dependencies=[Depends(authorized)])
@@ -218,6 +258,22 @@ def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> d
         rows = parse_inventory_table(body.table)
         if not rows:
             raise ValueError("Inventory table contains no device rows")
+        overrides = {
+            int(row_number): platform
+            for row_number, platform in body.platform_overrides.items()
+        }
+        unknown_override_rows = sorted(set(overrides) - {row.number for row in rows})
+        if unknown_override_rows:
+            raise InventoryInvalid("platform_override_row_not_found")
+        resolved_rows = []
+        for row in rows:
+            override = overrides.get(row.number)
+            if override and row.platform and row.platform != override:
+                raise InventoryConflict("row_platform_conflicts_with_gui_override")
+            resolved_rows.append(
+                replace(row, platform=override or row.platform)
+            )
+        rows = resolved_rows
         config = load_inventory_config(CONFIG)
         client = request.app.state.dependencies.netbox
         planned, errors = prepare_import_device_types(
@@ -240,8 +296,21 @@ def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> d
         raise AtlasError(503, "inventory_dependency_unavailable", "Inventory dependency is unavailable") from None
     blocked = sum(report["summary"][key] for key in ("INVALID", "CONFLICT", "ERROR"))
     issue_by_model = {}
+    platform_issues = []
     for row in report["rows"]:
         reason = row.get("reason") or ""
+        if reason in {
+            "platform_not_selected",
+            "platform_manufacturer_mismatch",
+            "platform_not_verified_for_device_type",
+            "platform_not_found_or_ambiguous",
+        }:
+            platform_issues.append({
+                "row": row["row"],
+                "hostname": row["hostname"],
+                "model": row["model"],
+                "reason": reason,
+            })
         if not reason.startswith("device_type_"):
             continue
         issue_by_model.setdefault(row["model"], reason)
@@ -258,6 +327,7 @@ def _execute(body: InventoryTableRequest, request: Request, *, apply: bool) -> d
         "apply_allowed": blocked == 0 and report["summary"]["total_rows"] > 0,
         "missing_device_types": [issue["model"] for issue in device_type_issues],
         "device_type_issues": device_type_issues,
+        "platform_issues": platform_issues,
         "report": report,
     }
 

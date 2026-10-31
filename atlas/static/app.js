@@ -19,6 +19,8 @@ const state = {
   inventoryActivityTimer: null,
   inventoryActivityStarted: 0,
   inventoryActivityKind: null,
+  inventoryPlatformOptions: [],
+  inventoryPlatformOverrides: {},
   inventoryStructurePlan: null,
   credentialOptions: null,
   credentialPlan: null,
@@ -109,12 +111,17 @@ const elements = {
   inventoryPlanResult: document.querySelector("#inventory-plan-result"),
   inventoryPlanStatus: document.querySelector("#inventory-plan-status"),
   inventoryCreateCount: document.querySelector("#inventory-create-count"),
+  inventoryUpdateCount: document.querySelector("#inventory-update-count"),
   inventoryUnchangedCount: document.querySelector("#inventory-unchanged-count"),
   inventoryInvalidCount: document.querySelector("#inventory-invalid-count"),
   inventoryConflictCount: document.querySelector("#inventory-conflict-count"),
   inventoryErrorCount: document.querySelector("#inventory-error-count"),
   inventoryPlanMessage: document.querySelector("#inventory-plan-message"),
   inventoryPlanRows: document.querySelector("#inventory-plan-rows"),
+  inventoryPlatformResolution: document.querySelector("#inventory-platform-resolution"),
+  inventoryPlatformModel: document.querySelector("#inventory-platform-model"),
+  inventoryPlatformValue: document.querySelector("#inventory-platform-value"),
+  inventoryPlatformAssign: document.querySelector("#inventory-platform-assign"),
   inventoryDeviceTypeResolution: document.querySelector("#inventory-device-type-resolution"),
   inventoryDeviceTypeMessage: document.querySelector("#inventory-device-type-message"),
   inventoryDeviceTypeModel: document.querySelector("#inventory-device-type-model"),
@@ -428,6 +435,7 @@ function inventoryPayload() {
     table: elements.inventoryTable.value,
     ...(tenant ? { tenant } : {}),
     ...(site ? { site } : {}),
+    platform_overrides: { ...state.inventoryPlatformOverrides },
   };
 }
 
@@ -498,6 +506,15 @@ async function loadInventoryImportTenants() {
   await loadInventoryImportSites(preferredSite);
 }
 
+async function loadInventoryPlatforms() {
+  const values = await apiRequest("/api/inventory/platforms", {
+    headers: operatorHeaders(),
+  });
+  state.inventoryPlatformOptions = values.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  );
+}
+
 async function openInventoryImport() {
   if (!requireOperatorToken()) return;
   elements.inventoryImportDialog.showModal();
@@ -511,6 +528,12 @@ async function openInventoryImport() {
     elements.inventoryTenant.disabled = true;
     resetInventorySiteOptions("Site list unavailable");
     toast(error.safeMessage || "Tenant and site lists are unavailable.", "error");
+  }
+  try {
+    await loadInventoryPlatforms();
+  } catch (error) {
+    state.inventoryPlatformOptions = [];
+    toast(error.safeMessage || "Platform list is unavailable.", "error");
   }
 }
 
@@ -1181,7 +1204,7 @@ function setInventoryDeviceTypeError(message = "") {
 }
 
 function inventoryStatusTone(status) {
-  if (["CREATE", "UNCHANGED"].includes(status)) return "healthy";
+  if (["CREATE", "UPDATE", "UNCHANGED"].includes(status)) return "healthy";
   if (status === "INVALID") return "degraded";
   return "unhealthy";
 }
@@ -1191,11 +1214,13 @@ function renderInventoryPlan(result) {
   const report = result.report || {};
   const summary = report.summary || {};
   const issues = result.device_type_issues || [];
+  const platformIssues = result.platform_issues || [];
   const uploadable = issues.filter((issue) => issue.yaml_upload_allowed);
   const blocked = (summary.INVALID || 0) + (summary.CONFLICT || 0) + (summary.ERROR || 0);
 
   elements.inventoryPlanResult.hidden = false;
   elements.inventoryCreateCount.textContent = String(summary.CREATE || 0);
+  elements.inventoryUpdateCount.textContent = String(summary.UPDATE || 0);
   elements.inventoryUnchangedCount.textContent = String(summary.UNCHANGED || 0);
   elements.inventoryInvalidCount.textContent = String(summary.INVALID || 0);
   elements.inventoryConflictCount.textContent = String(summary.CONFLICT || 0);
@@ -1234,6 +1259,22 @@ function renderInventoryPlan(result) {
     return row;
   }));
 
+  elements.inventoryPlatformResolution.hidden = platformIssues.length === 0;
+  elements.inventoryPlatformModel.replaceChildren(...platformIssues.map((issue) => (
+    new Option(
+      `Row ${issue.row} — ${issue.hostname} — ${issue.model} — ${titleCase(issue.reason)}`,
+      String(issue.row),
+    )
+  )));
+  elements.inventoryPlatformValue.replaceChildren(
+    new Option("Select a platform", ""),
+    ...state.inventoryPlatformOptions.map((platform) => new Option(
+      `${platform.manufacturer || "Generic"} — ${platform.name} (${platform.slug})`,
+      platform.slug,
+    )),
+  );
+  elements.inventoryPlatformAssign.disabled = platformIssues.length === 0;
+
   elements.inventoryDeviceTypeResolution.hidden = issues.length === 0;
   elements.inventoryDeviceTypeUpload.hidden = uploadable.length === 0;
   elements.inventoryDeviceTypeModel.replaceChildren(...issues.map((issue) => {
@@ -1261,6 +1302,7 @@ function setInventoryBusy(busy) {
   for (const button of [
     elements.inventoryPlanButton,
     elements.inventoryRetry,
+    elements.inventoryPlatformAssign,
     elements.inventoryDeviceTypeUpload,
     elements.inventoryApply,
   ]) button.disabled = busy || (button === elements.inventoryApply && !elements.inventoryApplyConfirm.checked);
@@ -1384,6 +1426,17 @@ async function uploadInventoryDeviceType() {
   }
   stopInventoryActivity();
   setInventoryBusy(false);
+  await planInventory();
+}
+
+async function assignInventoryPlatform() {
+  const row = elements.inventoryPlatformModel.value;
+  const platform = elements.inventoryPlatformValue.value;
+  if (!row || !platform) {
+    toast("Select an affected device and its verified platform.", "warning");
+    return;
+  }
+  state.inventoryPlatformOverrides[row] = platform;
   await planInventory();
 }
 
@@ -2980,9 +3033,10 @@ elements.inventoryImportClose.addEventListener("click", () => {
 });
 elements.inventoryExample.addEventListener("click", () => {
   elements.inventoryTable.value = [
-    "Hostname\tHardware model\tManagement IP\tTenant\tSite",
-    "BR-SW01\tC9500-48Y4C\t10.0.0.10\tacme-slovakia\tBratislava DC",
+    "Hostname\tHardware model\tManagement IP\tTenant\tSite\tPlatform",
+    "BR-SW01\tC9500-48Y4C\t10.0.0.10\tacme-slovakia\tBratislava DC\tcisco-ios-xe",
   ].join("\n");
+  state.inventoryPlatformOverrides = {};
   resetInventoryPlan();
   elements.inventoryTable.focus();
 });
@@ -2993,12 +3047,14 @@ elements.inventoryClear.addEventListener("click", () => {
   elements.inventoryDeviceTypeYaml.value = "";
   setInventoryDeviceTypeError();
   elements.inventoryDeviceTypeReplace.checked = false;
+  state.inventoryPlatformOverrides = {};
   resetInventoryPlan();
   elements.inventoryTable.focus();
 });
 elements.inventoryPlanButton.addEventListener("click", planInventory);
 elements.inventoryRetry.addEventListener("click", planInventory);
 elements.inventoryDeviceTypeUpload.addEventListener("click", uploadInventoryDeviceType);
+elements.inventoryPlatformAssign.addEventListener("click", assignInventoryPlatform);
 elements.inventoryDeviceTypeModel.addEventListener("change", updateInventoryDeviceTypeFilename);
 elements.inventoryDeviceTypeYaml.addEventListener("input", () => setInventoryDeviceTypeError());
 elements.inventoryApplyConfirm.addEventListener("change", () => {
@@ -3007,7 +3063,10 @@ elements.inventoryApplyConfirm.addEventListener("change", () => {
     || !elements.inventoryApplyConfirm.checked;
 });
 elements.inventoryApply.addEventListener("click", applyInventory);
-elements.inventoryTable.addEventListener("input", resetInventoryPlan);
+elements.inventoryTable.addEventListener("input", () => {
+  state.inventoryPlatformOverrides = {};
+  resetInventoryPlan();
+});
 elements.inventoryTenant.addEventListener("change", async () => {
   resetInventoryPlan();
   try {

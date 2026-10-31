@@ -61,7 +61,10 @@ devices** a vykoná tento kontrolovaný postup:
 4. vyrieši všetky riadky `INVALID`, `CONFLICT` alebo `ERROR`;
 5. ak chýba Device Type, vloží jeho YAML priamo v okne; Atlas ho schémovo
    overí, uloží do chráneného runtime katalógu a automaticky zopakuje plán;
-6. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
+6. ak Device Type nemá overenú predvolenú platformu, vyberie platformu pre
+   konkrétny riadok; Atlas povolí iba platformu rovnakého výrobcu a zopakuje
+   dry-run;
+7. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
    **Apply approved plan**.
 
 Počas dlhšieho dry-runu UI zobrazuje spinner, aktuálnu fázu a uplynutý čas.
@@ -110,8 +113,23 @@ v `.runtime/inventory.yaml`.
 ## Rozlíšenie objektov
 
 Device Type sa rozlišuje ako jednoznačná presná zhoda modelu alebo
-nakonfigurovaného aliasu. Platforma sa prevezme z overeného
-`DeviceType.default_platform`; explicitná odlišná platforma je konflikt.
+nakonfigurovaného aliasu. Ak má Device Type overenú
+`DeviceType.default_platform`, importer ju použije a explicitná odlišná
+platforma je konflikt. Ak predvolená platforma chýba, import sa zastaví s
+`platform_not_selected`; operátor musí vybrať platformu pre konkrétny riadok v
+Operations UI alebo ju uviesť v stĺpci `Platform`. Zvolená platforma musí mať
+rovnakého výrobcu ako Device Type. Atlas preto neodhaduje napríklad NX-OS verzus
+ACI iba z názvu Nexus zariadenia.
+
+Pri už existujúcom Device s prázdnou platformou dry-run zobrazí operáciu
+`ASSIGN_PLATFORM` a Apply doplní iba platformu. Neprázdnu existujúcu platformu
+importer nikdy automaticky neprepíše; odlišná požadovaná hodnota je
+`existing_device_platform_conflict`.
+
+NetBox Platform je iba identita operačného systému. Jej existencia sama osebe
+nezapína Oxidized backup, Ansible/Profylaxia collector ani Zabbix template.
+Každý z týchto spotrebiteľov má vlastné explicitné mapovanie a môže danú
+platformu naďalej hlásiť ako nepodporovanú.
 Device Role sa vyberá v poradí: riadok, mapovanie modelu/platformy, predvolená
 rola. Atlas baseline pri deploymente idempotentne vytvára štandardné role
 `Network Device`, `Switch`, `Router`, `Firewall`, `Load Balancer` a

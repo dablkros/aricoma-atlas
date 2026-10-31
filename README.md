@@ -97,7 +97,8 @@ register, NetBox mapovanie, resolver, OpenBao reference a P2 hranice opisuje
 [VPN Connection Registry](docs/vpn-connection-registry.md).
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
-chýbajúci validný Device Type YAML, zopakuje plán a explicitne potvrdí Apply.
+chýbajúci validný Device Type YAML, pre typ bez predvolenej platformy vyberie
+platformu konkrétnemu zariadeniu, zopakuje plán a explicitne potvrdí Apply.
 UI počas prípravy plánu zobrazuje aktuálnu fázu a uplynutý čas. Apply je
 odomknuté iba pre presne skontrolovaný plán bez neplatných alebo konfliktných
 riadkov; zmena vstupu plán zneplatní.
@@ -132,7 +133,9 @@ niektorého plánu zablokuje hromadné vykonanie. Stav `COMPLETED` s verifikáci
 Pre CBS250/350 nastav na zariadení v NetBoxe platformu `cisco-cbs250-350`:
 tá používa vlastný template `Aricoma Atlas Cisco CBS250-350 by SNMP`.
 Platforma `cisco-cbs` zostáva generická pre CBS220/legacy CBS. Bootstrap nastavuje
-predvolenú platformu Device Types; existujúce Devices automaticky nemigruje.
+predvolenú platformu Device Types. Inventory importer môže po explicitnom
+dry-run výbere doplniť platformu existujúcemu Device, iba ak je aktuálne
+prázdna; neprázdnu platformu nikdy automaticky neprepíše.
 RAM CBS350 a systémové metriky testovanej Aruba CX OVA zostávajú bez overeného
 SNMP kontraktu; hranice sú uvedené v [dokumentácii systémových metrík](docs/prophylaxis-system-metrics.md).
 
@@ -705,7 +708,8 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
 - riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
   viditeľný priebeh s uplynutým časom, riadkové chyby, validovaný runtime
-  Device Type YAML, retry a explicitný Apply,
+  Device Type YAML, explicitné doriešenie chýbajúcej platformy po zariadeniach,
+  retry a explicitný Apply,
 - riadený device credential onboarding: hromadný výber zariadení jedného
   tenantu a výrobcu, jedna explicitná platforma a spoločný profil, výber spotrebiteľov,
   secret-free dry-run a explicitný OpenBao/NetBox Apply,
@@ -728,6 +732,7 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
 | `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
 | `GET /api/inventory/tenants` | Autorizovaný zoznam Tenantov pre Operations UI. |
+| `GET /api/inventory/platforms` | Autorizovaný secret-free zoznam NetBox platforiem pre explicitné doriešenie importu. |
 | `POST /api/inventory/tenants/plan`, `/apply` | Idempotentný plan/apply Tenant operácie viazaný na presný odtlačok. |
 | `POST /api/inventory/sites/plan`, `/apply` | Idempotentný plan/apply tenant-owned Site operácie viazaný na presný odtlačok. |
 | `GET /api/inventory/devices/{id}/connection` | Kompatibilný resolver Device ID cez perzistentný VPN Connection Registry. |
@@ -2395,7 +2400,7 @@ NetBox Community Device Type Library     catalog/device-types/
                                │
                                ▼
                       Atlas Device Catalog
-                         865 Device Types
+                         905 Device Types
                 │
          ┌──────┴──────┐
          │             │

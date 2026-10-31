@@ -11,6 +11,7 @@ from pydantic import ValidationError
 
 from atlas import __version__
 from atlas.api.main import create_app
+from atlas.api.schemas.inventory import InventoryTableRequest
 from atlas.config import Settings
 from atlas.logging import JsonFormatter
 from atlas.services.errors import DependencyError
@@ -236,8 +237,8 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(brand_mark.headers["content-type"], "image/png")
         self.assertEqual(script.headers["Cache-Control"], "no-store")
         self.assertEqual(styles.headers["Cache-Control"], "no-store")
-        self.assertIn("/static/app.js?v=20261031-1", page.text)
-        self.assertIn("/static/styles.css?v=20261031-1", page.text)
+        self.assertIn("/static/app.js?v=20261031-2", page.text)
+        self.assertIn("/static/styles.css?v=20261031-2", page.text)
         self.assertIn('/static/assets/aricoma-mark.png', page.text)
         self.assertIn('data-component="zabbix"', page.text)
         self.assertIn('data-component-link="zabbix"', page.text)
@@ -247,6 +248,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn('id="inventory-import-dialog"', page.text)
         self.assertIn('<select id="inventory-tenant">', page.text)
         self.assertIn('<select id="inventory-site" disabled>', page.text)
+        self.assertIn('id="inventory-platform-resolution"', page.text)
+        self.assertIn('id="inventory-platform-value"', page.text)
         self.assertIn('id="inventory-structure-dialog"', page.text)
         self.assertIn('id="inventory-activity"', page.text)
         self.assertIn('id="credential-onboarding-dialog"', page.text)
@@ -284,6 +287,22 @@ class ApiTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.json()["error"]["code"], "inventory_unauthorized")
+
+    def test_inventory_platform_overrides_are_normalized_by_csv_row(self):
+        body = InventoryTableRequest(
+            table="Hostname,Hardware model,Management IP\nSW01,C9500,10.0.0.1\n",
+            platform_overrides={" 2 ": " cisco-nxos "},
+        )
+
+        self.assertEqual(body.platform_overrides, {"2": "cisco-nxos"})
+
+    def test_inventory_platform_override_rejects_invalid_row_or_slug(self):
+        for override in ({"1": "cisco-nxos"}, {"2": "Cisco NX-OS"}):
+            with self.subTest(override=override), self.assertRaises(ValidationError):
+                InventoryTableRequest(
+                    table="Hostname,Hardware model,Management IP\nSW01,C9500,10.0.0.1\n",
+                    platform_overrides=override,
+                )
 
     def test_credential_options_require_operator_token(self):
         response = self.client.get("/api/credentials/options")
@@ -349,6 +368,29 @@ class ApiTests(unittest.TestCase):
             response.json(),
             [{"id": 10, "name": "Bratislava", "slug": "bratislava"}],
         )
+
+    def test_inventory_platform_options_come_from_netbox_without_secret_data(self):
+        platforms = [{
+            "id": 30,
+            "name": "Cisco NX-OS",
+            "slug": "cisco-nxos",
+            "manufacturer": {"id": 50, "name": "Cisco"},
+        }]
+        with patch.object(
+            self.app.state.dependencies.netbox, "get_all", return_value=platforms,
+        ):
+            response = self.client.get(
+                "/api/inventory/platforms", headers=OPERATOR_HEADERS,
+            )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.json(), [{
+            "id": 30,
+            "name": "Cisco NX-OS",
+            "slug": "cisco-nxos",
+            "manufacturer_id": 50,
+            "manufacturer": "Cisco",
+        }])
 
     def test_tenant_plan_and_apply_use_exact_plan_hash(self):
         importer = SimpleNamespace(

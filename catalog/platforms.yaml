@@ -4,10 +4,18 @@ version: 1
 platforms:
   cisco-ios: {name: Cisco IOS, manufacturer: Cisco}
   cisco-ios-xe: {name: Cisco IOS XE, manufacturer: Cisco}
+  cisco-ios-xr: {name: Cisco IOS XR, manufacturer: Cisco}
   cisco-nxos: {name: Cisco NX-OS, manufacturer: Cisco}
+  cisco-aci: {name: Cisco ACI, manufacturer: Cisco}
   cisco-asa: {name: Cisco ASA, manufacturer: Cisco}
+  cisco-ftd: {name: Cisco Firepower Threat Defense, manufacturer: Cisco}
+  cisco-fxos: {name: Cisco Firepower eXtensible OS, manufacturer: Cisco}
   cisco-cbs: {name: Cisco CBS, manufacturer: Cisco}
   cisco-cbs250-350: {name: Cisco CBS250/350, manufacturer: Cisco}
+  cisco-catalyst-1200: {name: Cisco Catalyst 1200 Firmware, manufacturer: Cisco}
+  cisco-catalyst-1300: {name: Cisco Catalyst 1300 Firmware, manufacturer: Cisco}
+  cisco-aireos: {name: Cisco AireOS, manufacturer: Cisco}
+  cisco-viptela: {name: Cisco Viptela OS, manufacturer: Cisco}
   fortios: {name: FortiOS, manufacturer: Fortinet}
   fortiap: {name: FortiAP, manufacturer: Fortinet}
   fortianalyzer: {name: FortiAnalyzer, manufacturer: Fortinet}
@@ -53,6 +61,10 @@ platform_mappings:
       platform: cisco-cbs
     - slugs: ['cisco-cbs250-*', 'cisco-cbs350-*']
       platform: cisco-cbs250-350
+    - slugs: ['cisco-c1200-*']
+      platform: cisco-catalyst-1200
+    - slugs: ['cisco-c1300-*', 'cisco-c1300x-*']
+      platform: cisco-catalyst-1300
     # No Nexus selected by the current manifest; do not assume N9K implies NX-OS (ACI).
   Fortinet:
     - slugs: ['fortinet-fg-*', 'fortinet-fgr-*', 'fortinet-fortigate-7081f', 'fortinet-fortigate-7121f']
@@ -195,6 +207,8 @@ oxidized_platform_mapping:
 # CBS uses the pinned ciscosmb model, but remains experimental until each target
 # family is validated against physical hardware. FortiAP and hardware
 # FortiAnalyzer remain unmapped pending driver/hardware validation.
+# Catalyst 1200/1300 are catalog identities only. No ciscosmb, Ansible or
+# monitoring mapping is implied until compatibility is verified on hardware.
 # Sophos platforms are inventory/monitoring identities only; no unverified
 # Oxidized model is assigned.
 # Check Point Gaia uses the pinned gaiaos model and a read-only Gaia Clish

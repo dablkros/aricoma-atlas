@@ -5,8 +5,8 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="color-scheme" content="light">
     <title>Aricoma Atlas — Operations</title>
-    <link rel="stylesheet" href="/static/styles.css?v=20261031-1">
-    <script src="/static/app.js?v=20261031-1" defer></script>
+    <link rel="stylesheet" href="/static/styles.css?v=20261031-2">
+    <script src="/static/app.js?v=20261031-2" defer></script>
   </head>
   <body>
     <a class="skip-link" href="#main-content">Skip to content</a>
@@ -538,8 +538,8 @@
             <label for="inventory-table">Device table</label>
             <button id="inventory-example" class="text-button" type="button">Insert example</button>
           </div>
-          <textarea id="inventory-table" rows="10" spellcheck="false" placeholder="Hostname&#9;Hardware model&#9;Management IP&#9;Site&#10;BR-SW01&#9;C9500-48Y4C&#9;10.0.0.10&#9;Bratislava DC"></textarea>
-          <p class="field-help">Required columns: Hostname, Hardware model, Management IP. Tab-, comma- and semicolon-separated data are accepted.</p>
+          <textarea id="inventory-table" rows="10" spellcheck="false" placeholder="Hostname&#9;Hardware model&#9;Management IP&#9;Site&#9;Platform&#10;BR-SW01&#9;C9500-48Y4C&#9;10.0.0.10&#9;Bratislava DC&#9;cisco-ios-xe"></textarea>
+          <p class="field-help">Required columns: Hostname, Hardware model, Management IP. Optional Platform accepts an Atlas platform slug. Missing ambiguous platforms can also be resolved from the dry-run. Tab-, comma- and semicolon-separated data are accepted.</p>
         </div>
 
         <div class="dialog-actions dialog-actions-plan">
@@ -569,12 +569,34 @@
           </div>
           <dl class="result-summary inventory-summary">
             <div><dt>Create</dt><dd id="inventory-create-count">0</dd></div>
+            <div><dt>Update</dt><dd id="inventory-update-count">0</dd></div>
             <div><dt>Unchanged</dt><dd id="inventory-unchanged-count">0</dd></div>
             <div><dt>Invalid</dt><dd id="inventory-invalid-count">0</dd></div>
             <div><dt>Conflict</dt><dd id="inventory-conflict-count">0</dd></div>
             <div><dt>Error</dt><dd id="inventory-error-count">0</dd></div>
           </dl>
           <p id="inventory-plan-message" class="inventory-plan-message"></p>
+
+          <section id="inventory-platform-resolution" class="device-type-resolution" hidden>
+            <div>
+              <p class="section-kicker">Action required</p>
+              <h3>Assign missing Platforms</h3>
+              <p>Choose the verified operating platform for one affected device. Atlas checks that the Platform and Device Type use the same manufacturer, then retries the dry-run.</p>
+            </div>
+            <div class="inventory-fields">
+              <div class="field-group">
+                <label for="inventory-platform-model">Affected device</label>
+                <select id="inventory-platform-model"></select>
+              </div>
+              <div class="field-group">
+                <label for="inventory-platform-value">Platform</label>
+                <select id="inventory-platform-value"><option value="">Select a platform</option></select>
+              </div>
+            </div>
+            <div class="dialog-actions">
+              <button id="inventory-platform-assign" class="button button-primary" type="button">Assign platform and retry plan</button>
+            </div>
+          </section>
 
           <section id="inventory-device-type-resolution" class="device-type-resolution" hidden>
             <div>
