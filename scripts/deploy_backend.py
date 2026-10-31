@@ -55,6 +55,12 @@ BACKEND_SECRET_PATH = "backend"
 OPERATOR_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,256}")
 ADMIN_BOOTSTRAP_PATH = Path(".runtime/auth/bootstrap-admin.json")
 ADMIN_MARKER_PATH = Path(".runtime/auth/admin-configured")
+PPP_DEVICE_PATH = Path("/dev/ppp")
+
+
+def vpn_ppp_available(path=PPP_DEVICE_PATH):
+    path = Path(path)
+    return not path.is_symlink() and path.is_char_device()
 
 
 def _route_probe_address(network):
@@ -534,9 +540,15 @@ def verify_admin_backend_access(root=ROOT, client=None):
                 ) from exc
 
 
-def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
+def prepare_runtime(
+    config, root=ROOT, ui_urls=None, selection=None, *, ppp_device_available=None,
+):
     root = Path(root).resolve()
     backend = config["backend"]
+    if ppp_device_available is None:
+        ppp_device_available = vpn_ppp_available()
+    if not isinstance(ppp_device_available, bool):
+        raise ValueError("ppp_device_available must be a boolean")
     selection = selection or load_components(root / ".runtime/components.yaml")
     required_ui_urls = set(selection.ingress_services)
     if not isinstance(ui_urls, dict) or set(ui_urls) != required_ui_urls:
@@ -849,7 +861,8 @@ def prepare_runtime(config, root=ROOT, ui_urls=None, selection=None):
                         f"{vpn_worker_identity_file}:/run/secrets/atlas-vpn-worker.json:ro",
                         f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
                     ],
-                    "devices": ["/dev/ppp:/dev/ppp"],
+                    **({"devices": ["/dev/ppp:/dev/ppp"]}
+                       if ppp_device_available else {}),
                     "networks": {"openbao": {}, "vpn_control": {}},
                     "read_only": True,
                     "tmpfs": ["/run:rw,nosuid,nodev,size=32m,mode=755", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"],
@@ -903,11 +916,19 @@ def main():
     sync_admin_bootstrap()
     verify_admin_backend_access()
     selection = load_components()
+    ppp_device_available = vpn_ppp_available()
     compose_file = prepare_runtime(
         config,
         ui_urls=public_service_urls(proxy_config),
         selection=selection,
+        ppp_device_available=ppp_device_available,
     )
+
+    if not ppp_device_available:
+        print(
+            "[WARN] /dev/ppp is unavailable; classic SSL-VPN tests are disabled. "
+            "IPsec VPN and the Atlas backend remain available."
+        )
 
     if args.prepare_only:
         print("[OK] Atlas backend runtime prepared; image not built and container not started")

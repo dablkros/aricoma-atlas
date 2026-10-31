@@ -83,7 +83,10 @@ Akceptácia na Ubuntu VM musí overiť reálny build patched image, IKE/CHILD,
 úspešný aj neúspešný TCP cieľ, timeout a cleanup aj druhý súbežný test.
 Samostatne treba overiť aj reálny FortiGate SSL-VPN profil, certifikačný reťazec,
 pridelenú PPP adresu, routy a dostupnosť cieľa. Hostiteľ musí poskytovať
-`/dev/ppp`; compose ho pripája iba workeru. Potom treba doplniť skutočné
+char device `/dev/ppp`; compose ho pripája iba workeru. Ak zariadenie nie je
+dostupné (napríklad na neprivilegovanom CI runneri), deployment pokračuje bez
+PPP mountu, vypíše varovanie a ponechá funkčný backend aj IPsec testy; klasický
+SSL-VPN test zostane nedostupný. Potom treba doplniť skutočné
 vykonávanie existujúceho Ansible backendu v rovnakom
 network namespace a dlhšie žijúci stavový automat pre produkčné úlohy.
 Širšia akceptácia musí overiť aspoň dva Tenants s prekrývajúcimi sa

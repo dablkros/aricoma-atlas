@@ -492,6 +492,7 @@ class BackendRuntimeTests(unittest.TestCase):
             self.config,
             self.root,
             self.ui_urls,
+            ppp_device_available=False,
         )
         data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         service = data["services"]["backend"]
@@ -680,13 +681,34 @@ class BackendRuntimeTests(unittest.TestCase):
         worker = data["services"]["vpn-worker"]
         self.assertEqual(worker["cap_drop"], ["ALL"])
         self.assertEqual(worker["cap_add"], ["NET_ADMIN", "NET_RAW"])
-        self.assertEqual(worker["devices"], ["/dev/ppp:/dev/ppp"])
+        self.assertNotIn("devices", worker)
         self.assertTrue(worker["read_only"])
         self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
         self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))
         self.assertIn("healthcheck", service)
         self.assertEqual(os.stat(compose_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(compose_file.parent).st_mode & 0o777, 0o700)
+
+    def test_vpn_worker_mounts_ppp_only_when_host_device_is_available(self):
+        without_ppp = deploy_backend.prepare_runtime(
+            self.config, self.root, self.ui_urls, ppp_device_available=False,
+        )
+        worker = yaml.safe_load(without_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
+        self.assertNotIn("devices", worker)
+
+        with_ppp = deploy_backend.prepare_runtime(
+            self.config, self.root, self.ui_urls, ppp_device_available=True,
+        )
+        worker = yaml.safe_load(with_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
+        self.assertEqual(worker["devices"], ["/dev/ppp:/dev/ppp"])
+
+    def test_ppp_capability_rejects_regular_files_and_symlinks(self):
+        regular = self.root / "not-a-ppp-device"
+        regular.write_text("not a device", encoding="utf-8")
+        self.assertFalse(deploy_backend.vpn_ppp_available(regular))
+        link = self.root / "ppp-link"
+        link.symlink_to(regular)
+        self.assertFalse(deploy_backend.vpn_ppp_available(link))
 
     def test_runtime_symlink_is_rejected(self):
         (self.root / ".runtime/openbao-backend.json").unlink()
