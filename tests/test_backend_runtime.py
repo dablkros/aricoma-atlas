@@ -641,6 +641,14 @@ class BackendRuntimeTests(unittest.TestCase):
             os.stat(self.root / ".runtime/vpn").st_mode & 0o777,
             0o700,
         )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/vpn/worker-token").st_mode & 0o777,
+            0o640,
+        )
+        self.assertEqual(
+            os.stat(self.root / ".runtime/openbao-vpn-worker.json").st_mode & 0o777,
+            0o640,
+        )
         self.assertIn(
             f"{(self.root / '.runtime/oxidized/ssh/known_hosts').resolve()}:"
             "/run/atlas/ssh/known_hosts:ro",
@@ -681,6 +689,7 @@ class BackendRuntimeTests(unittest.TestCase):
         worker = data["services"]["vpn-worker"]
         self.assertEqual(worker["cap_drop"], ["ALL"])
         self.assertEqual(worker["cap_add"], ["NET_ADMIN", "NET_RAW"])
+        self.assertEqual(worker["group_add"], [str(os.getegid())])
         self.assertNotIn("devices", worker)
         self.assertTrue(worker["read_only"])
         self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})

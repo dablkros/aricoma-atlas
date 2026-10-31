@@ -12,8 +12,11 @@ import subprocess
 import tempfile
 import threading
 import time
+from uuid import uuid4
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, Request
+from fastapi.exceptions import RequestValidationError
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from atlas.openbao_client import OpenBaoClient
@@ -29,6 +32,15 @@ from atlas.vpn.strongswan_config import (
 
 
 logger = logging.getLogger("atlas.vpn.worker")
+_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
+
+
+class WorkerError(Exception):
+    def __init__(self, status_code: int, code: str, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+        self.code = code
+        self.message = message
 
 
 class WorkerTestRequest(BaseModel):
@@ -80,13 +92,67 @@ worker_lock = threading.Lock()
 app = FastAPI(title="Atlas VPN worker", docs_url=None, redoc_url=None, openapi_url=None)
 
 
+def _request_id(request: Request) -> str:
+    candidate = request.headers.get("X-Request-ID", "")
+    return candidate if _REQUEST_ID_PATTERN.fullmatch(candidate) else uuid4().hex
+
+
+def _error_response(request: Request, status_code: int, code: str, message: str) -> JSONResponse:
+    request_id = _request_id(request)
+    logger.warning(
+        "vpn.worker_request_rejected",
+        extra={
+            "event": "vpn.worker_request_rejected",
+            "request_id": request_id,
+            "reason_code": code,
+            "status_code": status_code,
+        },
+    )
+    return JSONResponse(
+        status_code=status_code,
+        content={
+            "error": {
+                "code": code,
+                "message": message,
+                "request_id": request_id,
+            }
+        },
+        headers={"X-Request-ID": request_id},
+    )
+
+
+@app.exception_handler(WorkerError)
+async def worker_error_handler(request: Request, exc: WorkerError) -> JSONResponse:
+    return _error_response(request, exc.status_code, exc.code, exc.message)
+
+
+@app.exception_handler(RequestValidationError)
+async def worker_validation_error_handler(
+    request: Request, _exc: RequestValidationError,
+) -> JSONResponse:
+    return _error_response(
+        request,
+        422,
+        "vpn_worker_request_rejected",
+        "The VPN worker rejected the test request",
+    )
+
+
 def _token() -> str:
     try:
         value = settings.token_file.read_text(encoding="utf-8").strip()
     except OSError:
-        raise HTTPException(503, "worker identity unavailable") from None
+        raise WorkerError(
+            503,
+            "vpn_worker_identity_unavailable",
+            "The VPN worker identity is unavailable",
+        ) from None
     if not re.fullmatch(r"[A-Za-z0-9_-]{32,256}", value):
-        raise HTTPException(503, "worker identity unavailable")
+        raise WorkerError(
+            503,
+            "vpn_worker_identity_unavailable",
+            "The VPN worker identity is unavailable",
+        )
     return value
 
 
@@ -94,7 +160,11 @@ def _authorized(authorization: str | None) -> None:
     import hmac
     expected = f"Bearer {_token()}"
     if authorization is None or not hmac.compare_digest(authorization, expected):
-        raise HTTPException(401, "unauthorized")
+        raise WorkerError(
+            401,
+            "vpn_worker_authentication_failed",
+            "Atlas could not authenticate to the VPN worker",
+        )
 
 
 def _run(arguments: list[str], *, timeout: float = 10, check: bool = True) -> subprocess.CompletedProcess:
@@ -257,14 +327,20 @@ def health() -> dict:
 
 
 @app.post("/v1/test")
-def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default=None)) -> dict:
+def test_vpn(
+    body: WorkerTestRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict:
     _authorized(authorization)
     if not worker_lock.acquire(blocking=False):
-        raise HTTPException(409, "another VPN test is active")
+        raise WorkerError(409, "vpn_test_busy", "Another VPN test is already running")
+    request_id = _request_id(request)
     logger.info(
         "vpn.worker_test_started",
         extra={
             "event": "vpn.worker_test_started",
+            "request_id": request_id,
             "connection_id": body.connection_id,
             "driver": body.driver,
             "protocol": body.protocol,
@@ -384,6 +460,7 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
             "vpn.worker_test_validation_failed",
             extra={
                 "event": "vpn.worker_test_validation_failed",
+                "request_id": request_id,
                 "connection_id": body.connection_id,
                 "reason_code": "unsupported_profile_type",
             },
@@ -395,6 +472,7 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
             "vpn.worker_test_execution_failed",
             extra={
                 "event": "vpn.worker_test_execution_failed",
+                "request_id": request_id,
                 "connection_id": body.connection_id,
                 "reason_code": "unexpected_execution_error",
                 "exception_type": type(exc).__name__,
@@ -416,6 +494,7 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
             "vpn.worker_test_finished",
             extra={
                 "event": "vpn.worker_test_finished",
+                "request_id": request_id,
                 "connection_id": body.connection_id,
                 "status": result["status"],
                 "failure_stage": result["failure_stage"],

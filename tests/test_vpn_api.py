@@ -141,9 +141,11 @@ class FakeVPNService:
 class FakeVPNTestService:
     def __init__(self):
         self.calls = []
+        self.request_ids = []
 
-    def run(self, connection_id, *, device_id, target_port):
+    def run(self, connection_id, *, device_id, target_port, request_id=None):
         self.calls.append((connection_id, device_id, target_port))
+        self.request_ids.append(request_id)
         return VPNConnectivityTestResult(**{
             "connection_id": connection_id,
             "device_id": device_id,

@@ -3,6 +3,8 @@ import tempfile
 import unittest
 from unittest.mock import MagicMock, patch
 
+from starlette.requests import Request
+
 from atlas.vpn.worker_app import (
     WorkerTestRequest, _profile, _render_ssl_config, _ssl_profile, settings, test_vpn,
 )
@@ -16,6 +18,13 @@ def request():
         driver="strongswan", protocol="ipsec-ikev2",
         target_ip="10.0.0.10", target_port=22,
     )
+
+
+def http_request():
+    return Request({
+        "type": "http",
+        "headers": [(b"x-request-id", b"vpn-test-request")],
+    })
 
 
 def secret():
@@ -89,7 +98,7 @@ class VPNWorkerAppTests(unittest.TestCase):
                  patch("atlas.vpn.worker_app.socket.create_connection", return_value=connection), \
                  patch("atlas.vpn.worker_app._cleanup_ssl", return_value=True) as cleanup:
                 openbao.return_value.read_secret.return_value = ssl_secret()
-                result = test_vpn(ssl_request(), "Bearer test")
+                result = test_vpn(ssl_request(), http_request(), "Bearer test")
 
         cleanup.assert_called_once_with(process, "ppp0")
         self.assertEqual(result["status"], "passed")
@@ -104,7 +113,7 @@ class VPNWorkerAppTests(unittest.TestCase):
              patch("atlas.vpn.worker_app._profile", side_effect=RuntimeError("failed")), \
              patch("atlas.vpn.worker_app._cleanup", return_value=True) as cleanup:
             openbao.return_value.read_secret.return_value = secret()
-            result = test_vpn(request(), "Bearer test")
+            result = test_vpn(request(), http_request(), "Bearer test")
 
         cleanup.assert_called_once_with(None)
         self.assertTrue(result["disconnected"])
@@ -117,7 +126,7 @@ class VPNWorkerAppTests(unittest.TestCase):
              patch("atlas.vpn.worker_app._profile", side_effect=RuntimeError("failed")), \
              patch("atlas.vpn.worker_app._cleanup", return_value=False):
             openbao.return_value.read_secret.return_value = secret()
-            result = test_vpn(request(), "Bearer test")
+            result = test_vpn(request(), http_request(), "Bearer test")
 
         self.assertFalse(result["disconnected"])
         self.assertEqual(result["failure_stage"], "cleanup")

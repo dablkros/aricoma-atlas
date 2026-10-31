@@ -13,6 +13,13 @@ from atlas.vpn.service import VPNRegistryError
 
 
 logger = logging.getLogger("atlas.vpn.worker_client")
+_REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
+_WORKER_ERROR_STATUS = {
+    "vpn_worker_authentication_failed": (401, 503),
+    "vpn_test_busy": (409, 409),
+    "vpn_worker_request_rejected": (422, 503),
+    "vpn_worker_identity_unavailable": (503, 503),
+}
 
 
 class VPNWorkerError(RuntimeError):
@@ -39,12 +46,15 @@ class VPNWorkerClient:
             raise VPNWorkerError("vpn_worker_unavailable")
         return token
 
-    def test(self, payload: dict) -> dict:
+    def test(self, payload: dict, *, request_id: str | None = None) -> dict:
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        if request_id is not None and _REQUEST_ID_PATTERN.fullmatch(request_id):
+            headers["X-Request-ID"] = request_id
         try:
             response = requests.post(
                 f"{self.base_url}/v1/test",
                 json=payload,
-                headers={"Authorization": f"Bearer {self._token()}"},
+                headers=headers,
                 timeout=self.timeout,
             )
         except requests.RequestException as exc:
@@ -53,6 +63,7 @@ class VPNWorkerClient:
                 extra={
                     "event": "vpn.worker_request_failed",
                     "reason_code": "vpn_worker_unavailable",
+                    "request_id": request_id,
                     "exception_type": type(exc).__name__,
                 },
             )
@@ -61,28 +72,27 @@ class VPNWorkerClient:
             data = response.json()
         except ValueError:
             raise VPNWorkerError("vpn_worker_invalid_response") from None
-        response_errors = {
-            401: ("vpn_worker_authentication_failed", 503),
-            409: ("vpn_test_busy", 409),
-            422: ("vpn_worker_request_rejected", 503),
-            503: ("vpn_worker_identity_unavailable", 503),
-        }
-        if response.status_code in response_errors:
-            code, status_code = response_errors[response.status_code]
+        error = data.get("error") if isinstance(data, dict) else None
+        worker_code = error.get("code") if isinstance(error, dict) else None
+        expected_status = _WORKER_ERROR_STATUS.get(worker_code)
+        if expected_status is not None and response.status_code == expected_status[0]:
+            status_code = expected_status[1]
             logger.warning(
                 "vpn.worker_response_rejected",
                 extra={
                     "event": "vpn.worker_response_rejected",
-                    "reason_code": code,
+                    "request_id": request_id,
+                    "reason_code": worker_code,
                     "worker_status_code": response.status_code,
                 },
             )
-            raise VPNWorkerError(code, status_code)
+            raise VPNWorkerError(worker_code, status_code)
         if response.status_code != 200 or not isinstance(data, dict):
             logger.warning(
                 "vpn.worker_response_failed",
                 extra={
                     "event": "vpn.worker_response_failed",
+                    "request_id": request_id,
                     "reason_code": "vpn_worker_failed",
                     "worker_status_code": response.status_code,
                 },
@@ -98,7 +108,14 @@ class VPNConnectivityTestService:
         self.registry = registry
         self.worker = worker
 
-    def run(self, connection_id: str, *, device_id: int, target_port: int) -> VPNConnectivityTestResult:
+    def run(
+        self,
+        connection_id: str,
+        *,
+        device_id: int,
+        target_port: int,
+        request_id: str | None = None,
+    ) -> VPNConnectivityTestResult:
         connection = self.registry.get(connection_id)
         if connection.administrative_status == "disabled":
             raise VPNWorkerError("connection_disabled", 409)
@@ -127,7 +144,7 @@ class VPNConnectivityTestService:
             "target_ip": resolved["management_ip"],
             "target_port": target_port,
         }
-        result = self.worker.test(payload)
+        result = self.worker.test(payload, request_id=request_id)
         result.update({
             "connection_id": connection_id,
             "device_id": device_id,

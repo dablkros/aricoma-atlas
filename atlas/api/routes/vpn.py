@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Query, Request, status
 
 from atlas.api.errors import AtlasError
 from atlas.api.operator_auth import require_operator, validated_operator_token
+from atlas.api.request_context import get_request_id
 from atlas.vpn.models import (
     VPNAssignmentRequest,
     VPNConnectionCreate,
@@ -254,7 +255,10 @@ def test_connection(
     )
     result = _test_translate(
         lambda: service.run(
-            connection_id, device_id=body.device_id, target_port=body.target_port,
+            connection_id,
+            device_id=body.device_id,
+            target_port=body.target_port,
+            request_id=get_request_id(request),
         )
     )
     logger.info(

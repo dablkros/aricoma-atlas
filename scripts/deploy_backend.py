@@ -608,6 +608,9 @@ def prepare_runtime(
     vpn_worker_identity_file = root / ".runtime/openbao-vpn-worker.json"
     if vpn_worker_identity_file.is_symlink() or not vpn_worker_identity_file.is_file():
         raise RuntimeError("Atlas VPN worker AppRole identity is missing or invalid")
+    if vpn_worker_identity_file.stat().st_gid != os.getegid():
+        raise RuntimeError("Atlas VPN worker AppRole identity has an unexpected group")
+    os.chmod(vpn_worker_identity_file, 0o640)
 
     monitoring_directory = root / ".runtime/monitoring"
     if monitoring_directory.is_symlink():
@@ -686,7 +689,9 @@ def prepare_runtime(
     if not vpn_worker_token_file.exists():
         _materialize_operator_token(vpn_worker_token_file, secrets.token_urlsafe(48))
     _read_local_operator_token(vpn_worker_token_file)
-    os.chmod(vpn_worker_token_file, 0o600)
+    if vpn_worker_token_file.stat().st_gid != os.getegid():
+        raise RuntimeError("VPN worker token has an unexpected group")
+    os.chmod(vpn_worker_token_file, 0o640)
 
     inventory_config = root / ".runtime/inventory.yaml"
     inventory_device_types = root / ".runtime/inventory/device-types"
@@ -850,6 +855,7 @@ def prepare_runtime(
                     },
                     "restart": "unless-stopped",
                     "init": True,
+                    "group_add": [str(runtime_group)],
                     "environment": {
                         "ATLAS_OPENBAO_URL": "http://atlas-openbao:8200",
                         "ATLAS_VPN_WORKER_IDENTITY_FILE": "/run/secrets/atlas-vpn-worker.json",

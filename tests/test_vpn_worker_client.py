@@ -42,9 +42,11 @@ class Registry:
 class Worker:
     def __init__(self):
         self.payload = None
+        self.request_id = None
 
-    def test(self, payload):
+    def test(self, payload, *, request_id=None):
         self.payload = payload
+        self.request_id = request_id
         return {
             "status": "passed", "tunnel_established": True,
             "target_reachable": True, "assigned_address": "100.64.0.2",
@@ -62,11 +64,17 @@ class VPNConnectivityServiceTests(unittest.TestCase):
     def test_sends_only_validated_metadata_and_returns_sanitized_result(self):
         worker = Worker()
         service = VPNConnectivityTestService(Registry(), worker)
-        result = service.run("customer-vpn", device_id=7, target_port=443)
+        result = service.run(
+            "customer-vpn",
+            device_id=7,
+            target_port=443,
+            request_id="request-123",
+        )
 
         self.assertEqual(worker.payload["target_ip"], "10.0.0.10")
         self.assertEqual(worker.payload["secret_ref"], "vpn/connections/customer-vpn")
         self.assertNotIn("password", worker.payload)
+        self.assertEqual(worker.request_id, "request-123")
         self.assertEqual(result.status, "passed")
         self.assertTrue(result.disconnected)
 
