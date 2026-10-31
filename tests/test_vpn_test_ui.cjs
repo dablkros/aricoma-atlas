@@ -16,7 +16,7 @@ class Element {
 }
 
 const ids = ['Open','Dialog','Close','Tenant','Connection','Site','Device','Port','Run','Message',
-  'Activity','Result','ResultTitle','Status','Tunnel','Target','Address','Cleanup','Detail'];
+  'Activity','ActivityTitle','ActivityDetail','Result','ResultTitle','Status','Tunnel','Target','Address','Cleanup','Detail'];
 const elements = {};
 for (const id of ids) elements['vpnTest' + id] = new Element();
 elements.vpnTestPort.value = '22';
@@ -29,6 +29,7 @@ const options = {
 };
 const context = vm.createContext({
   elements, state, Option:function(label,value){return {label,value};},
+  window:{setInterval,clearInterval},
   requireOperatorToken:()=>true, operatorHeaders:()=>({}), encodeURIComponent,
   apiRequest:async (url, request) => {
     calls.push([url,request]);

@@ -3,12 +3,16 @@
 from __future__ import annotations
 
 from pathlib import Path
+import logging
 import re
 
 import requests
 
 from atlas.vpn.models import VPNConnectivityTestResult
 from atlas.vpn.service import VPNRegistryError
+
+
+logger = logging.getLogger("atlas.vpn.worker_client")
 
 
 class VPNWorkerError(RuntimeError):
@@ -43,15 +47,46 @@ class VPNWorkerClient:
                 headers={"Authorization": f"Bearer {self._token()}"},
                 timeout=self.timeout,
             )
-        except requests.RequestException:
+        except requests.RequestException as exc:
+            logger.warning(
+                "vpn.worker_request_failed",
+                extra={
+                    "event": "vpn.worker_request_failed",
+                    "reason_code": "vpn_worker_unavailable",
+                    "exception_type": type(exc).__name__,
+                },
+            )
             raise VPNWorkerError("vpn_worker_unavailable") from None
         try:
             data = response.json()
         except ValueError:
             raise VPNWorkerError("vpn_worker_invalid_response") from None
-        if response.status_code == 409:
-            raise VPNWorkerError("vpn_test_busy", 409)
+        response_errors = {
+            401: ("vpn_worker_authentication_failed", 503),
+            409: ("vpn_test_busy", 409),
+            422: ("vpn_worker_request_rejected", 503),
+            503: ("vpn_worker_identity_unavailable", 503),
+        }
+        if response.status_code in response_errors:
+            code, status_code = response_errors[response.status_code]
+            logger.warning(
+                "vpn.worker_response_rejected",
+                extra={
+                    "event": "vpn.worker_response_rejected",
+                    "reason_code": code,
+                    "worker_status_code": response.status_code,
+                },
+            )
+            raise VPNWorkerError(code, status_code)
         if response.status_code != 200 or not isinstance(data, dict):
+            logger.warning(
+                "vpn.worker_response_failed",
+                extra={
+                    "event": "vpn.worker_response_failed",
+                    "reason_code": "vpn_worker_failed",
+                    "worker_status_code": response.status_code,
+                },
+            )
             raise VPNWorkerError("vpn_worker_failed")
         return data
 

@@ -210,6 +210,8 @@ const elements = {
   vpnTestRun: document.querySelector("#vpn-test-run"),
   vpnTestMessage: document.querySelector("#vpn-test-message"),
   vpnTestActivity: document.querySelector("#vpn-test-activity"),
+  vpnTestActivityTitle: document.querySelector("#vpn-test-activity-title"),
+  vpnTestActivityDetail: document.querySelector("#vpn-test-activity-detail"),
   vpnTestResult: document.querySelector("#vpn-test-result"),
   vpnTestResultTitle: document.querySelector("#vpn-test-result-title"),
   vpnTestStatus: document.querySelector("#vpn-test-status"),
@@ -238,6 +240,7 @@ class ApiError extends Error {
     this.data = data;
     this.code = data?.error?.code || "request_failed";
     this.safeMessage = data?.error?.message || "The operation could not be completed.";
+    this.requestId = data?.error?.request_id || null;
   }
 }
 
@@ -2969,7 +2972,14 @@ async function runVPNTest() {
   resetVPNTestResult();
   updateVPNTestRun();
   elements.vpnTestActivity.hidden = false;
+  elements.vpnTestActivityTitle.textContent = "Waiting for the isolated VPN worker";
+  elements.vpnTestActivityDetail.textContent = "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
   elements.vpnTestMessage.textContent = "The worker is connecting and will disconnect automatically after the check.";
+  const startedAt = Date.now();
+  const activityTimer = window.setInterval(() => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    elements.vpnTestActivityDetail.textContent = `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
+  }, 1000);
   const connectionId = elements.vpnTestConnection.value;
   try {
     const result = await apiRequest(
@@ -2994,8 +3004,21 @@ async function runVPNTest() {
       ? "Test finished. The temporary VPN connectivity is closed."
       : "Test finished, but cleanup was not confirmed.";
   } catch (error) {
-    elements.vpnTestMessage.textContent = error.safeMessage || "The VPN test could not be started.";
+    const safeMessage = error.safeMessage || "The VPN test could not be started.";
+    const errorCode = error.code || "request_failed";
+    const requestReference = error.requestId ? ` Request ID: ${error.requestId}.` : "";
+    elements.vpnTestResult.hidden = false;
+    elements.vpnTestStatus.textContent = "Failed";
+    elements.vpnTestStatus.className = "status-pill status-pill-unhealthy";
+    elements.vpnTestResultTitle.textContent = "VPN test could not run";
+    elements.vpnTestTunnel.textContent = "Not evaluated";
+    elements.vpnTestTarget.textContent = "Not evaluated";
+    elements.vpnTestAddress.textContent = "Not available";
+    elements.vpnTestCleanup.textContent = "No tunnel state returned";
+    elements.vpnTestDetail.textContent = `${safeMessage}. Code: ${errorCode}.${requestReference} Check VPN worker logs for the matching request.`;
+    elements.vpnTestMessage.textContent = "The request failed before Atlas received a test result. No successful tunnel is being reported.";
   } finally {
+    window.clearInterval(activityTimer);
     state.vpnTestBusy = false;
     elements.vpnTestActivity.hidden = true;
     updateVPNTestRun();

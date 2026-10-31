@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import logging
 import os
 from pathlib import Path
 import re
@@ -25,6 +26,9 @@ from atlas.vpn.strongswan_config import (
     render_fortinet_daemon_fragment,
     render_swanctl,
 )
+
+
+logger = logging.getLogger("atlas.vpn.worker")
 
 
 class WorkerTestRequest(BaseModel):
@@ -257,6 +261,16 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
     _authorized(authorization)
     if not worker_lock.acquire(blocking=False):
         raise HTTPException(409, "another VPN test is active")
+    logger.info(
+        "vpn.worker_test_started",
+        extra={
+            "event": "vpn.worker_test_started",
+            "connection_id": body.connection_id,
+            "driver": body.driver,
+            "protocol": body.protocol,
+            "target_port": body.target_port,
+        },
+    )
     started = time.monotonic()
     charon = None
     ssl_process = None
@@ -366,9 +380,26 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
                         message="The tunnel established, but the selected TCP target did not answer.",
                     )
     except FortiClientProfileError:
+        logger.warning(
+            "vpn.worker_test_validation_failed",
+            extra={
+                "event": "vpn.worker_test_validation_failed",
+                "connection_id": body.connection_id,
+                "reason_code": "unsupported_profile_type",
+            },
+        )
         result.update(failure_stage="validation", message="The stored VPN profile is not supported by this worker.")
-    except Exception:
+    except Exception as exc:
         # Never copy exception text because it could include dependency details.
+        logger.warning(
+            "vpn.worker_test_execution_failed",
+            extra={
+                "event": "vpn.worker_test_execution_failed",
+                "connection_id": body.connection_id,
+                "reason_code": "unexpected_execution_error",
+                "exception_type": type(exc).__name__,
+            },
+        )
         result.update(failure_stage=result.get("failure_stage") or "worker")
     finally:
         clean = (_cleanup(charon) if cleanup_kind == "ipsec"
@@ -381,6 +412,17 @@ def test_vpn(body: WorkerTestRequest, authorization: str | None = Header(default
             result.update(status="failed", failure_stage="cleanup", message="VPN cleanup did not complete cleanly.")
         result["disconnected"] = clean
         result["duration_ms"] = int((time.monotonic() - started) * 1000)
+        logger.info(
+            "vpn.worker_test_finished",
+            extra={
+                "event": "vpn.worker_test_finished",
+                "connection_id": body.connection_id,
+                "status": result["status"],
+                "failure_stage": result["failure_stage"],
+                "disconnected": result["disconnected"],
+                "duration_ms": result["duration_ms"],
+            },
+        )
         worker_lock.release()
     return result
 
