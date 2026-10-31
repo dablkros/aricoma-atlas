@@ -2305,6 +2305,11 @@ function toast(message, type = "success") {
       activeDialog.append(region);
     }
   }
+  const duplicate = [...region.children].find(
+    (candidate) => candidate.classList.contains(`toast-${type}`)
+      && candidate.textContent === String(message),
+  );
+  if (duplicate) return;
   region.append(item);
   window.setTimeout(() => {
     item.remove();

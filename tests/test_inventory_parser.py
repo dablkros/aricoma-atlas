@@ -77,6 +77,25 @@ class InventoryParserTests(unittest.TestCase):
 
         self.assertEqual(rows[0].model, "C9300L-24P-4G")
 
+    def test_parse_clipboard_unicode_line_separators_and_bom(self):
+        rows = parse_inventory_table(
+            "\ufeffHostname,Hardware model,Management IP,Device Role\u2028"
+            "ZI2DLNCSWP01,N9K-C93360YC-FX2,10.1.248.20, Switch\u2029"
+            "ZI2DLNCSWP02,N9K-C93360YC-FX2,10.1.248.21, Switch"
+        )
+
+        self.assertEqual(len(rows), 2)
+        self.assertEqual(rows[0].device_role, "Switch")
+
+    def test_parse_clipboard_carriage_return_lines(self):
+        rows = parse_inventory_table(
+            "Hostname,Hardware model,Management IP\r"
+            "BR-SW03,C9200L-24T-4X,10.0.0.12\r"
+        )
+
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].hostname, "BR-SW03")
+
     def test_parse_pasted_table_requires_headers(self):
         with self.assertRaisesRegex(ValueError, "management_ip"):
             parse_inventory_table("Hostname,Hardware model\nSW01,C9500-48Y4C\n")
