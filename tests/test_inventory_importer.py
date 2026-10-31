@@ -337,6 +337,9 @@ class InventoryImporterTests(unittest.TestCase):
             "default_platform": None,
         })
         self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+        self.client.objects["/api/dcim/device-roles/"].append({
+            "id": 41, "name": "Switch", "slug": "switch",
+        })
 
         report = self.importer.import_rows([
             self.row(model="Nexus 93360YC-FX2", platform="cisco-nxos"),
@@ -550,6 +553,9 @@ class InventoryImporterTests(unittest.TestCase):
         device["platform"] = {"id": 31, "slug": "cisco-aci"}
         self.device_type["default_platform"] = None
         self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+        self.client.objects["/api/dcim/device-roles/"].append({
+            "id": 41, "name": "Switch", "slug": "switch",
+        })
 
         report = self.importer.import_rows([
             self.row(platform="cisco-nxos"),
