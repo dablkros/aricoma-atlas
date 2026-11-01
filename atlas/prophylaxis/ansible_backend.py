@@ -289,14 +289,7 @@ class AnsibleBackend:
         return {
             "ATLAS_DEVICE_USERNAME": credentials["username"],
             "ATLAS_DEVICE_PASSWORD": credentials["password"],
-            # Local allow-listed CLI modules deliberately stay in the login
-            # privilege level.  Never let a stored enable secret turn their
-            # local Ansible task into a privilege-escalation attempt.
-            "ATLAS_DEVICE_ENABLE_PASSWORD": (
-                credentials.get("enable_password", "")
-                if profile.ansible_connection != "local"
-                else ""
-            ),
+            "ATLAS_DEVICE_ENABLE_PASSWORD": credentials.get("enable_password", ""),
         }
 
     def execute(

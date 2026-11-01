@@ -1,14 +1,6 @@
 ---
 - name: Collect Cisco CBS CPU utilization
-  atlas_cisco_readonly_cli:
-    host: "{{ ansible_host }}"
-    port: "{{ ansible_port | int }}"
-    username: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_USERNAME') }}"
-    password: "{{ lookup('ansible.builtin.env', 'ATLAS_DEVICE_PASSWORD') }}"
-    connect_timeout: "{{ ansible_connect_timeout | int }}"
-    command_timeout: "{{ ansible_command_timeout | int }}"
-    host_key_checking: "{{ ansible_host_key_checking | bool }}"
-    known_hosts_path: "{{ lookup('ansible.builtin.env', 'HOME') }}/.ssh/known_hosts"
+  community.ciscosmb.command:
     commands:
       - show cpu utilization
   register: atlas_cisco_cpu

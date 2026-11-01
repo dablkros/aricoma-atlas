@@ -2042,10 +2042,9 @@ podporuje `aruba-aos-cx` a `checkpoint-gaia` a zbiera `hostname`, `model`,
 Platforma sa berie výhradne z `device.platform.slug`; Atlas ju neodhaduje podľa
 výrobcu. Vrstva načítava účelové `prophylaxis` credentials cez existujúcu
 OpenBao AppRole vrstvu a vracia
-secret-free normalizovaný výsledok. Cisco IOS/IOS-XE/CBS/Catalyst 1200/1300
-CLI vykonáva Ansible cez Atlas allow-listed read-only SSH modul bez `enable`;
-rovnaká hranica platí pre allow-listed FortiOS SSH CLI. FortiOS monitor API
-zostáva samostatnou HTTPS cestou. Atlas nemá Netmiko ani všeobecný SSH driver.
+secret-free normalizovaný výsledok. Cisco CLI a FortiOS monitor API alebo
+allow-listed FortiOS SSH CLI vykonáva Ansible cez `ansible-runner`; Atlas už
+nemá Netmiko ani všeobecný SSH driver.
 Profylaxia číta výhradne účelový OpenBao secret bez fallbacku na `/admin`:
 
 ```text
@@ -2055,10 +2054,8 @@ devices/credentials/<manufacturer>/<credential_profile>/prophylaxis
 Príklad pre FortiGate s `credential_profile=forti-mt` je
 `devices/credentials/fortinet/forti-mt/prophylaxis`.
 
-SSH platformy očakávajú `username` a `password`. Cisco profylaxia zámerne
-ignoruje `enable_password` a zostáva v prihlasovacom privilege leveli;
-nepovolený príkaz sa vyhodnotí konzervatívne namiesto eskalácie oprávnení.
-FortiOS so službou `fortios-api` očakáva `api_token`;
+SSH platformy očakávajú `username`, `password` a voliteľný
+`enable_password`. FortiOS so službou `fortios-api` očakáva `api_token`;
 FortiOS bez nej očakáva `username` a `password`. Oxidized naďalej používa
 samostatnú koncovku `/oxidized`.
 
