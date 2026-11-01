@@ -494,6 +494,7 @@ class BackendRuntimeTests(unittest.TestCase):
             self.root,
             self.ui_urls,
             ppp_device_available=False,
+            tun_device_available=False,
         )
         data = yaml.safe_load(compose_file.read_text(encoding="utf-8"))
         service = data["services"]["backend"]
@@ -818,12 +819,14 @@ class BackendRuntimeTests(unittest.TestCase):
                     "-d",
                     "--force-recreate",
                     "vpn-worker",
+                    "vpn-collector",
                     "backend",
                 ),
             ],
         )
         self.assertEqual(wait_mock.call_args_list, [
             call(compose_file, "atlas-backend", "vpn-worker", 120),
+            call(compose_file, "atlas-backend", "vpn-collector", 120),
             call(compose_file, "atlas-backend", "backend", 120),
         ])
 
