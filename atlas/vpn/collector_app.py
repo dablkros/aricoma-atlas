@@ -11,12 +11,14 @@ from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
+from atlas.logging import configure_logging
 from atlas.prophylaxis.ansible_backend import AnsibleBackend
 from atlas.prophylaxis.errors import ProphylaxisExecutionError
 from atlas.prophylaxis.models import CheckId, CollectorId
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry, FORTIOS_SSH_PROFILE
 
 
+configure_logging(os.environ.get("ATLAS_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("atlas.vpn.collector")
 
 

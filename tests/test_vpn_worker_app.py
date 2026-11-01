@@ -7,7 +7,7 @@ from starlette.requests import Request
 
 from atlas.vpn.worker_app import (
     WorkerSessionOpenRequest, WorkerTestRequest, _profile, _render_ssl_config,
-    _ssl_profile, settings, test_vpn,
+    _openvpn_target_ips, _ssl_profile, settings, test_vpn,
 )
 
 
@@ -59,6 +59,23 @@ def ssl_secret():
 
 
 class VPNWorkerAppTests(unittest.TestCase):
+    def test_connectivity_test_routes_proof_target_and_session_routes_devices(self):
+        self.assertEqual(_openvpn_target_ips(request()), ("10.0.0.10",))
+        session = WorkerSessionOpenRequest(
+            connection_id="customer-vpn",
+            tenant_id=1,
+            secret_ref="vpn/connections/customer-vpn",
+            gateway_host="vpn.example.test",
+            gateway_port=1194,
+            driver="openvpn",
+            protocol="openvpn",
+            target_ips=["10.1.248.20", "10.1.248.21"],
+        )
+        self.assertEqual(
+            _openvpn_target_ips(session),
+            ("10.1.248.20", "10.1.248.21"),
+        )
+
     def test_session_request_accepts_only_explicit_ipv4_targets(self):
         body = WorkerSessionOpenRequest(
             connection_id="customer-vpn",

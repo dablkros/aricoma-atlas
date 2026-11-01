@@ -21,6 +21,7 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from atlas.logging import configure_logging
 from atlas.openbao_client import OpenBaoClient
 from atlas.services.openbao import OpenBaoService
 from atlas.vpn.forticlient_profile import (
@@ -36,6 +37,7 @@ from atlas.vpn.strongswan_config import (
 )
 
 
+configure_logging(os.environ.get("ATLAS_LOG_LEVEL", "INFO"))
 logger = logging.getLogger("atlas.vpn.worker")
 _REQUEST_ID_PATTERN = re.compile(r"[A-Za-z0-9._-]{1,128}")
 
@@ -396,12 +398,21 @@ def _cleanup_ssl(process: subprocess.Popen | None, interface: str | None) -> boo
     return clean
 
 
+def _openvpn_target_ips(
+    body: WorkerTestRequest | WorkerSessionOpenRequest,
+) -> tuple[str, ...]:
+    if isinstance(body, WorkerTestRequest):
+        return (body.target_ip,)
+    return tuple(body.target_ips)
+
+
 def _start_openvpn(
     secret: dict,
     body: WorkerTestRequest | WorkerSessionOpenRequest,
     directory: Path,
 ) -> tuple[subprocess.Popen, str, str]:
     config, username, password = _openvpn_profile(secret, body)
+    target_ips = _openvpn_target_ips(body)
     auth_path = directory / "auth.txt"
     config_path = directory / "client.conf"
     auth_path.write_text(f"{username}\n{password}\n", encoding="utf-8")
@@ -410,7 +421,7 @@ def _start_openvpn(
         render_openvpn_runtime_config(
             config,
             str(auth_path),
-            tuple(body.target_ips) if isinstance(body, WorkerSessionOpenRequest) else (),
+            target_ips,
         ),
         encoding="utf-8",
     )
@@ -430,13 +441,8 @@ def _start_openvpn(
         if interface and assigned:
             candidate_interface = interface
             candidate_address = assigned
-            targets = (
-                tuple(body.target_ips)
-                if isinstance(body, WorkerSessionOpenRequest)
-                else ()
-            )
             routes_ready = True
-            for target in targets:
+            for target in target_ips:
                 route = _run(
                     ["ip", "-4", "route", "get", target],
                     timeout=3,
@@ -519,7 +525,13 @@ def open_session(
         session.timer.start()
         logger.info(
             "vpn.worker_session_opened",
-            extra={"event": "vpn.worker_session_opened", "connection_id": body.connection_id},
+            extra={
+                "event": "vpn.worker_session_opened",
+                "connection_id": body.connection_id,
+                "assigned_address": assigned,
+                "interface": interface,
+                "target_count": len(body.target_ips),
+            },
         )
         return {"session_id": session.session_id, "assigned_address": assigned}
     except Exception:

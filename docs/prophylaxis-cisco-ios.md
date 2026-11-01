@@ -1,6 +1,6 @@
 # Cisco IOS/IOS-XE tematické collectory profylaxie
 
-Stav implementácie: 2026-10-23. Rozsah: NetBox platformy `cisco-ios` a
+Stav implementácie: 2026-11-01. Rozsah: NetBox platformy `cisco-ios` a
 `cisco-ios-xe`; CLI normalizátory sú zámerne predbežné do overenia na reálnych
 anonymizovaných výstupoch.
 
@@ -41,6 +41,19 @@ priamych volajúcich backendu.
 **Fakt:** Jeden tematický collector vykoná svoju sadu príkazov raz a jednotlivé
 checks nad ňou používajú samostatné normalizátory. Neplatný alebo nepodporovaný
 príkaz sa neinterpretuje ako zdravý nulový stav.
+
+## Read-only SSH hranica
+
+**Fakt:** Cisco IOS/IOS-XE a Cisco SMB rodina používajú lokálny Atlas SSH
+modul `atlas_cisco_readonly_cli`. Modul prijíma iba pevný allowlist zberových
+príkazov, nevykonáva `enable` ani konfiguračný režim a ignoruje prípadný
+`enable_password` uložený v credential profile. Podporuje aj sekundárny
+`User Name`/`Password` dialóg Cisco SMB a explicitne pripnuté staršie SSH
+algoritmy potrebné pre legacy IOS.
+
+**Fakt:** Jednotlivý príkaz, ktorý privilege level 1 alebo konkrétny firmware
+nepodporuje, zostáva vo výstupe ako nepodporovaný dôkaz pre normalizátor. Nesmie
+zhodiť ostatné úspešne zozbierané read-only príkazy v rovnakom collectore.
 
 ## Typovaný výsledkový kontrakt
 
