@@ -1,25 +1,23 @@
 ---
-- name: Collect Cisco CBS operational-health commands
-  community.ciscosmb.command:
-    commands:
-      - show clock
-      - show sntp status
-      - show logging
-      - show ip route
-      - show ip rip peers
-      - show stack
-      - show stack links
-  register: atlas_cbs_operations
-  changed_when: false
+- name: Initialize Cisco CBS operational command buffer
+  ansible.builtin.set_fact:
+    atlas_command_outputs: {}
+
+- name: Collect Cisco CBS operational-health commands independently
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/common/run_cisco_cbs_command.yml"
+  loop:
+    - {key: show_clock, command: show clock}
+    - {key: show_sntp_status, command: show sntp status}
+    - {key: show_logging, command: show logging}
+    - {key: show_ip_route, command: show ip route}
+    - {key: show_ip_rip_peers, command: show ip rip peers}
+    - {key: show_stack, command: show stack}
+    - {key: show_stack_links, command: show stack links}
+  loop_control:
+    loop_var: atlas_command_spec
+    label: "{{ atlas_command_spec.command }}"
 
 - name: Prepare Cisco CBS operational outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      data:
-        show_clock: "{{ atlas_cbs_operations.stdout[0] }}"
-        show_sntp_status: "{{ atlas_cbs_operations.stdout[1] }}"
-        show_logging: "{{ atlas_cbs_operations.stdout[2] }}"
-        show_ip_route: "{{ atlas_cbs_operations.stdout[3] }}"
-        show_ip_rip_peers: "{{ atlas_cbs_operations.stdout[4] }}"
-        show_stack: "{{ atlas_cbs_operations.stdout[5] }}"
-        show_stack_links: "{{ atlas_cbs_operations.stdout[6] }}"
+      data: "{{ atlas_command_outputs }}"
