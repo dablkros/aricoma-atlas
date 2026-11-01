@@ -31,7 +31,7 @@ NetBox.
 ## Cisco CBS group capability map
 
 The same NetBox groups are accepted for platform slugs `cisco-cbs` and
-`cisco-cbs250-350`. The platform registry currently plans them as follows:
+`cisco-cbs250-350`, `cisco-catalyst-1200`, and `cisco-catalyst-1300`. The platform registry currently plans them as follows:
 
 | Group | CBS execution | Current result coverage |
 | --- | --- | --- |

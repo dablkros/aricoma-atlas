@@ -152,11 +152,13 @@ const elements = {
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
   credentialTenant: document.querySelector("#credential-tenant"),
+  credentialSite: document.querySelector("#credential-site"),
   credentialManufacturer: document.querySelector("#credential-manufacturer"),
   credentialDeviceFilter: document.querySelector("#credential-device-filter"),
   credentialDeviceList: document.querySelector("#credential-device-list"),
   credentialDeviceCount: document.querySelector("#credential-device-count"),
   credentialPlatform: document.querySelector("#credential-platform"),
+  credentialPreservePlatforms: document.querySelector("#credential-preserve-platforms"),
   credentialProfile: document.querySelector("#credential-profile"),
   credentialProfileOptions: document.querySelector("#credential-profile-options"),
   credentialAuth: document.querySelector("#credential-fortios-auth"),
@@ -571,11 +573,43 @@ function selectedCredentialPlatform() {
   ) || null;
 }
 
+function selectedCredentialPlatforms() {
+  if (!elements.credentialPreservePlatforms.checked) {
+    const platform = selectedCredentialPlatform();
+    return platform ? [platform] : [];
+  }
+  const slugs = new Set(selectedCredentialDevices().map((device) => device.platform));
+  if (slugs.has(null) || slugs.has(undefined) || slugs.has("")) return [];
+  return [...slugs].map((slug) => (
+    state.credentialOptions?.platforms?.find((platform) => platform.slug === slug)
+  )).filter(Boolean);
+}
+
+function renderCredentialSiteOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const sites = new Map();
+  for (const device of state.credentialOptions?.devices || []) {
+    if (String(device.tenant?.id ?? "") !== tenantId || !device.site?.id) continue;
+    sites.set(String(device.site.id), device.site.name);
+  }
+  elements.credentialSite.replaceChildren(
+    new Option("All sites in tenant", ""),
+    ...[...sites.entries()]
+      .sort((left, right) => left[1].localeCompare(right[1]))
+      .map(([id, name]) => new Option(name, id)),
+  );
+  elements.credentialSite.disabled = !tenantId;
+}
+
 function renderCredentialManufacturerOptions() {
   const tenantId = elements.credentialTenant.value;
+  const siteId = elements.credentialSite.value;
   const manufacturers = [...new Set(
     (state.credentialOptions?.devices || [])
-      .filter((device) => String(device.tenant?.id ?? "") === tenantId)
+      .filter((device) => (
+        String(device.tenant?.id ?? "") === tenantId
+        && (!siteId || String(device.site?.id ?? "") === siteId)
+      ))
       .map((device) => device.manufacturer?.name)
       .filter(Boolean),
   )].sort((left, right) => left.localeCompare(right));
@@ -607,9 +641,15 @@ function renderCredentialPlatformOptions() {
     (platform) => platform.manufacturer === manufacturer,
   );
   elements.credentialPlatform.replaceChildren(
-    new Option(manufacturer ? "Select platform" : "Select a manufacturer first", ""),
+    new Option(
+      elements.credentialPreservePlatforms.checked
+        ? "Existing platform on each device"
+        : (manufacturer ? "Select platform" : "Select a manufacturer first"),
+      "",
+    ),
     ...platforms.map((platform) => new Option(platform.name, platform.slug)),
   );
+  elements.credentialPlatform.disabled = elements.credentialPreservePlatforms.checked;
   const selectedPlatforms = new Set(devices.map((device) => device.platform).filter(Boolean));
   const preferred = selectedPlatforms.size === 1 ? [...selectedPlatforms][0] : previous;
   if (platforms.some((item) => item.slug === preferred)) {
@@ -628,11 +668,13 @@ function renderCredentialPlatformOptions() {
 
 function renderCredentialDeviceOptions() {
   const tenantId = elements.credentialTenant.value;
+  const siteId = elements.credentialSite.value;
   const manufacturer = elements.credentialManufacturer.value;
   const query = elements.credentialDeviceFilter.value.trim().toLocaleLowerCase();
   const selected = state.credentialSelectedDeviceIds;
   const devices = (state.credentialOptions?.devices || []).filter((device) => (
     String(device.tenant?.id ?? "") === tenantId
+    && (!siteId || String(device.site?.id ?? "") === siteId)
     && device.manufacturer?.name === manufacturer
     && (!query || device.name.toLocaleLowerCase().includes(query))
   ));
@@ -678,14 +720,19 @@ function credentialDeviceSelectionChanged() {
 }
 
 function renderCredentialAuthOptions() {
-  const platform = selectedCredentialPlatform();
-  const choices = platform?.prophylaxis_auth || [];
+  const platforms = selectedCredentialPlatforms();
+  const choices = platforms.length
+    ? platforms
+      .map((platform) => new Set(platform.prophylaxis_auth || []))
+      .reduce((common, values) => new Set([...common].filter((value) => values.has(value))))
+    : new Set();
   elements.credentialAuth.replaceChildren(
-    ...choices.map((value) => new Option(value === "api_token" ? "HTTPS API token" : "SSH", value)),
+    ...[...choices].map((value) => new Option(value === "api_token" ? "HTTPS API token" : "SSH", value)),
   );
-  if (!choices.length) elements.credentialAuth.append(new Option("Unsupported", ""));
-  elements.credentialProphylaxisEnabled.disabled = !choices.length;
-  elements.credentialOxidizedEnabled.disabled = !platform?.oxidized_supported;
+  if (!choices.size) elements.credentialAuth.append(new Option("Unsupported", ""));
+  elements.credentialProphylaxisEnabled.disabled = !choices.size;
+  elements.credentialOxidizedEnabled.disabled = !platforms.length
+    || !platforms.every((platform) => platform.oxidized_supported);
   renderCredentialAuthFields();
 }
 
@@ -708,6 +755,7 @@ async function openCredentialOnboarding() {
         (tenant) => new Option(tenant.name, String(tenant.id)),
       ),
     );
+    renderCredentialSiteOptions();
     renderCredentialManufacturerOptions();
     renderCredentialProfileOptions();
     state.credentialSelectedDeviceIds.clear();
@@ -731,7 +779,10 @@ function credentialPayload() {
   const enablePassword = elements.credentialProphylaxisEnable.value;
   const payload = {
     device_ids: selectedCredentialDevices().map((device) => device.id),
-    platform: elements.credentialPlatform.value,
+    platform: elements.credentialPreservePlatforms.checked
+      ? null
+      : elements.credentialPlatform.value,
+    preserve_device_platforms: elements.credentialPreservePlatforms.checked,
     credential_profile: elements.credentialProfile.value.trim(),
     prophylaxis_enabled: prophylaxis,
     oxidized_enabled: oxidized,
@@ -805,7 +856,7 @@ async function planCredentials() {
     toast("Select at least one device.", "warning");
     return;
   }
-  if (!elements.credentialPlatform.value) {
+  if (!elements.credentialPreservePlatforms.checked && !elements.credentialPlatform.value) {
     toast("Select the platform for this device batch.", "warning");
     return;
   }
@@ -2522,8 +2573,17 @@ elements.credentialTenant.addEventListener("change", () => {
   elements.credentialOxidizedUsername.value = "";
   elements.credentialReplace.checked = false;
   clearCredentialSecrets();
+  renderCredentialSiteOptions();
   renderCredentialManufacturerOptions();
   renderCredentialProfileOptions();
+  renderCredentialDeviceOptions();
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
+});
+elements.credentialSite.addEventListener("change", () => {
+  state.credentialSelectedDeviceIds.clear();
+  elements.credentialDeviceFilter.value = "";
+  renderCredentialManufacturerOptions();
   renderCredentialDeviceOptions();
   renderCredentialPlatformOptions();
   resetCredentialPlan();
@@ -2545,6 +2605,10 @@ elements.credentialDeviceList.addEventListener("change", (event) => {
 });
 elements.credentialPlatform.addEventListener("change", () => {
   renderCredentialAuthOptions();
+  resetCredentialPlan();
+});
+elements.credentialPreservePlatforms.addEventListener("change", () => {
+  renderCredentialPlatformOptions();
   resetCredentialPlan();
 });
 elements.credentialAuth.addEventListener("change", () => {

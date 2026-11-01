@@ -23,6 +23,8 @@ DEFAULT_ROLE_MAPPINGS = {
         "cisco-nxos": "switch",
         "cisco-cbs": "switch",
         "cisco-cbs250-350": "switch",
+        "cisco-catalyst-1200": "switch",
+        "cisco-catalyst-1300": "switch",
         "fortios": "firewall",
         "sophos-sfos": "firewall",
         "aruba-aos-cx": "switch",

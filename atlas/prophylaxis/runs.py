@@ -69,6 +69,8 @@ CISCO_LIFECYCLE_OS_TYPES = {
     "cisco-ios-xe": "IOS-XE",
     "cisco-cbs": None,
     "cisco-cbs250-350": None,
+    "cisco-catalyst-1200": None,
+    "cisco-catalyst-1300": None,
     "cisco-nxos": "NX-OS",
     "cisco-asa": "ASA",
 }

@@ -72,8 +72,8 @@ build report contains every unmapped model.
 | Cisco Firepower eXtensible OS | `cisco-fxos` | 0 | unsupported/unmapped |
 | Cisco CBS220 / legacy CBS | `cisco-cbs` | 2 | `ciscosmb` (experimental) |
 | Cisco CBS250/350 | `cisco-cbs250-350` | 22 after catalog rebuild | `ciscosmb` (experimental) |
-| Cisco Catalyst 1200 firmware | `cisco-catalyst-1200` | 4 | unsupported/unmapped |
-| Cisco Catalyst 1300 firmware | `cisco-catalyst-1300` | 36 | unsupported/unmapped |
+| Cisco Catalyst 1200 firmware | `cisco-catalyst-1200` | 4 | `ciscosmb` (experimental) |
+| Cisco Catalyst 1300 firmware | `cisco-catalyst-1300` | 36 | `ciscosmb` (experimental) |
 | Cisco AireOS | `cisco-aireos` | 0 | unsupported/unmapped |
 | Cisco Viptela OS | `cisco-viptela` | 0 | unsupported/unmapped |
 | FortiOS | `fortios` | 91 | `fortigate` |
@@ -124,8 +124,8 @@ consumer receives and passes its own compatibility validation.
 | `cisco-fxos` | unmapped | unsupported | unmapped |
 | `cisco-cbs` | `ciscosmb` experimental | supported profile | generic SNMP template |
 | `cisco-cbs250-350` | `ciscosmb` experimental | supported profile | Atlas CBS250/350 template |
-| `cisco-catalyst-1200` | unmapped | unsupported | unmapped |
-| `cisco-catalyst-1300` | unmapped | unsupported | unmapped |
+| `cisco-catalyst-1200` | `ciscosmb` experimental | supported profile | Atlas CBS250/350 template |
+| `cisco-catalyst-1300` | `ciscosmb` experimental | supported profile | Atlas CBS250/350 template |
 | `cisco-aireos` | unmapped | unsupported | unmapped |
 | `cisco-viptela` | unmapped | unsupported | unmapped |
 

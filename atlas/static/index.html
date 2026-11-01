@@ -399,7 +399,7 @@
           <div>
             <p class="section-kicker">OpenBao and NetBox</p>
             <h2 id="credential-onboarding-title">Onboard device credentials</h2>
-            <p>Select one tenant, then one or more devices from the same manufacturer. Choose one explicit platform and credential profile, review the exact plan, then apply it. Secret values are never returned by Atlas.</p>
+            <p>Select one tenant and manufacturer, optionally narrow the devices by site, then choose one platform or preserve each device platform for a shared credential profile. Review the exact plan before applying it. Secret values are never returned by Atlas.</p>
           </div>
           <button id="credential-onboarding-close" class="dialog-close" type="button" aria-label="Close credential window">×</button>
         </header>
@@ -414,9 +414,17 @@
             <select id="credential-manufacturer" disabled><option value="">Select a tenant first</option></select>
           </div>
           <div class="field-group">
+            <label for="credential-site">Site filter optional</label>
+            <select id="credential-site" disabled><option value="">All sites in tenant</option></select>
+          </div>
+          <div class="field-group">
             <label for="credential-platform">Platform</label>
             <select id="credential-platform"><option value="">Select a manufacturer first</option></select>
           </div>
+          <label class="confirmation-row field-group credential-platform-mode">
+            <input id="credential-preserve-platforms" type="checkbox">
+            Keep each device platform and share this credential profile across OS families
+          </label>
           <div class="field-group">
             <label for="credential-profile">Credential profile</label>
             <input id="credential-profile" list="credential-profile-options" maxlength="128" autocomplete="off" placeholder="customer-or-device-profile">

@@ -199,6 +199,8 @@ oxidized_platform_mapping:
   cisco-nxos: {model: nxos}
   cisco-cbs: {model: ciscosmb}
   cisco-cbs250-350: {model: ciscosmb}
+  cisco-catalyst-1200: {model: ciscosmb}
+  cisco-catalyst-1300: {model: ciscosmb}
   fortios: {model: fortigate}
   junos: {model: junos}
   aruba-aos-cx: {model: aoscx}
@@ -207,8 +209,8 @@ oxidized_platform_mapping:
 # CBS uses the pinned ciscosmb model, but remains experimental until each target
 # family is validated against physical hardware. FortiAP and hardware
 # FortiAnalyzer remain unmapped pending driver/hardware validation.
-# Catalyst 1200/1300 are catalog identities only. No ciscosmb, Ansible or
-# monitoring mapping is implied until compatibility is verified on hardware.
+# Catalyst 1200/1300 keep distinct NetBox identities and reuse the common
+# Cisco SMB CLI driver. Runtime compatibility remains subject to device testing.
 # Sophos platforms are inventory/monitoring identities only; no unverified
 # Oxidized model is assigned.
 # Check Point Gaia uses the pinned gaiaos model and a read-only Gaia Clish

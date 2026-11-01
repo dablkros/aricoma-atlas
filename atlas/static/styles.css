@@ -345,6 +345,11 @@ h2 {
   margin-top: 1rem;
 }
 
+.credential-platform-mode {
+  align-self: end;
+  min-height: 42px;
+}
+
 .credential-device-picker > input {
   width: 100%;
   margin: .45rem 0 .65rem;

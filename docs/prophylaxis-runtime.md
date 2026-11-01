@@ -253,6 +253,8 @@ už uložené zariadenia neprestali fungovať okamžite po upgrade.
 | `cisco-ios-xe` | `ansible.netcommon.network_cli` | `cisco.ios.ios` | `show version` + `show inventory`, NTC Templates |
 | `cisco-cbs` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
 | `cisco-cbs250-350` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | `community.ciscosmb.command` + NTC Templates `cisco_s300` |
+| `cisco-catalyst-1200` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | experimental shared Cisco SMB command contract |
+| `cisco-catalyst-1300` | `ansible.netcommon.network_cli` | `community.ciscosmb.ciscosmb` | experimental shared Cisco SMB command contract |
 | `cisco-nxos` | `ansible.netcommon.network_cli` | `cisco.nxos.nxos` | `nxos_command` + NTC `show version`/`show inventory` |
 | `cisco-asa` | `ansible.netcommon.network_cli` | `cisco.asa.asa` | `asa_command` + NTC `show version`/`show inventory` |
 | `aruba-aos-cx` | `ansible.netcommon.network_cli` | `arubanetworks.aoscx.aoscx` | `aoscx_command` + NTC `show system` |

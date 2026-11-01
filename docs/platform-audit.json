@@ -135,7 +135,7 @@
     }
   },
   "total": 905,
-  "platform_mapping_sha256": "05293613c355e1ed1e2d6568d0a7f2011fba2d8ff67443a6c908148823ed1517",
+  "platform_mapping_sha256": "b1e3db1d615090b4796e6dfd4f4b151de6c4bedee7825320bdf96beec9b79e71",
   "platforms": {
     "mapped": 709,
     "unmapped": 196,

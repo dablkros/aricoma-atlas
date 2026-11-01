@@ -145,10 +145,11 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(deployment["oxidized"]["docker_image"], self.config["oxidized"]["image"])
         self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs"]["model"], "ciscosmb")
         self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs250-350"]["model"], "ciscosmb")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-catalyst-1200"]["model"], "ciscosmb")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-catalyst-1300"]["model"], "ciscosmb")
         for platform in (
             "cisco-ios-xr", "cisco-aci", "cisco-ftd", "cisco-fxos",
-            "cisco-catalyst-1200", "cisco-catalyst-1300", "cisco-aireos",
-            "cisco-viptela",
+            "cisco-aireos", "cisco-viptela",
         ):
             self.assertNotIn(platform, self.config["oxidized_platform_mapping"])
         self.assertEqual(self.config["oxidized_platform_mapping"]["fortios"]["model"], "fortigate")

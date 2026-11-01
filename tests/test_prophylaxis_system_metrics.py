@@ -229,7 +229,10 @@ class SystemMetricTests(unittest.TestCase):
         )
 
     def test_cbs_groups_share_identity_and_resource_collectors(self):
-        for platform in ("cisco-cbs", "cisco-cbs250-350"):
+        for platform in (
+            "cisco-cbs", "cisco-cbs250-350",
+            "cisco-catalyst-1200", "cisco-catalyst-1300",
+        ):
             with self.subTest(platform=platform):
                 profile = AnsiblePlatformRegistry().resolve(platform)
                 checks, unknown = expand_check_selection(

@@ -647,7 +647,11 @@ POST /api/oxidized/sync
 
 Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta výhradne `oxidized` credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback z `oxidized` na `admin` credentials.
 
-Cisco platformy `cisco-cbs` a `cisco-cbs250-350` používajú explicitný Oxidized model `ciscosmb` a credential namespace `atlas/devices/credentials/cisco/<credential_profile>/oxidized`. Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických CBS220/250/350 zariadeniach; nepoužíva fallback na model `ios`.
+Cisco platformy `cisco-cbs`, `cisco-cbs250-350`, `cisco-catalyst-1200` a
+`cisco-catalyst-1300` používajú explicitný Oxidized model `ciscosmb` a credential
+namespace `atlas/devices/credentials/cisco/<credential_profile>/oxidized`.
+Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických
+zariadeniach; nepoužíva fallback na model `ios`.
 
 Check Point platforma `checkpoint-gaia` používa model `gaiaos` z pripnutého Oxidized 0.37.0. `checkpoint-gaia-embedded` zostáva bez Oxidized mapovania, kým sa celý príkazový kontrakt neoverí na fyzickom Spark zariadení.
 
@@ -716,8 +720,9 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
   Device Type YAML, explicitné doriešenie chýbajúcej platformy po zariadeniach,
   retry a explicitný Apply,
 - riadený device credential onboarding: hromadný výber zariadení jedného
-  tenantu a výrobcu, jedna explicitná platforma a spoločný profil, výber spotrebiteľov,
-  secret-free dry-run a explicitný OpenBao/NetBox Apply,
+  tenantu a výrobcu, voliteľný filter lokality, jedna explicitná platforma alebo
+  zachovanie existujúcich platforiem, spoločný profil naprieč podporovanými OS
+  rodinami, výber spotrebiteľov, secret-free dry-run a explicitný OpenBao/NetBox Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.

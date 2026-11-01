@@ -264,7 +264,10 @@ class OxidizedSyncTests(unittest.TestCase):
                 self.assertEqual(bao.calls, [("hpe", "default", "oxidized")])
 
     def test_cisco_smb_platforms_use_ciscosmb_and_cisco_credentials(self):
-        for platform in ("cisco-cbs", "cisco-cbs250-350"):
+        for platform in (
+            "cisco-cbs", "cisco-cbs250-350",
+            "cisco-catalyst-1200", "cisco-catalyst-1300",
+        ):
             with self.subTest(platform=platform):
                 bao = FakeOpenBao()
                 service, store, _oxidized = self.service(
