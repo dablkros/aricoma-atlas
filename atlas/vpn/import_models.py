@@ -6,8 +6,9 @@ from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 class ProfileInspectRequest(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    format: Literal['macos-plist', 'windows-xml']
+    format: Literal['macos-plist', 'windows-xml', 'openvpn-config']
     profile_base64: SecretStr = Field(repr=False)
+    source_name: str | None = Field(default=None, max_length=255)
 
 
 class ProfileImportRequest(ProfileInspectRequest):

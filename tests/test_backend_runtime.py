@@ -698,6 +698,13 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(worker["environment"]["ATLAS_VPN_TARGET_TIMEOUT"], "5")
         self.assertEqual(set(worker["networks"]), {"openbao", "vpn_control"})
         self.assertTrue(all("docker.sock" not in volume for volume in worker["volumes"]))
+        collector = data["services"]["vpn-collector"]
+        self.assertEqual(collector["network_mode"], "service:vpn-worker")
+        self.assertEqual(collector["cap_drop"], ["ALL"])
+        self.assertNotIn("cap_add", collector)
+        self.assertTrue(collector["read_only"])
+        self.assertEqual(collector["user"], f"{os.geteuid()}:{os.getegid()}")
+        self.assertTrue(all("docker.sock" not in volume for volume in collector["volumes"]))
         self.assertIn("healthcheck", service)
         self.assertEqual(os.stat(compose_file).st_mode & 0o777, 0o600)
         self.assertEqual(os.stat(compose_file.parent).st_mode & 0o777, 0o700)
@@ -705,15 +712,25 @@ class BackendRuntimeTests(unittest.TestCase):
     def test_vpn_worker_mounts_ppp_only_when_host_device_is_available(self):
         without_ppp = deploy_backend.prepare_runtime(
             self.config, self.root, self.ui_urls, ppp_device_available=False,
+            tun_device_available=False,
         )
         worker = yaml.safe_load(without_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
         self.assertNotIn("devices", worker)
 
         with_ppp = deploy_backend.prepare_runtime(
             self.config, self.root, self.ui_urls, ppp_device_available=True,
+            tun_device_available=False,
         )
         worker = yaml.safe_load(with_ppp.read_text(encoding="utf-8"))["services"]["vpn-worker"]
         self.assertEqual(worker["devices"], ["/dev/ppp:/dev/ppp"])
+
+    def test_vpn_worker_mounts_tun_only_when_host_device_is_available(self):
+        compose = deploy_backend.prepare_runtime(
+            self.config, self.root, self.ui_urls,
+            ppp_device_available=False, tun_device_available=True,
+        )
+        worker = yaml.safe_load(compose.read_text(encoding="utf-8"))["services"]["vpn-worker"]
+        self.assertEqual(worker["devices"], ["/dev/net/tun:/dev/net/tun"])
 
     def test_ppp_capability_rejects_regular_files_and_symlinks(self):
         regular = self.root / "not-a-ppp-device"

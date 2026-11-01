@@ -122,6 +122,7 @@ class VPNConnectivityTestService:
         supported = {
             ("strongswan", "ipsec-ikev2"),
             ("openfortivpn", "ssl-vpn"),
+            ("openvpn", "openvpn"),
         }
         if (connection.driver, connection.protocol) not in supported:
             raise VPNWorkerError("vpn_driver_not_testable", 409)

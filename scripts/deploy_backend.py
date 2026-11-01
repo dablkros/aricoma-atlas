@@ -56,9 +56,15 @@ OPERATOR_TOKEN_PATTERN = re.compile(r"[A-Za-z0-9_-]{32,256}")
 ADMIN_BOOTSTRAP_PATH = Path(".runtime/auth/bootstrap-admin.json")
 ADMIN_MARKER_PATH = Path(".runtime/auth/admin-configured")
 PPP_DEVICE_PATH = Path("/dev/ppp")
+TUN_DEVICE_PATH = Path("/dev/net/tun")
 
 
 def vpn_ppp_available(path=PPP_DEVICE_PATH):
+    path = Path(path)
+    return not path.is_symlink() and path.is_char_device()
+
+
+def vpn_tun_available(path=TUN_DEVICE_PATH):
     path = Path(path)
     return not path.is_symlink() and path.is_char_device()
 
@@ -546,6 +552,7 @@ def verify_admin_backend_access(root=ROOT, client=None):
 
 def prepare_runtime(
     config, root=ROOT, ui_urls=None, selection=None, *, ppp_device_available=None,
+    tun_device_available=None,
 ):
     root = Path(root).resolve()
     backend = config["backend"]
@@ -553,6 +560,10 @@ def prepare_runtime(
         ppp_device_available = vpn_ppp_available()
     if not isinstance(ppp_device_available, bool):
         raise ValueError("ppp_device_available must be a boolean")
+    if tun_device_available is None:
+        tun_device_available = vpn_tun_available()
+    if not isinstance(tun_device_available, bool):
+        raise ValueError("tun_device_available must be a boolean")
     selection = selection or load_components(root / ".runtime/components.yaml")
     required_ui_urls = set(selection.ingress_services)
     if not isinstance(ui_urls, dict) or set(ui_urls) != required_ui_urls:
@@ -780,6 +791,7 @@ def prepare_runtime(
         "ATLAS_PROPHYLAXIS_RUNS_DIRECTORY": "/run/atlas/prophylaxis/runs",
         "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
         "ATLAS_VPN_WORKER_URL": "http://vpn-worker:8090",
+        "ATLAS_VPN_COLLECTOR_URL": "http://vpn-worker:8091",
         "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
         "ATLAS_VPN_WORKER_TIMEOUT": str(
             max(
@@ -874,13 +886,16 @@ def prepare_runtime(
                         "ATLAS_VPN_CONNECT_TIMEOUT": str(config["vpn_worker"]["connect_timeout"]),
                         "ATLAS_VPN_MFA_TIMEOUT": str(config["vpn_worker"]["mfa_timeout"]),
                         "ATLAS_VPN_TARGET_TIMEOUT": str(config["vpn_worker"]["target_timeout"]),
+                        "ATLAS_VPN_SESSION_TIMEOUT": "3600",
                     },
                     "volumes": [
                         f"{vpn_worker_identity_file}:/run/secrets/atlas-vpn-worker.json:ro",
                         f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
                     ],
-                    **({"devices": ["/dev/ppp:/dev/ppp"]}
-                       if ppp_device_available else {}),
+                    **({"devices": [
+                        *(["/dev/ppp:/dev/ppp"] if ppp_device_available else []),
+                        *(["/dev/net/tun:/dev/net/tun"] if tun_device_available else []),
+                    ]} if ppp_device_available or tun_device_available else {}),
                     "networks": {"openbao": {}, "vpn_control": {}},
                     "read_only": True,
                     "tmpfs": ["/run:rw,nosuid,nodev,size=32m,mode=755", "/tmp:rw,noexec,nosuid,nodev,size=16m,mode=1777"],
@@ -888,6 +903,43 @@ def prepare_runtime(
                     "cap_add": ["NET_ADMIN", "NET_RAW"],
                     "security_opt": ["no-new-privileges:true"],
                     "pids_limit": 128,
+                },
+                "vpn-collector": {
+                    "image": backend["docker_image"],
+                    "restart": "unless-stopped",
+                    "init": True,
+                    "command": [
+                        "python", "-m", "uvicorn", "atlas.vpn.collector_app:app",
+                        "--host", "0.0.0.0", "--port", "8091", "--no-access-log",
+                    ],
+                    "environment": {
+                        "ATLAS_VPN_WORKER_TOKEN_FILE": "/run/secrets/atlas-vpn-worker-token",
+                        "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
+                        "ATLAS_ANSIBLE_JOB_TIMEOUT": str(backend["ansible_job_timeout"]),
+                        "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
+                        "ATLAS_SSH_STRICT_HOST_KEYS": str(backend["ssh_strict_host_keys"]).lower(),
+                        "ATLAS_FORTIOS_VALIDATE_CERTS": str(backend["fortios_validate_certs"]).lower(),
+                    },
+                    "user": f"{runtime_user}:{runtime_group}",
+                    "volumes": [
+                        f"{vpn_worker_token_file}:/run/secrets/atlas-vpn-worker-token:ro",
+                        *(
+                            [f"{known_hosts_file}:/run/atlas/ssh/known_hosts:ro"]
+                            if backend["ssh_strict_host_keys"] else []
+                        ),
+                    ],
+                    "network_mode": "service:vpn-worker",
+                    "depends_on": {"vpn-worker": {"condition": "service_healthy"}},
+                    "read_only": True,
+                    "tmpfs": ["/tmp:rw,noexec,nosuid,nodev,size=64m,mode=1777"],
+                    "cap_drop": ["ALL"],
+                    "security_opt": ["no-new-privileges:true"],
+                    "pids_limit": 256,
+                    "healthcheck": {
+                        "test": ["CMD", "python", "-c", "import json,urllib.request; r=urllib.request.urlopen('http://127.0.0.1:8091/health',timeout=2); assert json.load(r)['status']=='ok'"],
+                        "interval": "5s", "timeout": "3s", "retries": 20,
+                        "start_period": "10s",
+                    },
                 },
             },
             "networks": external_networks,
@@ -901,11 +953,17 @@ def deploy_runtime(config, compose_file):
     project = config["runtime"]["compose_project"]
     compose(compose_file, project, "config", "--quiet")
     compose(compose_file, project, "build", "--pull", "backend", "vpn-worker")
-    compose(compose_file, project, "up", "-d", "--force-recreate", "vpn-worker", "backend")
+    compose(compose_file, project, "up", "-d", "--force-recreate", "vpn-worker", "vpn-collector", "backend")
     wait_healthy(
         compose_file,
         project,
         "vpn-worker",
+        config["runtime"]["startup_timeout"],
+    )
+    wait_healthy(
+        compose_file,
+        project,
+        "vpn-collector",
         config["runtime"]["startup_timeout"],
     )
     wait_healthy(
@@ -935,17 +993,24 @@ def main():
     verify_admin_backend_access()
     selection = load_components()
     ppp_device_available = vpn_ppp_available()
+    tun_device_available = vpn_tun_available()
     compose_file = prepare_runtime(
         config,
         ui_urls=public_service_urls(proxy_config),
         selection=selection,
         ppp_device_available=ppp_device_available,
+        tun_device_available=tun_device_available,
     )
 
     if not ppp_device_available:
         print(
             "[WARN] /dev/ppp is unavailable; classic SSL-VPN tests are disabled. "
             "IPsec VPN and the Atlas backend remain available."
+        )
+    if not tun_device_available:
+        print(
+            "[WARN] /dev/net/tun is unavailable; OpenVPN tests and VPN-backed "
+            "prophylaxis are disabled. Other Atlas flows remain available."
         )
 
     if args.prepare_only:

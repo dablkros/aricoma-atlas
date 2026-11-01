@@ -26,6 +26,7 @@ from atlas.vpn.service import VPNRegistryService
 from atlas.vpn.store import SQLiteVPNConnectionStore
 from atlas.vpn.import_service import VPNProfileImportService
 from atlas.vpn.worker_client import VPNConnectivityTestService, VPNWorkerClient
+from atlas.vpn.prophylaxis_client import VPNAnsibleBackend, VPNSessionClient
 
 
 @dataclass(frozen=True)
@@ -120,14 +121,26 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
         ),
     )
     vpn_test = None
+    vpn_session = None
+    vpn_ansible_backend = None
     if settings.vpn_worker_url is not None:
+        worker_client = VPNWorkerClient(
+            str(settings.vpn_worker_url),
+            settings.vpn_worker_token_file,
+            timeout=settings.vpn_worker_timeout,
+        )
         vpn_test = VPNConnectivityTestService(
             vpn_registry,
-            VPNWorkerClient(
-                str(settings.vpn_worker_url),
-                settings.vpn_worker_token_file,
-                timeout=settings.vpn_worker_timeout,
-            ),
+            worker_client,
+        )
+        vpn_session = VPNSessionClient(
+            str(settings.vpn_worker_url), settings.vpn_worker_token_file,
+            settings.vpn_worker_timeout,
+        )
+    if settings.vpn_collector_url is not None:
+        vpn_ansible_backend = VPNAnsibleBackend(
+            str(settings.vpn_collector_url), settings.vpn_worker_token_file,
+            settings.ansible_job_timeout + 30,
         )
     return DependencyServices(
         monitoring=monitoring,
@@ -181,6 +194,9 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             zabbix_monitoring=(zabbix_monitoring if settings.zabbix_enabled else None),
             oxidized=(oxidized if settings.oxidized_enabled else None),
             cisco_support=cisco_support,
+            vpn_registry=vpn_registry,
+            vpn_session=vpn_session,
+            vpn_backend=vpn_ansible_backend,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,

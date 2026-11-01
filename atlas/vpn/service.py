@@ -518,5 +518,30 @@ class VPNRegistryService:
             "gateway_port": connection.gateway_port,
         }
 
+    def resolve_for_execution(self, device_id: int) -> dict | None:
+        """Resolve assigned VPN state; leave devices without an assignment direct."""
+        device = self._one(
+            "/api/dcim/devices/", {"id": device_id},
+            "device_not_found", "device_ambiguous",
+        )
+        device_connection = _custom_field(
+            device.get("custom_fields"), "atlas_connection_id"
+        )
+        site_id = related_id(device.get("site"))
+        if site_id is None:
+            if device_connection:
+                raise VPNRegistryError("device_site_missing")
+            return None
+        site = self._one(
+            "/api/dcim/sites/", {"id": site_id},
+            "site_not_found", "site_ambiguous",
+        )
+        site_connection = _custom_field(
+            site.get("custom_fields"), "atlas_connection_id"
+        )
+        if not device_connection and not site_connection:
+            return None
+        return self.resolve_device(device_id)
+
 
 __all__ = ["VPNRegistryError", "VPNRegistryService"]

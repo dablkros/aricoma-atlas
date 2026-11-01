@@ -26,6 +26,7 @@ class Settings(BaseSettings):
     )
     vpn_profile_writer_identity_file: Path = Path('.runtime/openbao-vpn-profile-writer.json')
     vpn_worker_url: Optional[AnyHttpUrl] = None
+    vpn_collector_url: Optional[AnyHttpUrl] = None
     vpn_worker_token_file: Path = Path('.runtime/vpn/worker-token')
     vpn_worker_timeout: float = Field(default=75.0, gt=5, le=180)
     monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
@@ -100,7 +101,7 @@ class Settings(BaseSettings):
             )
         return value
 
-    @field_validator("vpn_worker_url")
+    @field_validator("vpn_worker_url", "vpn_collector_url")
     @classmethod
     def validate_worker_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
         if value is None:

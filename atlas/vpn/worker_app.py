@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 import base64
+from dataclasses import dataclass
 import logging
 import os
 from pathlib import Path
 import re
+import shutil
 import socket
 import subprocess
 import tempfile
@@ -23,6 +25,9 @@ from atlas.openbao_client import OpenBaoClient
 from atlas.services.openbao import OpenBaoService
 from atlas.vpn.forticlient_profile import (
     FortiClientProfile, FortiClientProfileError, FortiClientSSLProfile,
+)
+from atlas.vpn.openvpn_profile import (
+    OpenVPNProfileError, parse_openvpn_profile, render_openvpn_runtime_config,
 )
 from atlas.vpn.strongswan_config import (
     VPNSecrets,
@@ -71,6 +76,34 @@ class WorkerTestRequest(BaseModel):
             raise ValueError("secret_ref does not match connection_id")
 
 
+class WorkerSessionOpenRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
+
+    connection_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    tenant_id: int = Field(gt=0)
+    secret_ref: str = Field(pattern=r"^vpn/connections/[a-z0-9]+(?:-[a-z0-9]+)*$")
+    gateway_host: str = Field(min_length=1, max_length=253)
+    gateway_port: int = Field(ge=1, le=65535)
+    driver: str
+    protocol: str
+    external_mfa: bool = False
+
+    def model_post_init(self, _context) -> None:
+        if self.secret_ref != f"vpn/connections/{self.connection_id}":
+            raise ValueError("secret_ref does not match connection_id")
+
+
+@dataclass
+class WorkerSession:
+    session_id: str
+    connection_id: str
+    process: subprocess.Popen
+    interface: str
+    assigned_address: str
+    directory: Path
+    timer: threading.Timer | None = None
+
+
 class WorkerSettings:
     def __init__(self) -> None:
         self.token_file = Path(os.environ.get(
@@ -86,11 +119,15 @@ class WorkerSettings:
         self.connect_timeout = int(os.environ.get("ATLAS_VPN_CONNECT_TIMEOUT", "45"))
         self.mfa_timeout = int(os.environ.get("ATLAS_VPN_MFA_TIMEOUT", "120"))
         self.target_timeout = float(os.environ.get("ATLAS_VPN_TARGET_TIMEOUT", "5"))
+        self.session_timeout = int(os.environ.get("ATLAS_VPN_SESSION_TIMEOUT", "3600"))
         self.openfortivpn = os.environ.get("ATLAS_OPENFORTIVPN_BIN", "/usr/bin/openfortivpn")
+        self.openvpn = os.environ.get("ATLAS_OPENVPN_BIN", "/usr/sbin/openvpn")
 
 
 settings = WorkerSettings()
 worker_lock = threading.Lock()
+session_guard = threading.Lock()
+active_session: WorkerSession | None = None
 app = FastAPI(title="Atlas VPN worker", docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -244,6 +281,28 @@ def _ssl_profile(secret: dict, body: WorkerTestRequest) -> tuple[FortiClientSSLP
     return profile, username, password
 
 
+def _openvpn_profile(
+    secret: dict, body: WorkerTestRequest | WorkerSessionOpenRequest,
+) -> tuple[str, str, str]:
+    if (secret.get("schema_version") != 1 or secret.get("profile_type") != "openvpn"
+            or secret.get("connection_id") != body.connection_id
+            or secret.get("tenant_id") != body.tenant_id):
+        raise RuntimeError("secret_schema_invalid")
+    try:
+        config = secret["config"]
+        if (not isinstance(config, str) or not config
+                or len(config) > 2 * 1024 * 1024 or "\x00" in config):
+            raise ValueError()
+        username = _config_value(secret["username"], "username")
+        password = _config_value(secret["password"], "password", maximum=1024)
+        profile = parse_openvpn_profile(config)
+    except (KeyError, TypeError, ValueError, OpenVPNProfileError):
+        raise RuntimeError("secret_schema_invalid") from None
+    if profile.gateway != body.gateway_host or profile.gateway_port != body.gateway_port:
+        raise RuntimeError("profile_registry_mismatch")
+    return profile.canonical_config, username, password
+
+
 def _render_ssl_config(profile: FortiClientSSLProfile, username: str, password: str) -> str:
     lines = [
         f"host = {profile.gateway}", f"port = {profile.gateway_port}",
@@ -323,9 +382,133 @@ def _cleanup_ssl(process: subprocess.Popen | None, interface: str | None) -> boo
     return clean
 
 
+def _start_openvpn(
+    secret: dict,
+    body: WorkerTestRequest | WorkerSessionOpenRequest,
+    directory: Path,
+) -> tuple[subprocess.Popen, str, str]:
+    config, username, password = _openvpn_profile(secret, body)
+    auth_path = directory / "auth.txt"
+    config_path = directory / "client.conf"
+    auth_path.write_text(f"{username}\n{password}\n", encoding="utf-8")
+    os.chmod(auth_path, 0o600)
+    config_path.write_text(
+        render_openvpn_runtime_config(config, str(auth_path)), encoding="utf-8"
+    )
+    os.chmod(config_path, 0o600)
+    previous_links = _ssl_links()
+    process = subprocess.Popen(
+        [settings.openvpn, "--config", str(config_path)],
+        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL, close_fds=True,
+    )
+    timeout = settings.mfa_timeout if body.external_mfa else settings.connect_timeout
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline and process.poll() is None:
+        interface, assigned = _ssl_address(previous_links)
+        if interface and assigned:
+            return process, interface, assigned
+        time.sleep(0.25)
+    _cleanup_ssl(process, None)
+    raise WorkerError(503, "vpn_tunnel_not_established", "The VPN tunnel did not establish")
+
+
+def _expire_session(session_id: str) -> None:
+    global active_session
+    with session_guard:
+        session = active_session
+        if session is None or session.session_id != session_id:
+            return
+        active_session = None
+    _cleanup_ssl(session.process, session.interface)
+    shutil.rmtree(session.directory, ignore_errors=True)
+    worker_lock.release()
+    logger.warning(
+        "vpn.worker_session_expired",
+        extra={"event": "vpn.worker_session_expired", "connection_id": session.connection_id},
+    )
+
+
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+
+@app.post("/v1/session/open")
+def open_session(
+    body: WorkerSessionOpenRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    global active_session
+    _authorized(authorization)
+    if (body.driver, body.protocol) != ("openvpn", "openvpn"):
+        raise WorkerError(
+            422, "vpn_session_driver_unsupported",
+            "Automated prophylaxis sessions currently require OpenVPN",
+        )
+    settings.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if not worker_lock.acquire(blocking=False):
+        raise WorkerError(409, "vpn_test_busy", "Another VPN operation is already running")
+    directory = None
+    process = None
+    interface = None
+    try:
+        directory = Path(tempfile.mkdtemp(prefix="session-", dir=settings.runtime))
+        openbao = OpenBaoService(OpenBaoClient(settings.openbao_url, timeout=10), settings.identity_file)
+        secret = openbao.read_secret(body.secret_ref)
+        process, interface, assigned = _start_openvpn(secret, body, directory)
+        session = WorkerSession(
+            session_id=uuid4().hex, connection_id=body.connection_id,
+            process=process, interface=interface, assigned_address=assigned,
+            directory=directory,
+        )
+        session.timer = threading.Timer(
+            settings.session_timeout, _expire_session, args=(session.session_id,),
+        )
+        session.timer.daemon = True
+        with session_guard:
+            active_session = session
+        session.timer.start()
+        logger.info(
+            "vpn.worker_session_opened",
+            extra={"event": "vpn.worker_session_opened", "connection_id": body.connection_id},
+        )
+        return {"session_id": session.session_id, "assigned_address": assigned}
+    except Exception:
+        if process is not None:
+            _cleanup_ssl(process, interface)
+        if directory is not None:
+            shutil.rmtree(directory, ignore_errors=True)
+        worker_lock.release()
+        raise
+
+
+@app.delete("/v1/session/{session_id}")
+def close_session(
+    session_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    global active_session
+    _authorized(authorization)
+    if not re.fullmatch(r"[a-f0-9]{32}", session_id):
+        raise WorkerError(404, "vpn_session_not_found", "VPN session was not found")
+    with session_guard:
+        session = active_session
+        if session is None or session.session_id != session_id:
+            raise WorkerError(404, "vpn_session_not_found", "VPN session was not found")
+        active_session = None
+    if session.timer is not None:
+        session.timer.cancel()
+    clean = _cleanup_ssl(session.process, session.interface)
+    shutil.rmtree(session.directory, ignore_errors=True)
+    worker_lock.release()
+    if not clean:
+        raise WorkerError(503, "vpn_cleanup_failed", "VPN cleanup did not complete cleanly")
+    logger.info(
+        "vpn.worker_session_closed",
+        extra={"event": "vpn.worker_session_closed", "connection_id": session.connection_id},
+    )
+    return {"status": "disconnected"}
 
 
 @app.post("/v1/test")
@@ -363,34 +546,45 @@ def test_vpn(
         openbao = OpenBaoService(OpenBaoClient(settings.openbao_url, timeout=10), settings.identity_file)
         secret = openbao.read_secret(body.secret_ref)
         if (body.driver, body.protocol) not in {
-            ("strongswan", "ipsec-ikev2"), ("openfortivpn", "ssl-vpn")
+            ("strongswan", "ipsec-ikev2"), ("openfortivpn", "ssl-vpn"),
+            ("openvpn", "openvpn"),
         }:
             raise FortiClientProfileError("unsupported_profile_type")
-        if body.driver == "openfortivpn":
-            profile, username, password = _ssl_profile(secret, body)
+        if body.driver in {"openfortivpn", "openvpn"}:
             settings.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
             with tempfile.TemporaryDirectory(prefix="test-", dir=settings.runtime) as directory:
-                config_path = Path(directory) / "openfortivpn.conf"
-                config_path.write_text(_render_ssl_config(profile, username, password), encoding="utf-8")
-                os.chmod(config_path, 0o600)
-                previous_links = _ssl_links()
-                ssl_process = subprocess.Popen(
-                    [settings.openfortivpn, "-c", str(config_path)],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, close_fds=True,
-                )
-                connection_timeout = (
-                    settings.mfa_timeout if body.external_mfa else settings.connect_timeout
-                )
-                deadline = time.monotonic() + connection_timeout
-                assigned = None
-                while time.monotonic() < deadline and ssl_process.poll() is None:
-                    ssl_interface, assigned = _ssl_address(previous_links)
-                    if assigned:
-                        break
-                    time.sleep(0.25)
+                directory_path = Path(directory)
+                config_path = directory_path / "client.conf"
+                if body.driver == "openvpn":
+                    ssl_process, ssl_interface, assigned = _start_openvpn(
+                        secret, body, directory_path,
+                    )
+                    rendered = None
+                else:
+                    profile, username, password = _ssl_profile(secret, body)
+                    rendered = _render_ssl_config(profile, username, password)
+                    arguments = [settings.openfortivpn, "-c", str(config_path)]
+                if rendered is not None:
+                    config_path.write_text(rendered, encoding="utf-8")
+                    os.chmod(config_path, 0o600)
+                    previous_links = _ssl_links()
+                    ssl_process = subprocess.Popen(
+                        arguments,
+                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                        stderr=subprocess.DEVNULL, close_fds=True,
+                    )
+                    connection_timeout = (
+                        settings.mfa_timeout if body.external_mfa else settings.connect_timeout
+                    )
+                    deadline = time.monotonic() + connection_timeout
+                    assigned = None
+                    while time.monotonic() < deadline and ssl_process.poll() is None:
+                        ssl_interface, assigned = _ssl_address(previous_links)
+                        if assigned:
+                            break
+                        time.sleep(0.25)
                 if not assigned:
-                    result.update(failure_stage="tunnel", message="The SSL-VPN tunnel did not establish.")
+                    result.update(failure_stage="tunnel", message="The VPN tunnel did not establish.")
                 else:
                     result.update(tunnel_established=True, assigned_address=assigned)
                     try:
@@ -471,7 +665,7 @@ def test_vpn(
                         failure_stage="target",
                         message="The tunnel established, but the selected TCP target did not answer.",
                     )
-    except FortiClientProfileError:
+    except (FortiClientProfileError, OpenVPNProfileError):
         logger.warning(
             "vpn.worker_test_validation_failed",
             extra={

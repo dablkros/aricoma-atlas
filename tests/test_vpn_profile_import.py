@@ -42,6 +42,31 @@ def request():
         management_vrf_id=30, allowed_prefixes=['192.0.2.0/24'])
 
 
+def openvpn_profile(extra=''):
+    return (f'''client
+dev tun
+proto udp
+remote vpn.example.test 1194
+auth-user-pass
+route 192.0.2.0 255.255.255.0
+{extra}<ca>
+-----BEGIN CERTIFICATE-----
+Y2E=
+-----END CERTIFICATE-----
+</ca>
+<cert>
+-----BEGIN CERTIFICATE-----
+Y2VydA==
+-----END CERTIFICATE-----
+</cert>
+<key>
+-----BEGIN PRIVATE KEY-----
+a2V5
+-----END PRIVATE KEY-----
+</key>
+''').encode()
+
+
 class Registry:
     def __init__(self): self.value = None
     def _validate_references(self, r):
@@ -94,6 +119,38 @@ class VPNImportTests(unittest.TestCase):
         self.assertEqual(self.writer.secret['tenant_id'], 1)
         self.assertNotIn('profile_type', self.writer.secret)
         self.assertNotIn('encrypted_auth_info', self.writer.secret['profile'])
+
+    def test_openvpn_profile_is_validated_and_stored_only_as_secret(self):
+        encoded = base64.b64encode(openvpn_profile()).decode()
+        inspected = inspect_profile(ProfileInspectRequest(
+            format='openvpn-config', profile_base64=encoded,
+            source_name='customer-access.ovpn',
+        ))
+        self.assertEqual(inspected, {'profiles': ['customer-access']})
+        body = request().model_copy(update={
+            'format': 'openvpn-config', 'profile_base64': SecretStr(encoded),
+            'source_name': 'customer-access.ovpn',
+            'profile_name': 'customer-access',
+        })
+        plan = self.service.plan(body)
+        self.assertEqual((plan['profile_type'], plan['port']), ('openvpn', 1194))
+        self.assertNotIn('PRIVATE KEY', str(plan))
+        self.service.apply(body, plan)
+        self.assertEqual((self.registry.value.driver, self.registry.value.vendor),
+                         ('openvpn', 'generic'))
+        self.assertIn('PRIVATE KEY', self.writer.secret['config'])
+
+    def test_openvpn_rejects_scripts_and_external_auth_files(self):
+        for profile in (
+            openvpn_profile('up /tmp/script\n'),
+            openvpn_profile().replace(b'auth-user-pass\n', b'auth-user-pass /tmp/auth\n'),
+        ):
+            body = ProfileInspectRequest(
+                format='openvpn-config',
+                profile_base64=base64.b64encode(profile).decode(),
+            )
+            with self.assertRaises(VPNImportError):
+                inspect_profile(body)
 
     def test_windows_encx_requires_valid_export_password(self):
         salt = bytes(range(12))

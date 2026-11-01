@@ -95,6 +95,11 @@ Izolačné pravidlá Tenant/Site/VRF/IP sú popísané v
 [multi-tenant NetBox dokumentácii](docs/multi-tenant-netbox.md). Perzistentný
 register, NetBox mapovanie, resolver, OpenBao reference a P2 hranice opisuje
 [VPN Connection Registry](docs/vpn-connection-registry.md).
+Operations UI prijíma aj validovaný OpenVPN `.ovpn` profil s inline
+certifikátmi a kľúčom. Pri profylaxii Atlas zoskupí zariadenia podľa Site/Device
+VPN priradenia, otvorí jedno dočasné OpenVPN spojenie, spustí collectory cez
+neprivilegovaný runner v izolovanom network namespace a spojenie vždy ukončí.
+IPsec a openfortivpn zostávajú v tejto verzii iba v connectivity-test flowe.
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
 chýbajúci validný Device Type YAML, pre typ bez predvolenej platformy vyberie

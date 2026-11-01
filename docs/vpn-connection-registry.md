@@ -3,9 +3,10 @@
 ## Účel a hranice
 
 VPN Connection Registry je perzistentný register netajných metadát, podľa
-ktorých Atlas určí spojenie priradené konkrétnemu NetBox Device. P1 nevytvára
-tunel, nemení routing hostiteľa, nekontroluje dostupnosť gateway a nespúšťa VPN
-klienta. Preto je `runtime_status` vždy `not_deployed`.
+ktorých Atlas určí spojenie priradené konkrétnemu NetBox Device. Registry ani
+samotné uloženie profilu tunel nevytvárajú. Connectivity test a profylaxia však
+vedia vytvoriť dočasný tunel v izolovanom worker network namespace; po operácii
+ho vždy ukončia. Perzistentný `runtime_status` preto zostáva `not_deployed`.
 
 ## Dátový model
 
@@ -62,9 +63,10 @@ Resolver postupuje striktne:
 Nepriradené zariadenie zostáva platným NetBox objektom a resolver vráti
 `resolution_status=unmapped`. Neexistuje automatický fallback na iné spojenie,
 Tenant ani VRF. Register rozlišuje prekrývajúce sa IP adresy pomocou Tenant a
-VRF; jednorazový P2 test spúšťa tunel v izolovanom worker kontajneri.
-Produkčné vykonávanie Ansible úloh cez tento sieťový priestor ešte nie je
-implementované.
+VRF. Connectivity test aj profylaxia spúšťajú tunel v izolovanom worker
+network namespace. Profylaxia zoskupí zariadenia podľa presného
+`connection_id`, otvorí jedno spojenie pre skupinu, spustí ich collectory cez
+samostatný neprivilegovaný runner v rovnakom namespace a tunel zavrie.
 
 ### Operations UI assignment flow
 
@@ -108,7 +110,7 @@ so zápisom do `atlas/data/vpn/connections/+`. Izolovaný testovací worker pou�
 odlišnú read-only identitu `atlas-vpn-worker`, ktorá môže načítať iba leaf
 `atlas/data/vpn/connections/+`; backend secret data naďalej nečíta.
 
-## Import FortiClient profilu v Operations UI
+## Import VPN profilu v Operations UI
 
 Na existujúcej inštalácii `sudo ./update.sh` rozpozná chýbajúcu runtime
 identitu a pred deployom spustí quorum-controlled reconcile. Operátor zadá
@@ -120,16 +122,20 @@ bootstrapu. Bez identity bude import bezpečne odmietnutý; existujúci register
 zostáva dostupný.
 
 1. V NetBoxe pripravte zákazníka (Tenant) a jeho vlastnú management VRF.
-2. V Operations UI otvorte **Import FortiClient VPN** a nahrajte exportovaný
-   Windows XML/`.conf` alebo macOS `.plist`. Vyberte profil a typ súboru.
+2. V Operations UI otvorte **Import VPN profile** a nahrajte OpenVPN `.ovpn`,
+   FortiClient Windows XML/`.conf` alebo macOS `.plist`.
 3. Vyberte zákazníka a jeho VRF. Connection ID a názov sa navrhnú z profilu;
    možno ich upraviť. Prefixy sa pri GUI importe nezadávajú: cieľové zariadenia
    určí priradená Site a ich aktuálna management IP v NetBoxe. Zadajte VPN meno
    a heslo. Pri formáte `EncX` zadajte
-   aj heslo použité pri exporte; `Enc` ho nevyžaduje. Klasický Windows
+   aj heslo použité pri exporte; `Enc` ho nevyžaduje. OpenVPN profil musí mať
+   CA, klientsky certifikát a privátny kľúč vložené priamo v súbore; skripty,
+   pluginy a externé referencie sa odmietnu. Klasický Windows
    SSL-VPN profil s menom/heslom exportné heslo ani PSK nepotrebuje.
 4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
-   uložia do OpenBao, exportné heslo ani pôvodný súbor sa neukladajú. Plán a
+   uložia do OpenBao. Pri OpenVPN sa validovaný profil vrátane certifikátov a
+   kľúča uloží iba ako secret; pri FortiClient sa exportné heslo ani pôvodný
+   súbor neukladajú. Plán a
    odpoveď neobsahujú heslá. Súbor sa spracuje v pamäti a jeho limit je 2 MiB.
 5. Priradenie importovaného spojenia k Site urobte samostatne cez existujúci
    **Assign VPN connections**. Pri Site scope má Site prednosť pred Device
@@ -143,8 +149,10 @@ zostáva dostupný.
 Pre IKEv2 je podporovaný iba overiteľný PSK export `Enc`/`EncX` a úzka
 podmnožina profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH
 skupiny 21). Pre SSL-VPN je podporovaný klasický Windows XML profil s
-username/password a voliteľným realmom. SSO/SAML, interaktívne MFA a
-certifikátová autentifikácia sa odmietnu.
+username/password a voliteľným realmom. SSO/SAML a samostatná certifikátová
+autentifikácia sa odmietnu; push MFA sa povoľuje iba explicitným checkboxom.
+Explicitná voľba push MFA predĺži čakanie na existujúce vyjednávanie; worker
+počas čakania nevytvára opakované prihlásenia ani duplicitné push výzvy.
 Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
 spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,
 vytvorte nový plán s rovnakými vstupmi a import zopakujte.

@@ -319,7 +319,7 @@ backend_logs() {
 vpn_worker_logs() {
     [[ -f "$BACKEND_COMPOSE" ]] || die "Atlas backend runtime is not prepared"
     exec docker compose -f "$BACKEND_COMPOSE" -p atlas-backend \
-        logs "$@" vpn-worker
+        logs "$@" vpn-worker vpn-collector
 }
 
 prophylaxis_logs() {

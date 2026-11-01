@@ -14,6 +14,7 @@ from atlas.vpn.forticlient_profile import (
 )
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
 from atlas.vpn.models import VPNConnectionCreate, VPNConnectionPatch
+from atlas.vpn.openvpn_profile import OpenVPNProfile, OpenVPNProfileError, parse_openvpn_profile
 from atlas.vpn.service import VPNRegistryError
 from atlas.vpn.strongswan_config import VPNSecrets, validate_profile
 
@@ -42,6 +43,9 @@ def profile_bytes(body: ProfileInspectRequest) -> bytes:
 def inspect_profile(body: ProfileInspectRequest) -> dict:
     data = profile_bytes(body)
     try:
+        if body.format == 'openvpn-config':
+            profile = parse_openvpn_profile(data, source_name=body.source_name)
+            return {'profiles': [profile.name]}
         if body.format == 'macos-plist':
             if not data.startswith(b'bplist00'):
                 SafeET.fromstring(data)
@@ -56,6 +60,8 @@ def inspect_profile(body: ProfileInspectRequest) -> dict:
                 or any(not isinstance(name, str) or not name or len(name) > 200 for name in names)):
             raise ValueError()
         return {'profiles': sorted(names)}
+    except OpenVPNProfileError as exc:
+        raise VPNImportError(exc.args[0] if exc.args else 'vpn_profile_invalid') from None
     except Exception:
         raise VPNImportError('vpn_profile_invalid') from None
 
@@ -85,6 +91,34 @@ class VPNProfileImportService:
 
     def _values(self, body: ProfileImportRequest):
         try:
+            if body.format == 'openvpn-config':
+                p = parse_openvpn_profile(
+                    profile_bytes(body), source_name=body.source_name,
+                )
+                if body.profile_name != p.name:
+                    raise VPNImportError('vpn_profile_invalid')
+                username, password = (
+                    body.username.get_secret_value(), body.password.get_secret_value()
+                )
+                record = VPNConnectionCreate(
+                    connection_id=body.connection_id, name=body.name,
+                    tenant_id=body.tenant_id, vendor='generic', protocol='openvpn',
+                    driver='openvpn', gateway_host=p.gateway,
+                    gateway_port=p.gateway_port,
+                    auth_method=('external_mfa' if body.external_mfa else 'username_password'),
+                    secret_ref=f'vpn/connections/{body.connection_id}',
+                    management_vrf_id=body.management_vrf_id,
+                    allowed_prefixes=body.allowed_prefixes,
+                    administrative_status='planned',
+                )
+                secret = {
+                    'schema_version': 1, 'profile_type': 'openvpn',
+                    'connection_id': record.connection_id,
+                    'tenant_id': record.tenant_id,
+                    'config': p.canonical_config,
+                    'username': username, 'password': password,
+                }
+                return record, secret, p
             p = parse_forticlient_any_profile(profile_bytes(body), body.profile_name, format=body.format)
             username, password = body.username.get_secret_value(), body.password.get_secret_value()
             if isinstance(p, FortiClientSSLProfile):
@@ -134,7 +168,7 @@ class VPNProfileImportService:
                       'psk_base64': base64.b64encode(psk).decode('ascii'),
                       'username': username, 'password': password}
             return record, secret, p
-        except FortiClientProfileError as exc:
+        except (FortiClientProfileError, OpenVPNProfileError) as exc:
             raise VPNImportError(exc.args[0] if exc.args else 'vpn_profile_invalid') from None
         except VPNImportError:
             raise

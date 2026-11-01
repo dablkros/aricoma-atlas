@@ -81,7 +81,7 @@ class VPNConnectivityServiceTests(unittest.TestCase):
     def test_external_mfa_metadata_is_forwarded_without_secret_material(self):
         worker = Worker()
         record = connection(auth_method="external_mfa")
-        VPNConnectivityTestService(Registry(record=record), worker).run(
+        result = VPNConnectivityTestService(Registry(record=record), worker).run(
             "customer-vpn", device_id=7, target_port=22,
         )
 
@@ -98,6 +98,20 @@ class VPNConnectivityServiceTests(unittest.TestCase):
         )
         self.assertEqual((worker.payload["driver"], worker.payload["protocol"]),
                          ("openfortivpn", "ssl-vpn"))
+        self.assertEqual(result.status, "passed")
+
+    def test_supports_openvpn_driver(self):
+        worker = Worker()
+        record = connection(
+            vendor="generic", protocol="openvpn", driver="openvpn",
+            gateway_port=1194, auth_method="external_mfa",
+        )
+        result = VPNConnectivityTestService(Registry(record=record), worker).run(
+            "customer-vpn", device_id=7, target_port=22,
+        )
+        self.assertEqual((worker.payload["driver"], worker.payload["protocol"]),
+                         ("openvpn", "openvpn"))
+        self.assertTrue(worker.payload["external_mfa"])
         self.assertEqual(result.status, "passed")
 
 

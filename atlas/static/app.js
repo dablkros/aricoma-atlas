@@ -2574,6 +2574,7 @@ const vpnImport = {
   format: document.querySelector('#vpn-import-format'),
   profile: document.querySelector('#vpn-import-profile'),
   exportPassword: document.querySelector('#vpn-import-export-password'),
+  exportPasswordGroup: document.querySelector('#vpn-import-export-password-group'),
   tenant: document.querySelector('#vpn-import-tenant'),
   vrf: document.querySelector('#vpn-import-vrf'),
   id: document.querySelector('#vpn-import-id'),
@@ -2710,7 +2711,8 @@ async function inspectVPNImportFile() {
     });
     const result = await apiRequest('/api/v1/vpn/forticlient/inspect', {
       method: 'POST', headers: operatorHeaders(),
-      body: { format: vpnImport.format.value, profile_base64: encoded },
+      body: { format: vpnImport.format.value, profile_base64: encoded,
+              source_name: file.name || null },
     });
     if (!vpnImport.dialog.open || vpnImport.revision !== revision || vpnImport.file.files?.[0] !== file) return;
     vpnImport.data = encoded;
@@ -2727,6 +2729,7 @@ async function inspectVPNImportFile() {
 function vpnImportPayload() {
   return {
     format: vpnImport.format.value, profile_base64: vpnImport.data || '',
+    source_name: vpnImport.file.files?.[0]?.name || null,
     profile_name: vpnImport.profile.value,
     export_password: vpnImport.exportPassword.value || null,
     username: vpnImport.username.value, password: vpnImport.password.value,
@@ -2769,6 +2772,10 @@ async function planVPNImport() {
       unsupported_local_id: 'The local ID contains unsupported characters.',
       unsupported_auth_method: 'This authentication method is not supported.',
       unsupported_ssl_sso: 'This SSL-VPN profile uses SSO/SAML, which the Atlas worker cannot automate.',
+      vpn_profile_unsupported_directive: 'This OpenVPN profile contains a directive that Atlas does not execute.',
+      vpn_profile_external_reference: 'The OpenVPN profile must contain certificates and keys inline and may not reference external files.',
+      vpn_profile_unsupported_device: 'Atlas currently supports only OpenVPN tun profiles.',
+      vpn_profile_unsupported_protocol: 'This OpenVPN transport is not supported by the Atlas worker.',
       invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
       invalid_decrypted_secret: 'The decrypted PSK is invalid.',
     };
@@ -2822,7 +2829,14 @@ vpnImport.dialog.addEventListener('close', () => {
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
 vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
-vpnImport.format.addEventListener('change', inspectVPNImportFile);
+function vpnImportFormatChanged() {
+  const openvpn = vpnImport.format.value === 'openvpn-config';
+  vpnImport.file.accept = openvpn ? '.ovpn' : '.conf,.xml,.plist';
+  vpnImport.exportPasswordGroup.hidden = openvpn;
+  if (openvpn) vpnImport.exportPassword.value = '';
+  inspectVPNImportFile();
+}
+vpnImport.format.addEventListener('change', vpnImportFormatChanged);
 vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
 vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
 for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
