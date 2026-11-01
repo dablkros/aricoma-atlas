@@ -59,11 +59,14 @@ class Settings(BaseSettings):
         le=1_000_000,
     )
     ansible_project_dir: Path = Path("automation")
-    ansible_job_timeout: int = Field(default=120, ge=1, le=1800)
+    ansible_job_timeout: int = Field(default=300, ge=1, le=1800)
     ssh_known_hosts_file: Path = Path("/run/atlas/ssh/known_hosts")
     ssh_strict_host_keys: bool = False
     ssh_connect_timeout: int = Field(default=10, ge=1, le=60)
-    ssh_command_timeout: int = Field(default=20, ge=1, le=300)
+    # Cisco SMB/Catalyst show commands can return large buffers slowly even
+    # after terminal paging is disabled. Keep the per-command timeout below
+    # the separate Ansible job timeout, but allow a complete prompt to return.
+    ssh_command_timeout: int = Field(default=120, ge=1, le=300)
     fortios_validate_certs: bool = False
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)

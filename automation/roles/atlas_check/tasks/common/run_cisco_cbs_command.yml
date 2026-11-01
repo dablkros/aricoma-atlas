@@ -21,5 +21,13 @@
     atlas_command_outputs: >-
       {{ atlas_command_outputs |
          combine({atlas_command_spec.key:
-           (atlas_single_command.stdout | default([], true) | first | default(''))}) }}
+           atlas_buffered_command_output}) }}
+  vars:
+    atlas_raw_command_output: >-
+      {{ atlas_single_command.stdout | default([], true) | first | default('') }}
+    atlas_buffered_command_output: >-
+      {{ atlas_raw_command_output
+         if atlas_command_spec.key == 'show_logging'
+         else (atlas_raw_command_output |
+           regex_replace('(?m)^.*%SNMP-W-SNMPAUTHFAIL:.*(?:\\r?\\n|$)', '')) }}
 

@@ -62,8 +62,8 @@ backend = AnsibleBackend(
     )),
     strict_host_keys=os.environ.get("ATLAS_SSH_STRICT_HOST_KEYS", "false").lower() == "true",
     connect_timeout=int(os.environ.get("ATLAS_SSH_CONNECT_TIMEOUT", "10")),
-    command_timeout=int(os.environ.get("ATLAS_SSH_COMMAND_TIMEOUT", "20")),
-    job_timeout=int(os.environ.get("ATLAS_ANSIBLE_JOB_TIMEOUT", "120")),
+    command_timeout=int(os.environ.get("ATLAS_SSH_COMMAND_TIMEOUT", "120")),
+    job_timeout=int(os.environ.get("ATLAS_ANSIBLE_JOB_TIMEOUT", "300")),
     fortios_validate_certs=os.environ.get("ATLAS_FORTIOS_VALIDATE_CERTS", "false").lower() == "true",
 )
 
