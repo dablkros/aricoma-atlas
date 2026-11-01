@@ -6,7 +6,8 @@ from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 
 from atlas.vpn.worker_app import (
-    WorkerTestRequest, _profile, _render_ssl_config, _ssl_profile, settings, test_vpn,
+    WorkerSessionOpenRequest, WorkerTestRequest, _profile, _render_ssl_config,
+    _ssl_profile, settings, test_vpn,
 )
 
 
@@ -58,6 +59,31 @@ def ssl_secret():
 
 
 class VPNWorkerAppTests(unittest.TestCase):
+    def test_session_request_accepts_only_explicit_ipv4_targets(self):
+        body = WorkerSessionOpenRequest(
+            connection_id="customer-vpn",
+            tenant_id=1,
+            secret_ref="vpn/connections/customer-vpn",
+            gateway_host="vpn.example.test",
+            gateway_port=1194,
+            driver="openvpn",
+            protocol="openvpn",
+            target_ips=["10.1.248.20", "10.1.248.20"],
+        )
+        self.assertEqual(body.target_ips, ["10.1.248.20"])
+
+        with self.assertRaises(ValueError):
+            WorkerSessionOpenRequest(
+                connection_id="customer-vpn",
+                tenant_id=1,
+                secret_ref="vpn/connections/customer-vpn",
+                gateway_host="vpn.example.test",
+                gateway_port=1194,
+                driver="openvpn",
+                protocol="openvpn",
+                target_ips=["customer.internal"],
+            )
+
     def test_secret_must_match_registry_metadata(self):
         value = secret()
         value["tenant_id"] = 2

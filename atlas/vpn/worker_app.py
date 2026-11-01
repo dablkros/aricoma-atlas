@@ -87,6 +87,20 @@ class WorkerSessionOpenRequest(BaseModel):
     driver: str
     protocol: str
     external_mfa: bool = False
+    target_ips: list[str] = Field(default_factory=list, max_length=256)
+
+    @field_validator("target_ips")
+    @classmethod
+    def ipv4_targets_only(cls, values: list[str]) -> list[str]:
+        unique: list[str] = []
+        for value in values:
+            try:
+                socket.inet_pton(socket.AF_INET, value)
+            except OSError:
+                raise ValueError("target_ips must contain IPv4 addresses") from None
+            if value not in unique:
+                unique.append(value)
+        return unique
 
     def model_post_init(self, _context) -> None:
         if self.secret_ref != f"vpn/connections/{self.connection_id}":
@@ -393,7 +407,12 @@ def _start_openvpn(
     auth_path.write_text(f"{username}\n{password}\n", encoding="utf-8")
     os.chmod(auth_path, 0o600)
     config_path.write_text(
-        render_openvpn_runtime_config(config, str(auth_path)), encoding="utf-8"
+        render_openvpn_runtime_config(
+            config,
+            str(auth_path),
+            tuple(body.target_ips) if isinstance(body, WorkerSessionOpenRequest) else (),
+        ),
+        encoding="utf-8",
     )
     os.chmod(config_path, 0o600)
     previous_links = _ssl_links()
@@ -404,12 +423,41 @@ def _start_openvpn(
     )
     timeout = settings.mfa_timeout if body.external_mfa else settings.connect_timeout
     deadline = time.monotonic() + timeout
+    candidate_interface = None
+    candidate_address = None
     while time.monotonic() < deadline and process.poll() is None:
         interface, assigned = _ssl_address(previous_links)
         if interface and assigned:
-            return process, interface, assigned
+            candidate_interface = interface
+            candidate_address = assigned
+            targets = (
+                tuple(body.target_ips)
+                if isinstance(body, WorkerSessionOpenRequest)
+                else ()
+            )
+            routes_ready = True
+            for target in targets:
+                route = _run(
+                    ["ip", "-4", "route", "get", target],
+                    timeout=3,
+                    check=False,
+                )
+                if route.returncode != 0 or not re.search(
+                    rf"\bdev\s+{re.escape(interface)}(?:\s|$)",
+                    route.stdout,
+                ):
+                    routes_ready = False
+                    break
+            if routes_ready:
+                return process, interface, assigned
         time.sleep(0.25)
-    _cleanup_ssl(process, None)
+    _cleanup_ssl(process, candidate_interface)
+    if candidate_address is not None:
+        raise WorkerError(
+            503,
+            "vpn_routes_not_installed",
+            "The VPN tunnel did not install routes to the selected devices",
+        )
     raise WorkerError(503, "vpn_tunnel_not_established", "The VPN tunnel did not establish")
 
 

@@ -16,6 +16,7 @@ from atlas.services.errors import DependencyError
 from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
 from atlas.vpn.import_service import VPNImportError, VPNProfileImportService, inspect_profile
 from atlas.vpn.models import VPNConnectionRecord
+from atlas.vpn.openvpn_profile import render_openvpn_runtime_config
 from atlas.vpn.service import VPNRegistryError
 
 
@@ -151,6 +152,23 @@ class VPNImportTests(unittest.TestCase):
             )
             with self.assertRaises(VPNImportError):
                 inspect_profile(body)
+
+    def test_openvpn_runtime_adds_exact_routes_for_selected_devices(self):
+        rendered = render_openvpn_runtime_config(
+            openvpn_profile().decode(),
+            "/run/atlas-vpn-worker/auth.txt",
+            ("10.1.248.20", "10.1.248.21", "10.1.248.20"),
+        )
+
+        self.assertIn(
+            "route 10.1.248.20 255.255.255.255 vpn_gateway",
+            rendered,
+        )
+        self.assertIn(
+            "route 10.1.248.21 255.255.255.255 vpn_gateway",
+            rendered,
+        )
+        self.assertEqual(rendered.count("route 10.1.248.20 "), 1)
 
     def test_windows_encx_requires_valid_export_password(self):
         salt = bytes(range(12))

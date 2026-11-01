@@ -3,15 +3,21 @@
 from __future__ import annotations
 
 import hmac
+import logging
 import os
 from pathlib import Path
 
-from fastapi import FastAPI, Header, HTTPException
+from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field
 
 from atlas.prophylaxis.ansible_backend import AnsibleBackend
+from atlas.prophylaxis.errors import ProphylaxisExecutionError
 from atlas.prophylaxis.models import CheckId, CollectorId
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry, FORTIOS_SSH_PROFILE
+
+
+logger = logging.getLogger("atlas.vpn.collector")
 
 
 class CollectorRequest(BaseModel):
@@ -58,6 +64,30 @@ backend = AnsibleBackend(
     job_timeout=int(os.environ.get("ATLAS_ANSIBLE_JOB_TIMEOUT", "120")),
     fortios_validate_certs=os.environ.get("ATLAS_FORTIOS_VALIDATE_CERTS", "false").lower() == "true",
 )
+
+
+@app.exception_handler(ProphylaxisExecutionError)
+async def execution_error_handler(
+    _request: Request,
+    exc: ProphylaxisExecutionError,
+) -> JSONResponse:
+    logger.warning(
+        "vpn.collector_execution_failed",
+        extra={
+            "event": "vpn.collector_execution_failed",
+            "reason_code": exc.code,
+            "exception_type": type(exc).__name__,
+        },
+    )
+    return JSONResponse(
+        status_code=502,
+        content={
+            "error": {
+                "code": exc.code,
+                "message": "The VPN collector could not execute the requested check",
+            }
+        },
+    )
 
 
 @app.get("/health")

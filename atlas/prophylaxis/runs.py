@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 import logging
+import re
 import threading
 
 from atlas.device_credentials import DeviceValidationError
@@ -261,7 +262,16 @@ class DeviceFactsRunService:
         for connection_id, members in grouped.items():
             try:
                 connection = self.vpn_registry.get(connection_id)
-                session_id = self.vpn_session.open(connection)
+                target_ips = tuple(
+                    management_ip
+                    for device in members
+                    for management_ip in (self._identity(device)[2],)
+                    if management_ip is not None
+                )
+                session_id = self.vpn_session.open(
+                    connection,
+                    target_ips=tuple(dict.fromkeys(target_ips)),
+                )
             except Exception as exc:
                 code = getattr(exc, "code", "vpn_connection_failed")
                 collected.extend(
@@ -563,6 +573,13 @@ class DeviceFactsRunService:
                 device_id, name, management_ip, platform = self._identity(device)
                 known, unknown = self._selected_checks(device)
                 checks = tuple(check.value for check in known) + unknown
+                candidate_code = getattr(exc, "code", None)
+                reason_code = (
+                    candidate_code
+                    if isinstance(candidate_code, str)
+                    and re.fullmatch(r"[a-z0-9_]{1,100}", candidate_code)
+                    else "unexpected_execution_error"
+                )
                 logger.warning(
                     "prophylaxis_device_failed",
                     extra={
@@ -570,7 +587,7 @@ class DeviceFactsRunService:
                         "device": name,
                         "platform": platform,
                         "operation": OPERATION,
-                        "reason_code": "unexpected_execution_error",
+                        "reason_code": reason_code,
                         "exception_type": type(exc).__name__,
                     },
                 )
@@ -582,7 +599,7 @@ class DeviceFactsRunService:
                         platform,
                         check,
                         "failed",
-                        "unexpected_execution_error",
+                        reason_code,
                         log_event=False,
                     )
                     for check in checks

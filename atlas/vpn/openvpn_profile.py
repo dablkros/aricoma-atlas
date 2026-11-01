@@ -148,7 +148,11 @@ def parse_openvpn_profile(data: bytes | str, *, source_name: str | None = None) 
     )
 
 
-def render_openvpn_runtime_config(config: str, auth_path: str) -> str:
+def render_openvpn_runtime_config(
+    config: str,
+    auth_path: str,
+    target_ips: tuple[str, ...] = (),
+) -> str:
     """Revalidate stored input and bind auth-user-pass to a protected runtime file."""
     profile = parse_openvpn_profile(config)
     if not auth_path.startswith("/") or any(character in auth_path for character in "\r\n\x00 "):
@@ -163,5 +167,17 @@ def render_openvpn_runtime_config(config: str, auth_path: str) -> str:
             lines.append(line)
     if not replaced:
         raise OpenVPNProfileError("vpn_profile_invalid")
+    routes: list[str] = []
+    for value in dict.fromkeys(target_ips):
+        try:
+            address = ipaddress.ip_address(value)
+        except ValueError:
+            raise OpenVPNProfileError("vpn_profile_invalid") from None
+        if address.version != 4:
+            raise OpenVPNProfileError("vpn_profile_invalid")
+        route = f"route {address} 255.255.255.255 vpn_gateway"
+        if route not in lines:
+            routes.append(route)
+    lines.extend(routes)
     lines.append("auth-nocache")
     return "\n".join(lines) + "\n"
