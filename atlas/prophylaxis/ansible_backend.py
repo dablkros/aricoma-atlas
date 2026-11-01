@@ -256,6 +256,23 @@ class AnsibleBackend:
                     "ansible_network_cli_ssh_type": "libssh",
                 }
             )
+            if profile.slug == "cisco-catalyst-1200":
+                # Catalyst 1200 presents an additional interactive login after
+                # the SSH transport is established. The upstream ciscosmb
+                # terminal plugin does not declare these initial prompts.
+                variables.update(
+                    {
+                        "ansible_terminal_initial_prompt": [
+                            r"(?i)(?:^|[\r\n])User Name:\s*$",
+                            r"(?i)(?:^|[\r\n])Password:\s*$",
+                        ],
+                        "ansible_terminal_initial_answer": [
+                            "{{ ansible_user }}",
+                            "{{ ansible_password }}",
+                        ],
+                        "ansible_terminal_initial_prompt_checkall": True,
+                    }
+                )
             if profile.legacy_kex_algorithms:
                 variables["ansible_libssh_key_exchange_algorithms"] = (
                     "+" + ",".join(profile.legacy_kex_algorithms)
