@@ -19,7 +19,7 @@ from uuid import uuid4
 from fastapi import FastAPI, Header, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
 from atlas.logging import configure_logging
 from atlas.openbao_client import OpenBaoClient
@@ -109,6 +109,20 @@ class WorkerSessionOpenRequest(BaseModel):
             raise ValueError("secret_ref does not match connection_id")
 
 
+class WorkerOTPRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    connection_id: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    code: SecretStr = Field(repr=False)
+
+    @field_validator("code")
+    @classmethod
+    def numeric_code(cls, value: SecretStr) -> SecretStr:
+        if not re.fullmatch(r"[0-9]{4,16}", value.get_secret_value()):
+            raise ValueError("code must contain 4 to 16 digits")
+        return value
+
+
 @dataclass
 class WorkerSession:
     session_id: str
@@ -118,6 +132,16 @@ class WorkerSession:
     assigned_address: str
     directory: Path
     timer: threading.Timer | None = None
+
+
+@dataclass
+class WorkerMFAOperation:
+    operation_id: str
+    request_id: str
+    body: WorkerTestRequest
+    state: str = "connecting"
+    result: dict | None = None
+    otp_response_file: Path | None = None
 
 
 class WorkerSettings:
@@ -144,6 +168,8 @@ settings = WorkerSettings()
 worker_lock = threading.Lock()
 session_guard = threading.Lock()
 active_session: WorkerSession | None = None
+mfa_guard = threading.Lock()
+mfa_operations: dict[str, WorkerMFAOperation] = {}
 app = FastAPI(title="Atlas VPN worker", docs_url=None, redoc_url=None, openapi_url=None)
 
 
@@ -569,6 +595,237 @@ def close_session(
         extra={"event": "vpn.worker_session_closed", "connection_id": session.connection_id},
     )
     return {"status": "disconnected"}
+
+
+def _mfa_snapshot(operation: WorkerMFAOperation) -> dict:
+    payload = {
+        "operation_id": operation.operation_id,
+        "state": operation.state,
+    }
+    if operation.result is not None:
+        payload["result"] = operation.result
+    return payload
+
+
+def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
+    body = operation.body
+    started = time.monotonic()
+    charon = None
+    result = {
+        "status": "failed", "tunnel_established": False, "target_reachable": False,
+        "assigned_address": None, "failure_stage": "worker",
+        "message": "The VPN worker could not complete the MFA test.",
+    }
+    try:
+        openbao = OpenBaoService(
+            OpenBaoClient(settings.openbao_url, timeout=10), settings.identity_file,
+        )
+        secret = openbao.read_secret(body.secret_ref)
+        profile, credentials = _profile(secret, body)
+        settings.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(prefix="mfa-", dir=settings.runtime) as directory:
+            directory_path = Path(directory)
+            config_path = directory_path / "swanctl.conf"
+            otp_request = directory_path / "otp-requested"
+            otp_response = directory_path / "otp-response"
+            daemon_path = settings.runtime / "profile.conf"
+            operation.otp_response_file = otp_response
+            config_path.write_text(
+                render_swanctl(profile, credentials, (f"{body.target_ip}/32",)),
+                encoding="utf-8",
+            )
+            daemon_path.write_text(
+                render_fortinet_daemon_fragment(
+                    profile.network_id,
+                    otp_request_file=str(otp_request),
+                    otp_response_file=str(otp_response),
+                    otp_timeout=settings.mfa_timeout,
+                ),
+                encoding="utf-8",
+            )
+            os.chmod(config_path, 0o600)
+            os.chmod(daemon_path, 0o600)
+            charon = subprocess.Popen(
+                [settings.charon], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, close_fds=True,
+            )
+            socket_path = Path("/run/charon.vici")
+            deadline = time.monotonic() + 10
+            while time.monotonic() < deadline and not socket_path.exists() and charon.poll() is None:
+                time.sleep(0.1)
+            if charon.poll() is not None or not socket_path.exists():
+                raise RuntimeError("charon_start_failed")
+            _run([settings.swanctl, "--load-conns", "--file", str(config_path)])
+            _run([settings.swanctl, "--load-creds", "--file", str(config_path)])
+            initiate = subprocess.Popen(
+                [
+                    settings.swanctl, "--initiate", "--child", "vpn",
+                    "--timeout", str(settings.mfa_timeout),
+                ],
+                stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL, close_fds=True,
+                env={"PATH": "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"},
+            )
+            deadline = time.monotonic() + settings.mfa_timeout + 10
+            while initiate.poll() is None and time.monotonic() < deadline:
+                if otp_request.exists():
+                    with mfa_guard:
+                        if operation.state == "connecting":
+                            operation.state = "waiting_for_otp"
+                time.sleep(0.1)
+            if initiate.poll() is None:
+                initiate.terminate()
+                try:
+                    initiate.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    initiate.kill()
+                    initiate.wait(timeout=3)
+            ike, child, assigned = _sas()
+            result.update(tunnel_established=bool(ike and child), assigned_address=assigned)
+            if not ike:
+                result.update(failure_stage="ike", message="IKE authentication did not establish.")
+            elif not child:
+                result.update(
+                    failure_stage="child",
+                    message="IKE established, but the CHILD SA was not installed.",
+                )
+            else:
+                try:
+                    with socket.create_connection(
+                        (body.target_ip, body.target_port),
+                        timeout=settings.target_timeout,
+                        source_address=((assigned, 0) if assigned else None),
+                    ):
+                        pass
+                    result.update(
+                        status="passed", target_reachable=True, failure_stage=None,
+                        message="The tunnel established and the selected device accepted the TCP connection.",
+                    )
+                except OSError:
+                    result.update(
+                        failure_stage="target",
+                        message="The tunnel established, but the selected TCP target did not answer.",
+                    )
+    except (FortiClientProfileError, OpenVPNProfileError):
+        result.update(
+            failure_stage="validation",
+            message="The stored VPN profile is not supported by this worker.",
+        )
+    except Exception as exc:
+        logger.warning(
+            "vpn.worker_mfa_execution_failed",
+            extra={
+                "event": "vpn.worker_mfa_execution_failed",
+                "request_id": operation.request_id,
+                "connection_id": body.connection_id,
+                "reason_code": "unexpected_execution_error",
+                "exception_type": type(exc).__name__,
+            },
+        )
+    finally:
+        clean = _cleanup(charon)
+        try:
+            (settings.runtime / "profile.conf").unlink(missing_ok=True)
+        except OSError:
+            clean = False
+        if not clean:
+            result.update(
+                status="failed", failure_stage="cleanup",
+                message="VPN cleanup did not complete cleanly.",
+            )
+        result["disconnected"] = clean
+        result["duration_ms"] = int((time.monotonic() - started) * 1000)
+        with mfa_guard:
+            operation.result = result
+            operation.state = "finished"
+            operation.otp_response_file = None
+        worker_lock.release()
+        logger.info(
+            "vpn.worker_mfa_finished",
+            extra={
+                "event": "vpn.worker_mfa_finished",
+                "request_id": operation.request_id,
+                "connection_id": body.connection_id,
+                "status": result["status"],
+                "failure_stage": result["failure_stage"],
+                "disconnected": result["disconnected"],
+                "duration_ms": result["duration_ms"],
+            },
+        )
+
+
+@app.post("/v1/test/mfa")
+def start_mfa_test(
+    body: WorkerTestRequest,
+    request: Request,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorized(authorization)
+    if not body.external_mfa or (body.driver, body.protocol) != ("strongswan", "ipsec-ikev2"):
+        raise WorkerError(422, "vpn_worker_request_rejected", "This operation requires IPsec MFA")
+    if not worker_lock.acquire(blocking=False):
+        raise WorkerError(409, "vpn_test_busy", "Another VPN operation is already running")
+    operation = WorkerMFAOperation(
+        operation_id=uuid4().hex,
+        request_id=_request_id(request),
+        body=body,
+    )
+    with mfa_guard:
+        finished = [key for key, value in mfa_operations.items() if value.state == "finished"]
+        for key in finished[:-9]:
+            mfa_operations.pop(key, None)
+        mfa_operations[operation.operation_id] = operation
+    thread = threading.Thread(target=_run_mfa_operation, args=(operation,), daemon=True)
+    thread.start()
+    return _mfa_snapshot(operation)
+
+
+@app.get("/v1/test/mfa/{operation_id}")
+def get_mfa_test(
+    operation_id: str,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorized(authorization)
+    if not re.fullmatch(r"[a-f0-9]{32}", operation_id):
+        raise WorkerError(404, "vpn_mfa_operation_not_found", "MFA operation was not found")
+    with mfa_guard:
+        operation = mfa_operations.get(operation_id)
+        if operation is None:
+            raise WorkerError(404, "vpn_mfa_operation_not_found", "MFA operation was not found")
+        return _mfa_snapshot(operation)
+
+
+@app.post("/v1/test/mfa/{operation_id}/otp")
+def submit_mfa_otp(
+    operation_id: str,
+    body: WorkerOTPRequest,
+    authorization: str | None = Header(default=None),
+) -> dict:
+    _authorized(authorization)
+    with mfa_guard:
+        operation = mfa_operations.get(operation_id)
+        if operation is None:
+            raise WorkerError(404, "vpn_mfa_operation_not_found", "MFA operation was not found")
+        if operation.body.connection_id != body.connection_id:
+            raise WorkerError(404, "vpn_mfa_operation_not_found", "MFA operation was not found")
+        if operation.state != "waiting_for_otp" or operation.otp_response_file is None:
+            raise WorkerError(409, "vpn_mfa_not_waiting", "MFA operation is not waiting for a token")
+        response_file = operation.otp_response_file
+        code = body.code.get_secret_value().encode("ascii")
+        try:
+            descriptor = os.open(
+                response_file,
+                os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0),
+                0o600,
+            )
+            try:
+                os.write(descriptor, code)
+            finally:
+                os.close(descriptor)
+        except OSError:
+            raise WorkerError(409, "vpn_mfa_not_waiting", "MFA token could not be accepted") from None
+        operation.state = "authenticating"
+        return _mfa_snapshot(operation)
 
 
 @app.post("/v1/test")

@@ -32,6 +32,7 @@ const state = {
   vpnAssignmentSelectedIds: new Set(),
   vpnTestOptions: null,
   vpnTestBusy: false,
+  vpnTestOTPResolve: null,
   authenticated: false,
   principal: null,
   adminExpiryTimer: null,
@@ -214,6 +215,9 @@ const elements = {
   vpnTestActivity: document.querySelector("#vpn-test-activity"),
   vpnTestActivityTitle: document.querySelector("#vpn-test-activity-title"),
   vpnTestActivityDetail: document.querySelector("#vpn-test-activity-detail"),
+  vpnTestOTP: document.querySelector("#vpn-test-otp"),
+  vpnTestOTPCode: document.querySelector("#vpn-test-otp-code"),
+  vpnTestOTPSubmit: document.querySelector("#vpn-test-otp-submit"),
   vpnTestResult: document.querySelector("#vpn-test-result"),
   vpnTestResultTitle: document.querySelector("#vpn-test-result-title"),
   vpnTestStatus: document.querySelector("#vpn-test-status"),
@@ -2816,7 +2820,7 @@ async function planVPNImport() {
     if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
     vpnImport.plan = result;
     const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
-    const mfa = result.external_mfa ? '; push MFA: enabled' : '';
+    const mfa = result.external_mfa ? '; external MFA: enabled' : '';
     vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
@@ -2959,8 +2963,97 @@ elements.vpnAssignmentConfirm.addEventListener("change", () => {
 
 function resetVPNTestResult() {
   elements.vpnTestResult.hidden = true;
+  elements.vpnTestOTP.hidden = true;
+  elements.vpnTestOTPCode.value = "";
+  state.vpnTestOTPResolve = null;
   elements.vpnTestStatus.className = "status-pill status-pill-neutral";
   elements.vpnTestStatus.textContent = "Unknown";
+}
+
+function renderVPNConnectivityResult(result) {
+  elements.vpnTestResult.hidden = false;
+  elements.vpnTestStatus.textContent = result.status === "passed" ? "Passed" : "Failed";
+  elements.vpnTestStatus.className = `status-pill ${result.status === "passed" ? "status-pill-healthy" : "status-pill-unhealthy"}`;
+  elements.vpnTestResultTitle.textContent = result.status === "passed" ? "VPN is working" : "VPN test failed";
+  elements.vpnTestTunnel.textContent = result.tunnel_established ? "IKE and CHILD SA established" : "Not established";
+  elements.vpnTestTarget.textContent = result.target_reachable
+    ? `${result.target_ip}:${result.target_port} reachable`
+    : result.tunnel_established
+      ? `${result.target_ip}:${result.target_port} did not answer`
+      : "Not tested — tunnel was not established";
+  elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
+  elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
+  elements.vpnTestDetail.textContent = `${result.message} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
+  elements.vpnTestMessage.textContent = result.disconnected
+    ? "Test finished. The temporary VPN connectivity is closed."
+    : "Test finished, but cleanup was not confirmed.";
+}
+
+function requestVPNOTP() {
+  elements.vpnTestOTP.hidden = false;
+  elements.vpnTestOTPCode.value = "";
+  elements.vpnTestOTPSubmit.disabled = false;
+  elements.vpnTestActivityTitle.textContent = "Authentication code required";
+  elements.vpnTestActivityDetail.textContent = "Check your e-mail, enter the one-time code below, then submit it.";
+  elements.vpnTestMessage.textContent = "The VPN gateway is waiting for the one-time authentication code.";
+  window.setTimeout(() => elements.vpnTestOTPCode.focus(), 0);
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      state.vpnTestOTPResolve = null;
+      reject(new Error("The authentication-code entry timed out."));
+    }, 125000);
+    state.vpnTestOTPResolve = (code) => {
+      window.clearTimeout(timeout);
+      resolve(code);
+    };
+  });
+}
+
+function submitVPNOTPInput() {
+  if (!state.vpnTestOTPResolve) return;
+  const code = elements.vpnTestOTPCode.value.trim();
+  if (!/^[0-9]{4,16}$/.test(code)) {
+    elements.vpnTestMessage.textContent = "Enter the 4 to 16 digit authentication code.";
+    elements.vpnTestOTPCode.focus();
+    return;
+  }
+  const resolve = state.vpnTestOTPResolve;
+  state.vpnTestOTPResolve = null;
+  elements.vpnTestOTPSubmit.disabled = true;
+  elements.vpnTestOTPCode.value = "";
+  resolve(code);
+}
+
+async function runInteractiveMFATest(connectionId, requestBody) {
+  let stateResult = await apiRequest(
+    `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa`,
+    { method: "POST", headers: operatorHeaders(), body: requestBody },
+  );
+  const query = `device_id=${encodeURIComponent(requestBody.device_id)}&target_port=${encodeURIComponent(requestBody.target_port)}`;
+  const deadline = Date.now() + 180000;
+  let submitted = false;
+  while (stateResult.state !== "finished") {
+    if (Date.now() >= deadline) throw new Error("The MFA operation timed out.");
+    if (stateResult.state === "waiting_for_otp" && !submitted) {
+      const code = await requestVPNOTP();
+      stateResult = await apiRequest(
+        `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa/${encodeURIComponent(stateResult.operation_id)}/otp?${query}`,
+        { method: "POST", headers: operatorHeaders(), body: { code } },
+      );
+      submitted = true;
+      elements.vpnTestOTP.hidden = true;
+      elements.vpnTestActivityTitle.textContent = "Verifying authentication code";
+      elements.vpnTestActivityDetail.textContent = "The code was submitted. Atlas is waiting for the tunnel and will then test the selected device.";
+    }
+    if (stateResult.state === "finished") break;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    stateResult = await apiRequest(
+      `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa/${encodeURIComponent(stateResult.operation_id)}?${query}`,
+      { headers: operatorHeaders() },
+    );
+  }
+  if (!stateResult.result) throw new Error("The VPN worker returned no test result.");
+  return stateResult.result;
 }
 
 function updateVPNTestRun() {
@@ -3065,46 +3158,34 @@ async function runVPNTest() {
   );
   const usesMfa = selectedConnection?.auth_method === "external_mfa";
   elements.vpnTestActivityTitle.textContent = usesMfa
-    ? "Waiting for MFA approval"
+    ? "Starting interactive MFA"
     : "Waiting for the isolated VPN worker";
   elements.vpnTestActivityDetail.textContent = usesMfa
-    ? "Approve the VPN push notification · 0 s elapsed. Atlas will wait up to two minutes."
+    ? "Atlas is authenticating with the stored username and password. It will ask for the one-time code when the gateway requests it."
     : "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
   elements.vpnTestMessage.textContent = usesMfa
-    ? "Approve the MFA push notification. Atlas will test the device and disconnect automatically."
+    ? "Wait for the gateway to send the authentication code. Atlas will then display the code field."
     : "The worker is connecting and will disconnect automatically after the check.";
   const startedAt = Date.now();
   const activityTimer = window.setInterval(() => {
     const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
-    elements.vpnTestActivityDetail.textContent = usesMfa
-      ? `Approve the VPN push notification · ${elapsed} s elapsed. Atlas is waiting for authentication.`
-      : `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
+    if (!usesMfa) {
+      elements.vpnTestActivityDetail.textContent = `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
+    }
   }, 1000);
   const connectionId = elements.vpnTestConnection.value;
   try {
-    const result = await apiRequest(
-      `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test`,
-      {
-        method: "POST", headers: operatorHeaders(),
-        body: { device_id: Number(elements.vpnTestDevice.value), target_port: Number(elements.vpnTestPort.value) },
-      },
-    );
-    elements.vpnTestResult.hidden = false;
-    elements.vpnTestStatus.textContent = result.status === "passed" ? "Passed" : "Failed";
-    elements.vpnTestStatus.className = `status-pill ${result.status === "passed" ? "status-pill-healthy" : "status-pill-unhealthy"}`;
-    elements.vpnTestResultTitle.textContent = result.status === "passed" ? "VPN is working" : "VPN test failed";
-    elements.vpnTestTunnel.textContent = result.tunnel_established ? "IKE and CHILD SA established" : "Not established";
-    elements.vpnTestTarget.textContent = result.target_reachable
-      ? `${result.target_ip}:${result.target_port} reachable`
-      : result.tunnel_established
-        ? `${result.target_ip}:${result.target_port} did not answer`
-        : "Not tested — tunnel was not established";
-    elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
-    elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
-    elements.vpnTestDetail.textContent = `${result.message} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
-    elements.vpnTestMessage.textContent = result.disconnected
-      ? "Test finished. The temporary VPN connectivity is closed."
-      : "Test finished, but cleanup was not confirmed.";
+    const requestBody = {
+      device_id: Number(elements.vpnTestDevice.value),
+      target_port: Number(elements.vpnTestPort.value),
+    };
+    const result = usesMfa
+      ? await runInteractiveMFATest(connectionId, requestBody)
+      : await apiRequest(
+        `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test`,
+        { method: "POST", headers: operatorHeaders(), body: requestBody },
+      );
+    renderVPNConnectivityResult(result);
   } catch (error) {
     const safeMessage = error.safeMessage || "The VPN test could not be started.";
     const errorCode = error.code || "request_failed";
@@ -3122,6 +3203,8 @@ async function runVPNTest() {
   } finally {
     window.clearInterval(activityTimer);
     state.vpnTestBusy = false;
+    state.vpnTestOTPResolve = null;
+    elements.vpnTestOTP.hidden = true;
     elements.vpnTestActivity.hidden = true;
     updateVPNTestRun();
   }
@@ -3136,6 +3219,13 @@ elements.vpnTestSite.addEventListener("change", renderVPNTestDevices);
 elements.vpnTestDevice.addEventListener("change", updateVPNTestRun);
 elements.vpnTestPort.addEventListener("input", updateVPNTestRun);
 elements.vpnTestRun.addEventListener("click", runVPNTest);
+elements.vpnTestOTPSubmit.addEventListener("click", submitVPNOTPInput);
+elements.vpnTestOTPCode.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    submitVPNOTPInput();
+  }
+});
 
 for (const input of [
   elements.credentialProfile,

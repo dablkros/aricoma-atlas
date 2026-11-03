@@ -8,7 +8,7 @@ import re
 
 import requests
 
-from atlas.vpn.models import VPNConnectivityTestResult
+from atlas.vpn.models import VPNConnectivityTestResult, VPNMFATestState
 from atlas.vpn.service import VPNRegistryError
 
 
@@ -100,6 +100,63 @@ class VPNWorkerClient:
             raise VPNWorkerError("vpn_worker_failed")
         return data
 
+    def _mfa_request(
+        self,
+        method: str,
+        path: str,
+        *,
+        payload: dict | None = None,
+        request_id: str | None = None,
+    ) -> dict:
+        headers = {"Authorization": f"Bearer {self._token()}"}
+        if request_id is not None and _REQUEST_ID_PATTERN.fullmatch(request_id):
+            headers["X-Request-ID"] = request_id
+        try:
+            response = requests.request(
+                method,
+                f"{self.base_url}{path}",
+                json=payload,
+                headers=headers,
+                timeout=min(self.timeout, 15.0),
+            )
+        except requests.RequestException:
+            raise VPNWorkerError("vpn_worker_unavailable") from None
+        try:
+            data = response.json()
+        except ValueError:
+            raise VPNWorkerError("vpn_worker_invalid_response") from None
+        error = data.get("error") if isinstance(data, dict) else None
+        code = error.get("code") if isinstance(error, dict) else None
+        if response.status_code >= 400:
+            allowed = {
+                "vpn_test_busy", "vpn_mfa_operation_not_found", "vpn_mfa_not_waiting",
+                "vpn_worker_request_rejected", "vpn_worker_identity_unavailable",
+            }
+            raise VPNWorkerError(code if code in allowed else "vpn_worker_failed", response.status_code)
+        if not isinstance(data, dict):
+            raise VPNWorkerError("vpn_worker_invalid_response")
+        return data
+
+    def start_mfa(self, payload: dict, *, request_id: str | None = None) -> dict:
+        return self._mfa_request("POST", "/v1/test/mfa", payload=payload, request_id=request_id)
+
+    def mfa_status(self, operation_id: str, *, request_id: str | None = None) -> dict:
+        return self._mfa_request("GET", f"/v1/test/mfa/{operation_id}", request_id=request_id)
+
+    def submit_mfa(
+        self,
+        operation_id: str,
+        connection_id: str,
+        code: str,
+        *,
+        request_id: str | None = None,
+    ) -> dict:
+        return self._mfa_request(
+            "POST", f"/v1/test/mfa/{operation_id}/otp",
+            payload={"connection_id": connection_id, "code": code},
+            request_id=request_id,
+        )
+
 
 class VPNConnectivityTestService:
     """Validate NetBox ownership/mapping before asking the privileged worker."""
@@ -108,14 +165,13 @@ class VPNConnectivityTestService:
         self.registry = registry
         self.worker = worker
 
-    def run(
+    def _payload(
         self,
         connection_id: str,
         *,
         device_id: int,
         target_port: int,
-        request_id: str | None = None,
-    ) -> VPNConnectivityTestResult:
+    ) -> tuple[dict, dict]:
         connection = self.registry.get(connection_id)
         if connection.administrative_status == "disabled":
             raise VPNWorkerError("connection_disabled", 409)
@@ -146,6 +202,19 @@ class VPNConnectivityTestService:
             "target_ip": resolved["management_ip"],
             "target_port": target_port,
         }
+        return payload, resolved
+
+    def run(
+        self,
+        connection_id: str,
+        *,
+        device_id: int,
+        target_port: int,
+        request_id: str | None = None,
+    ) -> VPNConnectivityTestResult:
+        payload, resolved = self._payload(
+            connection_id, device_id=device_id, target_port=target_port,
+        )
         result = self.worker.test(payload, request_id=request_id)
         result.update({
             "connection_id": connection_id,
@@ -156,6 +225,81 @@ class VPNConnectivityTestService:
         })
         try:
             return VPNConnectivityTestResult.model_validate(result)
+        except Exception:
+            raise VPNWorkerError("vpn_worker_invalid_response") from None
+
+    def start_mfa(
+        self,
+        connection_id: str,
+        *,
+        device_id: int,
+        target_port: int,
+        request_id: str | None = None,
+    ) -> VPNMFATestState:
+        payload, _resolved = self._payload(
+            connection_id, device_id=device_id, target_port=target_port,
+        )
+        if not payload["external_mfa"] or payload["driver"] != "strongswan":
+            raise VPNWorkerError("vpn_mfa_not_configured", 409)
+        try:
+            return VPNMFATestState.model_validate(
+                self.worker.start_mfa(payload, request_id=request_id)
+            )
+        except VPNWorkerError:
+            raise
+        except Exception:
+            raise VPNWorkerError("vpn_worker_invalid_response") from None
+
+    def mfa_status(
+        self,
+        connection_id: str,
+        operation_id: str,
+        *,
+        device_id: int,
+        target_port: int,
+        request_id: str | None = None,
+    ) -> VPNMFATestState:
+        _payload, resolved = self._payload(
+            connection_id, device_id=device_id, target_port=target_port,
+        )
+        data = self.worker.mfa_status(operation_id, request_id=request_id)
+        result = data.get("result") if isinstance(data, dict) else None
+        if isinstance(result, dict):
+            result.update({
+                "connection_id": connection_id,
+                "device_id": device_id,
+                "device_name": resolved.get("device_name"),
+                "target_ip": resolved["management_ip"],
+                "target_port": target_port,
+            })
+        try:
+            return VPNMFATestState.model_validate(data)
+        except Exception:
+            raise VPNWorkerError("vpn_worker_invalid_response") from None
+
+    def submit_mfa(
+        self,
+        connection_id: str,
+        operation_id: str,
+        code: str,
+        *,
+        device_id: int,
+        target_port: int,
+        request_id: str | None = None,
+    ) -> VPNMFATestState:
+        payload, _resolved = self._payload(
+            connection_id, device_id=device_id, target_port=target_port,
+        )
+        if not payload["external_mfa"] or payload["driver"] != "strongswan":
+            raise VPNWorkerError("vpn_mfa_not_configured", 409)
+        try:
+            return VPNMFATestState.model_validate(
+                self.worker.submit_mfa(
+                    operation_id, connection_id, code, request_id=request_id,
+                )
+            )
+        except VPNWorkerError:
+            raise
         except Exception:
             raise VPNWorkerError("vpn_worker_invalid_response") from None
 

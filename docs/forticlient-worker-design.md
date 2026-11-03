@@ -27,7 +27,14 @@ OpenVPN `.ovpn` import akceptuje iba presnú allowlist klientskych direktív,
 `dev tun`, jednu `remote`, inline `<ca>`, `<cert>` a `<key>` a interné
 `auth-user-pass`. Externé súbory, skripty a pluginy sa odmietnu. Celý validovaný
 profil je secret v OpenBao; worker ho zapisuje iba do krátkodobého súboru
-`0600`. Push MFA je explicitná vlastnosť registry, nie odhad z profilu.
+`0600`. Externé MFA je explicitná vlastnosť registry, nie odhad z profilu.
+
+FortiGate IPsec s e-mailovým FortiToken kódom používa asynchrónny testovací
+tok. Worker najprv vykoná PSK a EAP-MSCHAPv2 s prihlasovacím heslom. Až keď
+gateway požiada o druhé EAP Identity a EAP-GTC odpoveď, worker označí operáciu
+ako `waiting_for_otp` a UI zobrazí jednorazové pole. Kód sa odošle do
+krátkodobého súboru `0600`, spotrebuje ho iba patchnutý EAP-GTC modul a súbor
+sa ihneď odstráni. Kód sa neukladá do OpenBao, registry ani výsledku API.
 
 `finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
 workerovom network namespace a odstráni profilový fragment. Globálny zámok
@@ -40,12 +47,16 @@ shell ani Docker socket.
 
 - ARICOMA: Ubuntu 24.04, strongSwan 6.1.0 s experimentálnym notify 61520,
   Network ID 11, PSK + EAP-MSCHAPv2, IKE aj CHILD SA a prenos ping/DNS.
-- VPN_Viena: IKE_SA_INIT prešiel s Network ID 11; používateľ potvrdil integritu
-  EncX s exportným heslom, no úspešnú autentifikáciu ani prenos cez VPN nie.
-- Zdrojový patch pre nastaviteľné ID je pripravený proti archívu 6.1.0; jeho
-  kompilácia a vyjednávanie s ľubovoľným iným ID ešte nie sú overené.
-- Trvalý `runtime_status` zostáva `not_deployed`: test je synchrónny a po
-  každom výsledku sa odpojí. Stav `passed` sa neukladá ako aktívna VPN.
+- VPN_Viena: dodaný FortiClient PCAP a `iked.log` potvrdili Network ID 11,
+  Fortinet Vendor ID, notify 61720, prvé EAP-MSCHAPv2 kolo a druhé EAP-GTC
+  kolo s interaktívnym FortiToken promptom. Úspešný Atlas tunel tým ešte nie je
+  potvrdený.
+- Zdrojové patche pre strongSwan 6.1.0 sa aplikujú na presný kontrolovaný
+  upstream archív. Ich kompiláciu v cieľovom image a reálne vyjednávanie s
+  FortiGate treba ešte overiť na Ubuntu VM.
+- Trvalý `runtime_status` zostáva `not_deployed`: MFA test používa krátkodobú
+  asynchrónnu operáciu, ale po každom výsledku sa odpojí. Stav `passed` sa
+  neukladá ako aktívna VPN.
 
 ## Izolácia a postupné prepínanie
 

@@ -26,11 +26,31 @@ class VPNSecrets:
     psk: bytes = field(repr=False)
 
 
-def render_fortinet_daemon_fragment(network_id: int) -> str:
+def render_fortinet_daemon_fragment(
+    network_id: int,
+    *,
+    otp_request_file: str | None = None,
+    otp_response_file: str | None = None,
+    otp_timeout: int = 120,
+) -> str:
     """Render a per-worker fragment for Atlas' strongSwan 6.1.0 lab patch."""
     if isinstance(network_id, bool) or not isinstance(network_id, int) or not 0 <= network_id <= 255:
         raise FortiClientProfileError('invalid_network_id')
-    return f'charon {{\n    atlas_fortinet_network_id = {network_id}\n}}\n'
+    lines = [f'    atlas_fortinet_network_id = {network_id}']
+    if (otp_request_file is None) != (otp_response_file is None):
+        raise FortiClientProfileError('invalid_otp_bridge')
+    if otp_request_file is not None:
+        allowed = re.compile(r'^/run/atlas-vpn-worker/[A-Za-z0-9._/-]+$')
+        if (not allowed.fullmatch(otp_request_file)
+                or not allowed.fullmatch(otp_response_file or '')
+                or not 30 <= otp_timeout <= 300):
+            raise FortiClientProfileError('invalid_otp_bridge')
+        lines.extend((
+            f'    atlas_fortinet_otp_request_file = {otp_request_file}',
+            f'    atlas_fortinet_otp_response_file = {otp_response_file}',
+            f'    atlas_fortinet_otp_timeout = {otp_timeout}',
+        ))
+    return 'charon {\n' + '\n'.join(lines) + '\n}\n'
 
 
 def _identity(value, reason):

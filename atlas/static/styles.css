@@ -1386,8 +1386,16 @@ textarea[aria-invalid="true"] {
 .vpn-import-actions { display: flex; flex-wrap: wrap; gap: .6rem; justify-content: flex-end; margin-top: 1.2rem; }
 .vpn-test-shell { max-width: 980px; }
 .vpn-test-result { margin-top: 1rem; padding: 1rem; border: 1px solid var(--line); border-radius: 14px; background: var(--blue-soft); }
+.vpn-test-otp { margin-top: 1rem; padding: 1rem; border: 1px solid var(--warning); border-radius: 14px; background: var(--warning-soft); }
+.vpn-test-otp h3, .vpn-test-otp p { margin: .2rem 0; }
+.vpn-test-otp-controls { display: grid; grid-template-columns: minmax(180px, 1fr) auto; gap: .65rem; align-items: end; margin-top: .8rem; }
+.vpn-test-otp-controls label { grid-column: 1 / -1; font-weight: 700; }
+.vpn-test-otp-controls input { min-width: 0; }
 .vpn-test-evidence { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: .75rem; margin: 1rem 0; }
 .vpn-test-evidence > div { padding: .8rem; border-radius: 10px; background: #fff; }
 .vpn-test-evidence dt { color: var(--ink-soft); font-size: .72rem; font-weight: 700; text-transform: uppercase; }
 .vpn-test-evidence dd { margin: .3rem 0 0; font-weight: 650; }
-@media (max-width: 720px) { .vpn-test-evidence { grid-template-columns: 1fr; } }
+@media (max-width: 720px) {
+  .vpn-test-evidence { grid-template-columns: 1fr; }
+  .vpn-test-otp-controls { grid-template-columns: 1fr; }
+}

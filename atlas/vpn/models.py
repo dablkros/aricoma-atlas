@@ -6,7 +6,7 @@ import re
 from typing import Literal
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator, model_validator
 
 
 VPNVendor = Literal["fortinet", "checkpoint", "generic"]
@@ -182,6 +182,25 @@ class VPNConnectivityTestResult(BaseModel):
         return str(address)
 
 
+class VPNMFATestState(BaseModel):
+    operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
+    state: Literal["connecting", "waiting_for_otp", "authenticating", "finished"]
+    result: VPNConnectivityTestResult | None = None
+
+
+class VPNOTPRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    code: SecretStr = Field(repr=False)
+
+    @field_validator("code")
+    @classmethod
+    def validate_code(cls, value: SecretStr) -> SecretStr:
+        if not re.fullmatch(r"[0-9]{4,16}", value.get_secret_value()):
+            raise ValueError("code must contain 4 to 16 digits")
+        return value
+
+
 class VPNAssignmentRequest(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
 
@@ -259,6 +278,8 @@ __all__ = [
     "VPNAssignmentRequest",
     "VPNConnectivityTestRequest",
     "VPNConnectivityTestResult",
+    "VPNMFATestState",
+    "VPNOTPRequest",
     "VPNConnectionCreate",
     "VPNConnectionPage",
     "VPNConnectionPatch",

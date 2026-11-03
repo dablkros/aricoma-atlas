@@ -18,6 +18,8 @@ from atlas.vpn.models import (
     VPNConnectionRecord,
     VPNConnectivityTestRequest,
     VPNConnectivityTestResult,
+    VPNMFATestState,
+    VPNOTPRequest,
     VPNResolutionResult,
     VPNValidationResult,
 )
@@ -69,6 +71,9 @@ def _test_translate(operation):
             "vpn_test_target_not_assigned": "The selected device does not use this VPN",
             "vpn_driver_not_testable": "This VPN driver cannot be tested by the current worker",
             "connection_disabled": "The VPN connection is disabled",
+            "vpn_mfa_not_configured": "This VPN connection is not configured for interactive MFA",
+            "vpn_mfa_operation_not_found": "The MFA operation was not found or has expired",
+            "vpn_mfa_not_waiting": "The VPN gateway is not waiting for an authentication code",
         }
         raise AtlasError(
             exc.status_code, exc.code, messages.get(exc.code, "VPN connectivity test failed")
@@ -273,6 +278,81 @@ def test_connection(
         },
     )
     return result
+
+
+@router.post(
+    "/connections/{connection_id}/test/mfa",
+    response_model=VPNMFATestState,
+    dependencies=[Depends(authorized)],
+)
+def start_mfa_test(
+    connection_id: str, body: VPNConnectivityTestRequest, request: Request,
+) -> VPNMFATestState:
+    service = getattr(request.app.state.dependencies, "vpn_test", None)
+    if service is None:
+        raise AtlasError(503, "vpn_worker_unavailable", "The isolated VPN worker is unavailable")
+    return _test_translate(
+        lambda: service.start_mfa(
+            connection_id,
+            device_id=body.device_id,
+            target_port=body.target_port,
+            request_id=get_request_id(request),
+        )
+    )
+
+
+@router.get(
+    "/connections/{connection_id}/test/mfa/{operation_id}",
+    response_model=VPNMFATestState,
+    dependencies=[Depends(authorized)],
+)
+def get_mfa_test(
+    connection_id: str,
+    operation_id: str,
+    request: Request,
+    device_id: int = Query(gt=0),
+    target_port: int = Query(default=22, ge=1, le=65535),
+) -> VPNMFATestState:
+    service = getattr(request.app.state.dependencies, "vpn_test", None)
+    if service is None:
+        raise AtlasError(503, "vpn_worker_unavailable", "The isolated VPN worker is unavailable")
+    return _test_translate(
+        lambda: service.mfa_status(
+            connection_id,
+            operation_id,
+            device_id=device_id,
+            target_port=target_port,
+            request_id=get_request_id(request),
+        )
+    )
+
+
+@router.post(
+    "/connections/{connection_id}/test/mfa/{operation_id}/otp",
+    response_model=VPNMFATestState,
+    dependencies=[Depends(authorized)],
+)
+def submit_mfa_otp(
+    connection_id: str,
+    operation_id: str,
+    body: VPNOTPRequest,
+    request: Request,
+    device_id: int = Query(gt=0),
+    target_port: int = Query(default=22, ge=1, le=65535),
+) -> VPNMFATestState:
+    service = getattr(request.app.state.dependencies, "vpn_test", None)
+    if service is None:
+        raise AtlasError(503, "vpn_worker_unavailable", "The isolated VPN worker is unavailable")
+    return _test_translate(
+        lambda: service.submit_mfa(
+            connection_id,
+            operation_id,
+            body.code.get_secret_value(),
+            device_id=device_id,
+            target_port=target_port,
+            request_id=get_request_id(request),
+        )
+    )
 
 
 @router.get(

@@ -377,7 +377,7 @@
             </div>
             <label class="confirmation-row">
               <input id="vpn-import-mfa" type="checkbox">
-              This VPN uses push MFA. Allow up to two minutes for approval during a connectivity test.
+              This VPN uses external MFA. Atlas waits for a push approval or displays an OTP field when the gateway requests a code.
             </label>
           </section>
           <details id="vpn-import-advanced" class="vpn-import-advanced"><summary>Connection details <span>generated from the profile</span></summary>
@@ -728,6 +728,18 @@
           <span class="monitoring-spinner" aria-hidden="true"></span>
           <div><strong id="vpn-test-activity-title">Testing VPN connectivity</strong><p id="vpn-test-activity-detail">Connecting, checking the target, then disconnecting. This can take up to one minute.</p></div>
         </div>
+        <section id="vpn-test-otp" class="vpn-test-otp" aria-labelledby="vpn-test-otp-title" hidden>
+          <div>
+            <p class="section-kicker">MFA required</p>
+            <h3 id="vpn-test-otp-title">Enter the authentication code</h3>
+            <p>The gateway sent a one-time code. Atlas uses it only for this connection attempt and does not store it.</p>
+          </div>
+          <div class="vpn-test-otp-controls">
+            <label for="vpn-test-otp-code">Authentication code</label>
+            <input id="vpn-test-otp-code" type="password" inputmode="numeric" autocomplete="one-time-code" pattern="[0-9]{4,16}" minlength="4" maxlength="16">
+            <button id="vpn-test-otp-submit" class="button button-primary" type="button">Submit code</button>
+          </div>
+        </section>
         <section id="vpn-test-result" class="vpn-test-result" aria-live="polite" hidden>
           <div class="inventory-summary-heading"><div><p class="section-kicker">Test result</p><h3 id="vpn-test-result-title">VPN test finished</h3></div><span id="vpn-test-status" class="status-pill status-pill-neutral">Unknown</span></div>
           <dl class="vpn-test-evidence">

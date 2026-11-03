@@ -15,7 +15,9 @@ RUN curl --fail --show-error --location --output strongswan.tar.bz2 \
     && echo "${STRONGSWAN_SHA256}  strongswan.tar.bz2" | sha256sum --check - \
     && tar -xjf strongswan.tar.bz2 --strip-components=1
 COPY deployment/vpn/patches/strongswan-6.1.0-fortinet-network-id.patch /tmp/network-id.patch
+COPY deployment/vpn/patches/strongswan-6.1.0-fortinet-eap-gtc-otp.patch /tmp/eap-gtc-otp.patch
 RUN patch -p1 < /tmp/network-id.patch \
+    && patch -p1 < /tmp/eap-gtc-otp.patch \
     && ./configure \
        --prefix=/usr/local \
        --sysconfdir=/usr/local/etc \
@@ -24,6 +26,7 @@ RUN patch -p1 < /tmp/network-id.patch \
        --enable-swanctl \
        --enable-eap-identity \
        --enable-eap-mschapv2 \
+       --enable-eap-gtc \
        --enable-openssl \
        --disable-ikev1 \
     && make -j"$(nproc)" \
