@@ -2650,6 +2650,7 @@ const vpnImport = {
   username: document.querySelector('#vpn-import-username'),
   password: document.querySelector('#vpn-import-password'),
   mfa: document.querySelector('#vpn-import-mfa'),
+  replace: document.querySelector('#vpn-import-replace'),
   assign: document.querySelector('#vpn-import-assign'),
   planButton: document.querySelector('#vpn-import-plan'),
   apply: document.querySelector('#vpn-import-apply'),
@@ -2804,7 +2805,45 @@ function vpnImportPayload() {
     connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
     tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
     allowed_prefixes: [], external_mfa: vpnImport.mfa.checked,
+    replace_existing: vpnImport.replace.checked,
   };
+}
+
+function vpnImportErrorMessage(error) {
+  const messages = {
+    vpn_export_password_required: 'Enter the password used to export this profile.',
+    encrypted_secret_integrity_failed: 'The export password does not verify the encrypted profile. Check the export password and try again.',
+    invalid_phase1_dh: 'The profile contains an invalid Phase 1 DH group.',
+    unsupported_phase1_dh: 'The profile does not offer the supported Phase 1 DH group 21.',
+    invalid_phase2_dh: 'The profile contains an invalid Phase 2 DH group.',
+    unsupported_phase2_dh: 'The profile does not offer the supported Phase 2 DH group 21.',
+    tenant_not_found: 'This Connection ID belongs to a stale VPN record whose customer no longer exists. Open Connection details and explicitly allow replacement.',
+    management_vrf_not_found: 'The selected management VRF no longer exists in NetBox.',
+    management_vrf_tenant_mismatch: 'The selected management VRF does not belong to this customer.',
+    netbox_unavailable: 'NetBox is unavailable. The VPN profile was not changed.',
+    vpn_connection_stale_tenant: 'This Connection ID belongs to a stale customer. Open Connection details and explicitly allow replacement.',
+    vpn_connection_conflict: 'This Connection ID already has different settings. Open Connection details and explicitly allow replacement if intentional.',
+    vpn_secret_conflict: 'Different credentials already exist for this Connection ID. Open Connection details and explicitly allow replacement if intentional.',
+    vpn_secret_unavailable: 'VPN credential storage is unavailable. Check the VPN writer identity.',
+    vpn_import_partial: 'The registry was updated but OpenBao could not be saved. Review the same import again to retry.',
+    vpn_import_plan_stale: 'The VPN state changed after review. Create a new import plan.',
+    vpn_secret_format_unsupported: 'This encrypted secret format is not supported.',
+    unsupported_encrypted_secret_format: 'This encrypted secret format is not supported.',
+    unsupported_ipsec_profile: 'The IPsec profile does not match the IKEv2 parameters currently supported by Atlas.',
+    unsupported_proposal: 'The encryption proposal in this profile is not supported.',
+    unsupported_username: 'The username contains unsupported characters.',
+    unsupported_local_id: 'The local ID contains unsupported characters.',
+    unsupported_auth_method: 'This authentication method is not supported.',
+    unsupported_ssl_sso: 'This SSL-VPN profile uses SSO/SAML, which the Atlas worker cannot automate.',
+    vpn_profile_unsupported_directive: 'This OpenVPN profile contains a directive that Atlas does not execute.',
+    vpn_profile_external_reference: 'The OpenVPN profile must contain certificates and keys inline and may not reference external files.',
+    vpn_profile_unsupported_device: 'Atlas currently supports only OpenVPN tun profiles.',
+    vpn_profile_unsupported_protocol: 'This OpenVPN transport is not supported by the Atlas worker.',
+    invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
+    invalid_decrypted_secret: 'The decrypted PSK is invalid.',
+  };
+  const message = messages[error.code] || error.safeMessage || 'VPN profile import failed.';
+  return error.requestId ? `${message} Request ID: ${error.requestId}.` : message;
 }
 
 async function planVPNImport() {
@@ -2826,33 +2865,15 @@ async function planVPNImport() {
     vpnImport.apply.disabled = !result.apply_allowed;
     vpnImportMessage('Review the settings, then save the profile.');
   } catch (error) {
-    const messages = {
-      vpn_export_password_required: 'Enter the password used to export this profile.',
-      encrypted_secret_integrity_failed: 'The export password or encrypted profile could not be verified.',
-      vpn_connection_conflict: 'This connection ID already belongs to different settings.',
-      vpn_secret_conflict: 'Credentials already exist for this connection and will not be overwritten.',
-      vpn_secret_unavailable: 'VPN credential storage is unavailable. Check the VPN writer identity.',
-      vpn_secret_format_unsupported: 'This encrypted secret format is not supported.',
-      unsupported_encrypted_secret_format: 'This encrypted secret format is not supported.',
-      unsupported_ipsec_profile: 'This IPsec configuration is not supported by the current import.',
-      unsupported_proposal: 'The encryption proposal in this profile is not supported.',
-      unsupported_username: 'The username contains unsupported characters.',
-      unsupported_local_id: 'The local ID contains unsupported characters.',
-      unsupported_auth_method: 'This authentication method is not supported.',
-      unsupported_ssl_sso: 'This SSL-VPN profile uses SSO/SAML, which the Atlas worker cannot automate.',
-      vpn_profile_unsupported_directive: 'This OpenVPN profile contains a directive that Atlas does not execute.',
-      vpn_profile_external_reference: 'The OpenVPN profile must contain certificates and keys inline and may not reference external files.',
-      vpn_profile_unsupported_device: 'Atlas currently supports only OpenVPN tun profiles.',
-      vpn_profile_unsupported_protocol: 'This OpenVPN transport is not supported by the Atlas worker.',
-      invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
-      invalid_decrypted_secret: 'The decrypted PSK is invalid.',
-    };
     if (error.code === 'validation_error' && vpnImportServerError(error) === false) return;
     if (['vpn_export_password_required', 'encrypted_secret_integrity_failed'].includes(error.code)) {
-      vpnImportFieldError(vpnImport.exportPassword, messages[error.code]);
+      vpnImportFieldError(vpnImport.exportPassword, vpnImportErrorMessage(error));
       return;
     }
-    vpnImportMessage(messages[error.code] || error.safeMessage || 'Could not prepare the import.', true);
+    if (['tenant_not_found', 'vpn_connection_stale_tenant', 'vpn_connection_conflict', 'vpn_secret_conflict'].includes(error.code)) {
+      vpnImport.advanced.open = true;
+    }
+    vpnImportMessage(vpnImportErrorMessage(error), true);
   } finally { setVPNImportBusy(); }
 }
 
@@ -2871,14 +2892,13 @@ async function applyVPNImport() {
     vpnImport.username.value = '';
     vpnImport.password.value = '';
     vpnImport.mfa.checked = false;
+    vpnImport.replace.checked = false;
     vpnImport.data = null;
     vpnImport.file.value = '';
     resetVPNImportPlan();
   } catch (error) {
     resetVPNImportPlan();
-    vpnImportMessage(error.code === 'vpn_import_partial'
-      ? 'The registry was created but OpenBao could not be saved. Review the same import again to retry.'
-      : (error.safeMessage || 'Could not save this profile.'), true);
+    vpnImportMessage(vpnImportErrorMessage(error), true);
   } finally { setVPNImportBusy(); }
 }
 
@@ -2894,6 +2914,7 @@ vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) eve
 vpnImport.dialog.addEventListener('close', () => {
   vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
   vpnImport.mfa.checked = false;
+  vpnImport.replace.checked = false;
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
 vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
@@ -2909,7 +2930,7 @@ vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
 vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
 for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
                      vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password,
-                     vpnImport.mfa]) {
+                     vpnImport.mfa, vpnImport.replace]) {
   const changed = () => { field.removeAttribute('aria-invalid'); resetVPNImportPlan(); };
   field.addEventListener('input', changed);
   field.addEventListener('change', changed);

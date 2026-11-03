@@ -81,6 +81,13 @@ class Registry:
         self.value = VPNConnectionRecord(**value.model_dump(), id=UUID(int=1), tenant_slug='customer',
             created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
         return self.value
+    def replace(self, value):
+        self._validate_references(value)
+        if self.value is None: raise VPNRegistryError('connection_not_found', 404)
+        self.value = VPNConnectionRecord(**value.model_dump(), id=self.value.id,
+            tenant_slug='customer', created_at=self.value.created_at,
+            updated_at=datetime.now(timezone.utc))
+        return self.value
     def patch(self, name, changes):
         if self.value is None or self.value.connection_id != name:
             raise VPNRegistryError('connection_not_found', 404)
@@ -97,7 +104,8 @@ class Writer:
         return self.secret, {'version': 1}
     def write_secret(self, path, value, *, cas):
         if self.fail: raise DependencyError('connection_failed')
-        if cas != 0 or self.secret is not None: raise DependencyError('conflict')
+        expected = 0 if self.secret is None else 1
+        if cas != expected: raise DependencyError('conflict')
         self.secret = json.loads(json.dumps(value))
 
 
@@ -264,6 +272,23 @@ class VPNImportTests(unittest.TestCase):
         self.writer.secret = None
         with self.assertRaisesRegex(VPNRegistryError, 'management_vrf_tenant_mismatch'):
             self.service.plan(body.model_copy(update={'tenant_id': 2}))
+
+    def test_explicit_replace_updates_registry_and_secret_with_cas(self):
+        body = request()
+        self.service.apply(body, self.service.plan(body))
+        replacement = body.model_copy(update={
+            'name': 'Replacement VPN',
+            'password': SecretStr('replacement-pass'),
+            'replace_existing': True,
+        })
+
+        plan = self.service.plan(replacement)
+
+        self.assertEqual((plan['registry_action'], plan['secret_action']),
+                         ('replace', 'replace'))
+        self.service.apply(replacement, plan)
+        self.assertEqual(self.registry.value.name, 'Replacement VPN')
+        self.assertEqual(self.writer.secret['password'], 'replacement-pass')
 
     def test_stale_plan_does_not_write(self):
         body = request(); plan = self.service.plan(body); self.registry.create(self.service._values(body)[0])

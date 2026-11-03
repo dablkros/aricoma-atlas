@@ -60,6 +60,18 @@ def _integer(value, name, minimum, maximum):
     return number
 
 
+def _dh_group(value, name):
+    """Select Atlas' supported DH21 from a FortiClient ordered DH list."""
+    raw = str(value).strip() if value is not None else ""
+    parts = [part.strip() for part in raw.split(";") if part.strip()]
+    if not parts:
+        raise FortiClientProfileError(f"invalid_{name}")
+    groups = tuple(_integer(part, name, 1, 65535) for part in parts)
+    if 21 in groups:
+        return 21
+    raise FortiClientProfileError(f"unsupported_{name}")
+
+
 def _required(value, name):
     if not isinstance(value, str) or not value.strip() or len(value) > 512:
         raise FortiClientProfileError(f"invalid_{name}")
@@ -85,9 +97,9 @@ def _plist(data, name):
             local_id=value.get("LocalID") or None,
             user_auth_enabled=_integer(value.get("EnableXAuth"), "user_auth", 0, 1) == 1,
             phase1_proposals=tuple(_required(value.get("Phase1Proposals"), "phase1").split(',')),
-            phase1_dh_group=_integer(value.get("Phase1DHGroup"), "phase1_dh", 1, 65535),
+            phase1_dh_group=_dh_group(value.get("Phase1DHGroup"), "phase1_dh"),
             phase2_proposals=tuple(_required(value.get("Phase2Proposals"), "phase2").split(',')),
-            phase2_dh_group=_integer(value.get("Phase2DHGroup"), "phase2_dh", 1, 65535),
+            phase2_dh_group=_dh_group(value.get("Phase2DHGroup"), "phase2_dh"),
             pfs=_integer(value.get("Phase2PFSEnabled"), "pfs", 0, 1) == 1,
             encrypted_auth_info=_required(value.get("AuthInfo"), "auth_info"),
         )
@@ -132,9 +144,9 @@ def _xml_ipsec(root, name):
             local_id=i.findtext('localid') or None,
             user_auth_enabled=_integer(i.findtext('xauth/enabled'), 'user_auth', 0, 1) == 1,
             phase1_proposals=proposals(i),
-            phase1_dh_group=_integer(i.findtext('dhgroup'), 'phase1_dh', 1, 65535),
+            phase1_dh_group=_dh_group(i.findtext('dhgroup'), 'phase1_dh'),
             phase2_proposals=proposals(p),
-            phase2_dh_group=_integer(p.findtext('dhgroup'), 'phase2_dh', 1, 65535),
+            phase2_dh_group=_dh_group(p.findtext('dhgroup'), 'phase2_dh'),
             pfs=_integer(p.findtext('pfs'), 'pfs', 0, 1) == 1,
             encrypted_auth_info=_required(i.findtext('auth_data/preshared_key'), 'auth_info'),
         )

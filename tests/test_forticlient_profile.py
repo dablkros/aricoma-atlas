@@ -49,6 +49,22 @@ class FortiClientProfileTests(unittest.TestCase):
         with self.assertRaisesRegex(FortiClientProfileError, 'unsupported_encrypted_secret_format'):
             decode_macos_enc(profile.encrypted_auth_info)
 
+    def test_windows_profile_selects_supported_dh21_from_ordered_offer(self):
+        xml = b'''<root><connection><name>demo</name><ike_settings>
+          <server>vpn.example.test</server><networkid>11</networkid>
+          <version>2</version><udp_port>500</udp_port><sso_enabled>0</sso_enabled>
+          <xauth><enabled>1</enabled></xauth>
+          <authentication_method>Preshared Key</authentication_method>
+          <auth_data><preshared_key>EncX 1234</preshared_key></auth_data>
+          <dhgroup>20;21;</dhgroup><proposals><proposal>AES256|SHA256</proposal></proposals>
+          </ike_settings><ipsec_settings><dhgroup>21</dhgroup><pfs>1</pfs>
+          <proposals><proposal>AES256|SHA256</proposal></proposals>
+          </ipsec_settings></connection></root>'''
+
+        profile = parse_forticlient_profile(xml, 'demo', format='windows-xml')
+
+        self.assertEqual(profile.phase1_dh_group, 21)
+
     def test_reject_encx_and_corruption_without_leaking_data(self):
         with self.assertRaisesRegex(FortiClientProfileError, 'unsupported_encrypted_secret_format'):
             decode_macos_enc('EncX 1234')

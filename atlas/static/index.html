@@ -385,6 +385,10 @@
               <div class="field-group"><label for="vpn-import-id">Connection ID</label><input id="vpn-import-id" placeholder="customer-vpn" autocomplete="off" aria-describedby="vpn-id-help"><small id="vpn-id-help">Unique ID: lowercase letters, numbers and hyphens.</small></div>
               <div class="field-group"><label for="vpn-import-name">Connection name</label><input id="vpn-import-name" autocomplete="off"></div>
             </div>
+            <label class="confirmation-row vpn-import-replace-row">
+              <input id="vpn-import-replace" type="checkbox">
+              Replace an existing VPN record and its OpenBao credentials with this reviewed profile. Use this only when moving or deliberately re-importing the same Connection ID.
+            </label>
           </details>
         </fieldset>
         <div id="vpn-import-activity" class="inventory-activity" role="status" aria-live="polite" hidden><span class="monitoring-spinner" aria-hidden="true"></span><div><strong id="vpn-import-activity-title">Working…</strong><p id="vpn-import-activity-detail">Please wait.</p></div></div>

@@ -92,6 +92,16 @@ class VPNRegistryService:
         except VPNStoreError:
             raise VPNRegistryError("vpn_registry_unavailable", 503) from None
 
+    def replace(self, value: VPNConnectionCreate) -> VPNConnectionRecord:
+        """Explicitly replace one reviewed registry record, including its tenant."""
+        tenant = self._validate_references(value)
+        try:
+            return self.store.update(value, tenant["slug"])
+        except VPNConnectionNotFound:
+            raise VPNRegistryError("connection_not_found", 404) from None
+        except VPNStoreError:
+            raise VPNRegistryError("vpn_registry_unavailable", 503) from None
+
     def get(self, connection_id: str) -> VPNConnectionRecord:
         try:
             raw = self.store.raw(connection_id)

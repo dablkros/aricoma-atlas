@@ -232,7 +232,7 @@ class SQLiteVPNConnectionStore:
                 cursor = database.execute(
                     """
                     UPDATE vpn_connections SET
-                        name = ?, vendor = ?, protocol = ?, driver = ?,
+                        name = ?, tenant_id = ?, vendor = ?, protocol = ?, driver = ?,
                         gateway_host = ?, gateway_port = ?, auth_method = ?,
                         secret_ref = ?, management_vrf_id = ?,
                         allowed_prefixes_json = ?, administrative_status = ?,
@@ -240,7 +240,7 @@ class SQLiteVPNConnectionStore:
                     WHERE connection_id = ?
                     """,
                     (
-                        fields["name"], fields["vendor"], fields["protocol"],
+                        fields["name"], fields["tenant_id"], fields["vendor"], fields["protocol"],
                         fields["driver"], fields["gateway_host"], fields["gateway_port"],
                         fields["auth_method"], fields["secret_ref"],
                         fields["management_vrf_id"],

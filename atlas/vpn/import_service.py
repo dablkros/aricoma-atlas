@@ -181,18 +181,27 @@ class VPNProfileImportService:
         try:
             existing = self.registry.get(record.connection_id)
         except VPNRegistryError as exc:
-            if exc.code != 'connection_not_found':
+            if exc.code == 'tenant_not_found' and body.replace_existing:
+                existing = True
+            elif exc.code != 'connection_not_found':
                 raise
-            existing = None
+            else:
+                existing = None
         desired = record.model_dump(mode='json')
         registry_action = 'create'
         if existing is not None:
-            current = existing.model_dump(include=set(desired), mode='json')
+            current = (existing.model_dump(include=set(desired), mode='json')
+                       if existing is not True else None)
             if current != desired:
-                changed = {key for key in desired if current.get(key) != desired.get(key)}
-                if changed != {'auth_method'}:
-                    raise VPNImportError('vpn_connection_conflict', 409)
-                registry_action = 'update'
+                if body.replace_existing:
+                    registry_action = 'replace'
+                elif current is None:
+                    raise VPNImportError('vpn_connection_stale_tenant', 409)
+                else:
+                    changed = {key for key in desired if current.get(key) != desired.get(key)}
+                    if changed != {'auth_method'}:
+                        raise VPNImportError('vpn_connection_conflict', 409)
+                    registry_action = 'update'
             else:
                 registry_action = 'unchanged'
         try:
@@ -206,8 +215,11 @@ class VPNProfileImportService:
                 or (current_secret is None and version != 0)
                 or (current_secret is not None and version < 1)):
             raise VPNImportError('vpn_secret_unavailable', 503)
+        secret_action = 'unchanged' if current_secret is not None else 'create'
         if current_secret is not None and current_secret != secret:
-            raise VPNImportError('vpn_secret_conflict', 409)
+            if not body.replace_existing:
+                raise VPNImportError('vpn_secret_conflict', 409)
+            secret_action = 'replace'
         return {'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
                 'management_vrf_id': record.management_vrf_id, 'gateway': record.gateway_host,
                 'port': record.gateway_port,
@@ -215,8 +227,9 @@ class VPNProfileImportService:
                 'network_id': getattr(profile, 'network_id', None),
                 'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
                 'external_mfa': body.external_mfa,
+                'replace_existing': body.replace_existing,
                 'registry_action': registry_action,
-                'secret_action': 'unchanged' if current_secret is not None else 'create',
+                'secret_action': secret_action,
                 'secret_version': version, 'runtime_status': 'not_deployed', 'apply_allowed': True}
 
     def apply(self, body: ProfileImportRequest, expected_plan: dict):
@@ -225,12 +238,14 @@ class VPNProfileImportService:
         record, secret, _ = self._values(body)
         if expected_plan['registry_action'] == 'create':
             self.registry.create(record)
+        elif expected_plan['registry_action'] == 'replace':
+            self.registry.replace(record)
         elif expected_plan['registry_action'] == 'update':
             self.registry.patch(
                 record.connection_id,
                 VPNConnectionPatch(auth_method=record.auth_method),
             )
-        if expected_plan['secret_action'] == 'create':
+        if expected_plan['secret_action'] in {'create', 'replace'}:
             try:
                 self.writer.write_secret(record.secret_ref, secret, cas=expected_plan['secret_version'])
             except DependencyError:
