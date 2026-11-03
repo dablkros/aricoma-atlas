@@ -2804,7 +2804,8 @@ function vpnImportPayload() {
     username: vpnImport.username.value, password: vpnImport.password.value,
     connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
     tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
-    allowed_prefixes: [], external_mfa: vpnImport.mfa.checked,
+    allowed_prefixes: [], mfa_mode: vpnImport.mfa.value,
+    external_mfa: false,
     replace_existing: vpnImport.replace.checked,
   };
 }
@@ -2859,7 +2860,8 @@ async function planVPNImport() {
     if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
     vpnImport.plan = result;
     const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
-    const mfa = result.external_mfa ? '; external MFA: enabled' : '';
+    const mfa = result.mfa_mode && result.mfa_mode !== 'none'
+      ? `; MFA: ${result.mfa_mode}` : '';
     vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
@@ -2891,7 +2893,7 @@ async function applyVPNImport() {
     vpnImport.exportPassword.value = '';
     vpnImport.username.value = '';
     vpnImport.password.value = '';
-    vpnImport.mfa.checked = false;
+    vpnImport.mfa.value = 'none';
     vpnImport.replace.checked = false;
     vpnImport.data = null;
     vpnImport.file.value = '';
@@ -2913,7 +2915,7 @@ vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport
 vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
 vpnImport.dialog.addEventListener('close', () => {
   vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
-  vpnImport.mfa.checked = false;
+  vpnImport.mfa.value = 'none';
   vpnImport.replace.checked = false;
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
@@ -3004,7 +3006,8 @@ function renderVPNConnectivityResult(result) {
       : "Not tested — tunnel was not established";
   elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
   elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
-  elements.vpnTestDetail.textContent = `${result.message} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
+  const reason = result.reason_code ? ` Reason: ${result.reason_code}.` : '';
+  elements.vpnTestDetail.textContent = `${result.message}${reason} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
   elements.vpnTestMessage.textContent = result.disconnected
     ? "Test finished. The temporary VPN connectivity is closed."
     : "Test finished, but cleanup was not confirmed.";
@@ -3065,6 +3068,11 @@ async function runInteractiveMFATest(connectionId, requestBody) {
       elements.vpnTestOTP.hidden = true;
       elements.vpnTestActivityTitle.textContent = "Verifying authentication code";
       elements.vpnTestActivityDetail.textContent = "The code was submitted. Atlas is waiting for the tunnel and will then test the selected device.";
+    }
+    if (stateResult.state === "waiting_for_push") {
+      elements.vpnTestActivityTitle.textContent = "Waiting for push approval";
+      elements.vpnTestActivityDetail.textContent = "Approve the VPN sign-in request. Atlas will continue automatically and will not request an OTP code.";
+      elements.vpnTestMessage.textContent = "The VPN gateway is waiting for push approval.";
     }
     if (stateResult.state === "finished") break;
     await new Promise((resolve) => window.setTimeout(resolve, 500));
@@ -3177,15 +3185,24 @@ async function runVPNTest() {
   const selectedConnection = (state.vpnTestOptions?.connections || []).find(
     (item) => item.connection_id === elements.vpnTestConnection.value,
   );
-  const usesMfa = selectedConnection?.auth_method === "external_mfa";
+  const mfaMode = {
+    external_mfa: "auto",
+    external_mfa_push: "push",
+    external_mfa_otp: "otp",
+  }[selectedConnection?.auth_method] || "none";
+  const usesMfa = mfaMode !== "none";
   elements.vpnTestActivityTitle.textContent = usesMfa
     ? "Starting interactive MFA"
     : "Waiting for the isolated VPN worker";
   elements.vpnTestActivityDetail.textContent = usesMfa
-    ? "Atlas is authenticating with the stored username and password. It will ask for the one-time code when the gateway requests it."
+    ? (mfaMode === "push"
+      ? "Atlas is starting IKE authentication and will wait for push approval."
+      : "Atlas is authenticating with the stored username and password. It will display the OTP field only after the gateway requests a code.")
     : "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
   elements.vpnTestMessage.textContent = usesMfa
-    ? "Wait for the gateway to send the authentication code. Atlas will then display the code field."
+    ? (mfaMode === "push"
+      ? "Approve the push notification when it arrives."
+      : "Wait for the gateway to send the authentication code. Atlas will then display the code field.")
     : "The worker is connecting and will disconnect automatically after the check.";
   const startedAt = Date.now();
   const activityTimer = window.setInterval(() => {

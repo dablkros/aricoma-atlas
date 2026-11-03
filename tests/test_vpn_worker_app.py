@@ -59,6 +59,20 @@ def ssl_secret():
 
 
 class VPNWorkerAppTests(unittest.TestCase):
+    def test_explicit_mfa_modes_and_legacy_boolean_are_distinguished(self):
+        self.assertEqual(
+            request().model_copy(update={"mfa_mode": "push"}).effective_mfa_mode,
+            "push",
+        )
+        self.assertEqual(
+            request().model_copy(update={"mfa_mode": "otp"}).effective_mfa_mode,
+            "otp",
+        )
+        self.assertEqual(
+            request().model_copy(update={"external_mfa": True}).effective_mfa_mode,
+            "auto",
+        )
+
     def test_connectivity_test_routes_proof_target_and_session_routes_devices(self):
         self.assertEqual(_openvpn_target_ips(request()), ("10.0.0.10",))
         session = WorkerSessionOpenRequest(

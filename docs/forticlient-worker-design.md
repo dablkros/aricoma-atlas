@@ -28,6 +28,8 @@ OpenVPN `.ovpn` import akceptuje iba presnú allowlist klientskych direktív,
 `auth-user-pass`. Externé súbory, skripty a pluginy sa odmietnu. Celý validovaný
 profil je secret v OpenBao; worker ho zapisuje iba do krátkodobého súboru
 `0600`. Externé MFA je explicitná vlastnosť registry, nie odhad z profilu.
+Nový import vyžaduje režim `none`, `push` alebo `otp`; staršie záznamy s
+`external_mfa` zostávajú podporované ako kompatibilný režim `auto`.
 
 FortiGate IPsec s e-mailovým FortiToken kódom používa asynchrónny testovací
 tok. Worker najprv vykoná PSK a EAP-MSCHAPv2 s prihlasovacím heslom. Až keď
@@ -35,6 +37,10 @@ gateway požiada o druhé EAP Identity a EAP-GTC odpoveď, worker označí oper�
 ako `waiting_for_otp` a UI zobrazí jednorazové pole. Kód sa odošle do
 krátkodobého súboru `0600`, spotrebuje ho iba patchnutý EAP-GTC modul a súbor
 sa ihneď odstráni. Kód sa neukladá do OpenBao, registry ani výsledku API.
+Pri režime `push` UI nezobrazí OTP pole a worker čaká na externé potvrdenie.
+Ak gateway napriek tomu vyžiada EAP-GTC, test bezpečne skončí s dôvodom
+`unexpected_otp_challenge`. Výsledok obsahuje iba bezpečný `reason_code` a
+fázu zlyhania; stdout, heslá, PSK ani OTP sa do API a logov neposielajú.
 
 `finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
 workerovom network namespace a odstráni profilový fragment. Globálny zámok

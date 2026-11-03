@@ -51,6 +51,11 @@ class VPNSessionClient(_Client):
     def open(self, connection, *, target_ips: tuple[str, ...] = ()) -> str:
         if connection.administrative_status == "disabled":
             raise VPNProphylaxisError("connection_disabled")
+        mfa_mode = {
+            "external_mfa": "auto",
+            "external_mfa_push": "push",
+            "external_mfa_otp": "otp",
+        }.get(connection.auth_method, "none")
         data = self._request("POST", "/v1/session/open", json={
             "connection_id": connection.connection_id,
             "tenant_id": connection.tenant_id,
@@ -59,7 +64,8 @@ class VPNSessionClient(_Client):
             "gateway_port": connection.gateway_port or 1194,
             "driver": connection.driver,
             "protocol": connection.protocol,
-            "external_mfa": connection.auth_method == "external_mfa",
+            "external_mfa": mfa_mode != "none",
+            "mfa_mode": mfa_mode,
             "target_ips": list(target_ips),
         })
         session_id = data.get("session_id")

@@ -375,10 +375,15 @@
               <div class="field-group"><label for="vpn-import-username">VPN username</label><input id="vpn-import-username" autocomplete="off"></div>
               <div class="field-group"><label for="vpn-import-password">VPN password</label><input id="vpn-import-password" type="password" autocomplete="new-password"></div>
             </div>
-            <label class="confirmation-row">
-              <input id="vpn-import-mfa" type="checkbox">
-              This VPN uses external MFA. Atlas waits for a push approval or displays an OTP field when the gateway requests a code.
-            </label>
+            <div class="field-group">
+              <label for="vpn-import-mfa">Multi-factor authentication</label>
+              <select id="vpn-import-mfa">
+                <option value="none">None</option>
+                <option value="push">Push approval</option>
+                <option value="otp">One-time code (OTP)</option>
+              </select>
+              <small>Choose what the gateway is expected to request. OTP is entered only when the gateway sends a code challenge.</small>
+            </div>
           </section>
           <details id="vpn-import-advanced" class="vpn-import-advanced"><summary>Connection details <span>generated from the profile</span></summary>
             <div class="inventory-fields">

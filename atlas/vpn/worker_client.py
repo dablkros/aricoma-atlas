@@ -165,6 +165,14 @@ class VPNConnectivityTestService:
         self.registry = registry
         self.worker = worker
 
+    @staticmethod
+    def _mfa_mode(auth_method: str) -> str:
+        return {
+            "external_mfa": "auto",
+            "external_mfa_push": "push",
+            "external_mfa_otp": "otp",
+        }.get(auth_method, "none")
+
     def _payload(
         self,
         connection_id: str,
@@ -190,6 +198,7 @@ class VPNConnectivityTestService:
             raise
         if resolved.get("resolution_status") != "resolved" or resolved.get("connection_id") != connection_id:
             raise VPNWorkerError("vpn_test_target_not_assigned", 409)
+        mfa_mode = self._mfa_mode(connection.auth_method)
         payload = {
             "connection_id": connection.connection_id,
             "tenant_id": connection.tenant_id,
@@ -198,7 +207,8 @@ class VPNConnectivityTestService:
             "gateway_port": connection.gateway_port or 500,
             "driver": connection.driver,
             "protocol": connection.protocol,
-            "external_mfa": connection.auth_method == "external_mfa",
+            "external_mfa": mfa_mode != "none",
+            "mfa_mode": mfa_mode,
             "target_ip": resolved["management_ip"],
             "target_port": target_port,
         }

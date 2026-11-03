@@ -71,6 +71,21 @@ class VPNProfileImportService:
         self.registry = registry
         self.writer = writer
 
+    @staticmethod
+    def _mfa_mode(body: ProfileImportRequest) -> str:
+        if body.mfa_mode != 'none':
+            return body.mfa_mode
+        return 'auto' if body.external_mfa else 'none'
+
+    @classmethod
+    def _auth_method(cls, body: ProfileImportRequest, default: str) -> str:
+        return {
+            'none': default,
+            'auto': 'external_mfa',
+            'push': 'external_mfa_push',
+            'otp': 'external_mfa_otp',
+        }[cls._mfa_mode(body)]
+
     def options(self):
         try:
             tenants = self.registry.netbox.get_all('/api/tenancy/tenants/')
@@ -105,7 +120,7 @@ class VPNProfileImportService:
                     tenant_id=body.tenant_id, vendor='generic', protocol='openvpn',
                     driver='openvpn', gateway_host=p.gateway,
                     gateway_port=p.gateway_port,
-                    auth_method=('external_mfa' if body.external_mfa else 'username_password'),
+                    auth_method=self._auth_method(body, 'username_password'),
                     secret_ref=f'vpn/connections/{body.connection_id}',
                     management_vrf_id=body.management_vrf_id,
                     allowed_prefixes=body.allowed_prefixes,
@@ -128,7 +143,7 @@ class VPNProfileImportService:
                     connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
                     vendor='fortinet', protocol='ssl-vpn', driver='openfortivpn',
                     gateway_host=p.gateway, gateway_port=p.gateway_port,
-                    auth_method=('external_mfa' if body.external_mfa else 'username_password'),
+                    auth_method=self._auth_method(body, 'username_password'),
                     secret_ref=f'vpn/connections/{body.connection_id}',
                     management_vrf_id=body.management_vrf_id,
                     allowed_prefixes=body.allowed_prefixes, administrative_status='planned',
@@ -152,7 +167,7 @@ class VPNProfileImportService:
                 connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
                 vendor='fortinet', protocol='ipsec-ikev2', driver='strongswan',
                 gateway_host=p.gateway, gateway_port=p.gateway_port,
-                auth_method=('external_mfa' if body.external_mfa else 'psk'),
+                auth_method=self._auth_method(body, 'psk'),
                 secret_ref=f'vpn/connections/{body.connection_id}',
                 management_vrf_id=body.management_vrf_id, allowed_prefixes=body.allowed_prefixes,
                 administrative_status='planned',
@@ -226,7 +241,8 @@ class VPNProfileImportService:
                 'profile_type': record.protocol,
                 'network_id': getattr(profile, 'network_id', None),
                 'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
-                'external_mfa': body.external_mfa,
+                'external_mfa': self._mfa_mode(body) != 'none',
+                'mfa_mode': self._mfa_mode(body),
                 'replace_existing': body.replace_existing,
                 'registry_action': registry_action,
                 'secret_action': secret_action,

@@ -150,9 +150,10 @@ Pre IKEv2 je podporovaný iba overiteľný PSK export `Enc`/`EncX` a úzka
 podmnožina profilov, ktoré vie súčasný renderer reprezentovať (vrátane DH
 skupiny 21). Pre SSL-VPN je podporovaný klasický Windows XML profil s
 username/password a voliteľným realmom. SSO/SAML a samostatná certifikátová
-autentifikácia sa odmietnu; externé MFA sa povoľuje iba explicitným checkboxom.
-Pri FortiGate IPsec worker čaká na skutočnú EAP-GTC výzvu a až potom zobrazí
-jednorazové OTP pole. Kód sa používa iba v rozbehnutom IKE pokuse, neukladá sa
+autentifikácia sa odmietnu. MFA režim sa pri importe vyberá explicitne ako
+**None**, **Push approval** alebo **One-time code (OTP)**. Pri OTP režime
+FortiGate IPsec worker čaká na skutočnú EAP-GTC výzvu a až potom zobrazí
+jednorazové OTP pole; pri Push režime pole nezobrazí. Kód sa používa iba v rozbehnutom IKE pokuse, neukladá sa
 do OpenBao a opätovné odoslanie nevytvára nové paralelné prihlásenie.
 Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
 spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,

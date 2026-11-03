@@ -14,7 +14,14 @@ VPNProtocol = Literal["ipsec-ikev2", "ssl-vpn", "wireguard", "openvpn"]
 VPNDriver = Literal[
     "strongswan", "openfortivpn", "forticlient", "checkpoint-snx", "wireguard", "openvpn"
 ]
-VPNAuthMethod = Literal["username_password", "certificate", "psk", "external_mfa"]
+VPNAuthMethod = Literal[
+    "username_password",
+    "certificate",
+    "psk",
+    "external_mfa",
+    "external_mfa_push",
+    "external_mfa_otp",
+]
 VPNAdministrativeStatus = Literal["planned", "enabled", "disabled"]
 VPNRuntimeStatus = Literal[
     "not_deployed", "disconnected", "connecting", "connected", "degraded", "error"
@@ -168,6 +175,11 @@ class VPNConnectivityTestResult(BaseModel):
     failure_stage: Literal[
         "validation", "worker", "ike", "child", "tunnel", "target", "cleanup"
     ] | None = None
+    reason_code: str | None = Field(
+        default=None,
+        max_length=80,
+        pattern=r"^[a-z0-9]+(?:_[a-z0-9]+)*$",
+    )
     message: str = Field(min_length=1, max_length=300)
 
     @field_validator("target_ip")
@@ -184,7 +196,9 @@ class VPNConnectivityTestResult(BaseModel):
 
 class VPNMFATestState(BaseModel):
     operation_id: str = Field(pattern=r"^[a-f0-9]{32}$")
-    state: Literal["connecting", "waiting_for_otp", "authenticating", "finished"]
+    state: Literal[
+        "connecting", "waiting_for_push", "waiting_for_otp", "authenticating", "finished"
+    ]
     result: VPNConnectivityTestResult | None = None
 
 

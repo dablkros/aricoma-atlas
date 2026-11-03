@@ -21,6 +21,8 @@ class ProfileImportRequest(ProfileInspectRequest):
     tenant_id: int = Field(gt=0)
     management_vrf_id: int = Field(gt=0)
     allowed_prefixes: list[str] = Field(default_factory=list, max_length=128)
+    mfa_mode: Literal['none', 'push', 'otp'] = 'none'
+    # Compatibility for API clients created before explicit MFA modes existed.
     external_mfa: bool = False
     replace_existing: bool = False
     plan_hash: str | None = Field(default=None, pattern=r'^[a-f0-9]{64}$')

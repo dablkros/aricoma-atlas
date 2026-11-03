@@ -229,12 +229,29 @@ class VPNImportTests(unittest.TestCase):
         body = request()
         self.service.apply(body, self.service.plan(body))
 
-        mfa_body = body.model_copy(update={'external_mfa': True})
+        mfa_body = body.model_copy(update={'mfa_mode': 'push'})
         plan = self.service.plan(mfa_body)
 
         self.assertEqual(plan['registry_action'], 'update')
         self.assertTrue(plan['external_mfa'])
+        self.assertEqual(plan['mfa_mode'], 'push')
         self.service.apply(mfa_body, plan)
+        self.assertEqual(self.registry.value.auth_method, 'external_mfa_push')
+
+    def test_otp_mfa_is_stored_as_an_explicit_authentication_mode(self):
+        body = request().model_copy(update={'mfa_mode': 'otp'})
+        plan = self.service.plan(body)
+
+        self.assertEqual(plan['mfa_mode'], 'otp')
+        self.service.apply(body, plan)
+        self.assertEqual(self.registry.value.auth_method, 'external_mfa_otp')
+
+    def test_legacy_external_mfa_boolean_remains_auto_mode(self):
+        body = request().model_copy(update={'external_mfa': True})
+        plan = self.service.plan(body)
+
+        self.assertEqual(plan['mfa_mode'], 'auto')
+        self.service.apply(body, plan)
         self.assertEqual(self.registry.value.auth_method, 'external_mfa')
 
     def test_windows_ssl_sso_is_explicitly_rejected(self):
