@@ -113,7 +113,6 @@ class AnsibleBackendTests(unittest.TestCase):
             {
                 "schema_version": 1,
                 "collector": "device_facts",
-                "check": "device_facts",
                 "platform": "cisco-catalyst-1200",
                 "status": "ok",
                 "data": {"hostname": "ACMTSW7"},
