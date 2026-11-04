@@ -83,6 +83,8 @@ class MonitoringModelTests(unittest.TestCase):
             ("cisco", "cisco-ios-xe"),
             ("cisco", "cisco-cbs"),
             ("cisco", "cisco-cbs250-350"),
+            ("cisco", "cisco-catalyst-1200"),
+            ("cisco", "cisco-catalyst-1300"),
             ("hpe", "aruba-aos-cx"),
             ("hpe", "aruba-aos-switch"),
         )

@@ -11,11 +11,13 @@ class FakeNetBoxClient:
     def __init__(self):
         self.objects = {
             "/api/tenancy/tenants/": [],
+            "/api/tenancy/tenant-groups/": [],
             "/api/dcim/sites/": [],
             "/api/dcim/device-types/": [],
             "/api/dcim/platforms/": [],
             "/api/dcim/device-roles/": [],
             "/api/ipam/vrfs/": [],
+            "/api/ipam/prefixes/": [],
             "/api/dcim/devices/": [],
             "/api/dcim/interfaces/": [],
             "/api/ipam/ip-addresses/": [],
@@ -81,16 +83,31 @@ class InventoryImporterTests(unittest.TestCase):
             "id": 11, "name": "Zilina Office", "slug": "zilina-office",
             "tenant": {"id": 1},
         }
-        self.platform = {"id": 30, "name": "Cisco IOS", "slug": "cisco-ios"}
+        self.platform = {
+            "id": 30,
+            "name": "Cisco IOS",
+            "slug": "cisco-ios",
+            "manufacturer": {"id": 50, "name": "Cisco"},
+        }
         self.device_type = {
-            "id": 20, "model": "C9500-48Y4C", "default_platform": self.platform,
+            "id": 20,
+            "model": "C9500-48Y4C",
+            "manufacturer": {"id": 50, "name": "Cisco"},
+            "default_platform": self.platform,
         }
         self.role = {"id": 40, "name": "Network Device", "slug": "network-device"}
+        self.default_vrf = {
+            "id": 50,
+            "name": "acme-slovakia-mgmt",
+            "tenant": {"id": 1},
+            "enforce_unique": True,
+        }
         self.client.objects["/api/tenancy/tenants/"].append(self.tenant)
         self.client.objects["/api/dcim/sites/"].extend([self.site_br, self.site_za])
         self.client.objects["/api/dcim/platforms/"].append(self.platform)
         self.client.objects["/api/dcim/device-types/"].append(self.device_type)
         self.client.objects["/api/dcim/device-roles/"].append(self.role)
+        self.client.objects["/api/ipam/vrfs/"].append(self.default_vrf)
         self.config = normalize_inventory_config({
             "default_tenant": {
                 "name": "ACME Slovakia", "slug": "acme-slovakia", "provision": True,
@@ -124,17 +141,83 @@ class InventoryImporterTests(unittest.TestCase):
         self.assertEqual((tenant["id"], operation), (1, "UNCHANGED"))
         self.assertEqual(self.client.writes, [])
 
+    def test_tenant_bundle_creates_default_management_vrf(self):
+        self.client.objects["/api/tenancy/tenants/"].clear()
+        self.client.objects["/api/ipam/vrfs/"].clear()
+
+        tenant, tenant_operation, vrf, vrf_operation = (
+            self.importer.ensure_tenant_with_management_vrf(
+                "Customer A", apply=True,
+            )
+        )
+
+        self.assertEqual((tenant_operation, vrf_operation), ("CREATE", "CREATE"))
+        self.assertEqual(vrf["name"], "customer-a-mgmt")
+        self.assertEqual(vrf["tenant"], tenant["id"])
+        self.assertTrue(vrf["enforce_unique"])
+
+    def test_tenant_bundle_is_idempotent(self):
+        tenant, tenant_operation, vrf, vrf_operation = (
+            self.importer.ensure_tenant_with_management_vrf(
+                "ACME Slovakia", apply=True,
+            )
+        )
+
+        self.assertEqual((tenant_operation, vrf_operation), ("UNCHANGED", "UNCHANGED"))
+        self.assertEqual((tenant["id"], vrf["id"]), (1, self.default_vrf["id"]))
+        self.assertEqual(self.client.writes, [])
+
+    def test_import_without_tenant_management_vrf_never_uses_global(self):
+        self.client.objects["/api/ipam/vrfs/"].clear()
+
+        report = self.importer.import_rows([self.row()])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.INVALID)
+        self.assertEqual(report.rows[0].reason, "vrf_not_found")
+
+    def test_optional_tenant_group_is_created_idempotently(self):
+        self.client.objects["/api/tenancy/tenants/"].clear()
+        tenant, operation = self.importer.ensure_tenant(
+            "Customer A", group="Customers", apply=True
+        )
+        repeated, repeated_operation = self.importer.ensure_tenant(
+            "Customer A", group="Customers", apply=True
+        )
+        self.assertEqual(operation, "CREATE")
+        self.assertEqual(repeated_operation, "UNCHANGED")
+        self.assertEqual(tenant["id"], repeated["id"])
+        self.assertEqual(len(self.client.objects["/api/tenancy/tenant-groups/"]), 1)
+
     def test_03_create_multiple_sites_under_one_tenant(self):
         self.client.objects["/api/dcim/sites/"].clear()
         first, _ = self.importer.ensure_site(self.tenant, "Bratislava DC", apply=True)
         second, _ = self.importer.ensure_site(self.tenant, "Kosice Branch", apply=True)
         self.assertEqual(first["tenant"], 1)
         self.assertEqual(second["tenant"], 1)
+        self.assertEqual(first["slug"], "acme-slovakia-bratislava-dc")
+        self.assertEqual(second["slug"], "acme-slovakia-kosice-branch")
 
-    def test_04_site_owned_by_another_tenant_is_conflict(self):
+    def test_vrf_bootstrap_is_idempotent_and_tenant_owned(self):
+        first, operation = self.importer.ensure_vrf(
+            self.tenant, "acme-mgmt", apply=True
+        )
+        second, second_operation = self.importer.ensure_vrf(
+            self.tenant, "acme-mgmt", apply=True
+        )
+        self.assertEqual(operation, "CREATE")
+        self.assertEqual(second_operation, "UNCHANGED")
+        self.assertEqual(first["id"], second["id"])
+        self.assertEqual(first["tenant"], self.tenant["id"])
+        self.assertTrue(first["enforce_unique"])
+
+    def test_04_same_site_name_for_another_tenant_gets_unique_slug(self):
         self.site_br["tenant"] = {"id": 999}
-        with self.assertRaisesRegex(InventoryConflict, "different_tenant"):
-            self.importer.ensure_site(self.tenant, "Bratislava DC", apply=True)
+        site, operation = self.importer.ensure_site(
+            self.tenant, "Bratislava DC", apply=True
+        )
+        self.assertEqual(operation, "CREATE")
+        self.assertEqual(site["tenant"], self.tenant["id"])
+        self.assertEqual(site["slug"], "acme-slovakia-bratislava-dc")
 
     def test_tenant_slug_identity_conflict_is_not_overwritten(self):
         with self.assertRaisesRegex(InventoryConflict, "identity_conflict"):
@@ -142,8 +225,11 @@ class InventoryImporterTests(unittest.TestCase):
 
     def test_site_name_with_different_slug_is_not_duplicated(self):
         self.site_br["slug"] = "legacy-bratislava"
-        with self.assertRaisesRegex(InventoryConflict, "site_name_slug_conflict"):
-            self.importer.ensure_site(self.tenant, "Bratislava DC", apply=True)
+        site, operation = self.importer.ensure_site(
+            self.tenant, "Bratislava DC", apply=True
+        )
+        self.assertEqual((site["id"], operation), (10, "UNCHANGED"))
+        self.assertEqual(self.client.writes, [])
 
     def test_05_imports_multiple_sites(self):
         report = self.importer.import_rows([
@@ -182,6 +268,20 @@ class InventoryImporterTests(unittest.TestCase):
                 }
             })
 
+    def test_legacy_connection_profiles_are_rejected_instead_of_silently_used(self):
+        with self.assertRaisesRegex(
+            ValueError, "replaced by the persistent VPN Connection Registry"
+        ):
+            normalize_inventory_config({
+                "connection_profiles": {
+                    "customer-a-primary": {
+                        "tenant": "customer-a",
+                        "status": "planned",
+                        "vrf": "customer-a-mgmt",
+                    }
+                }
+            })
+
     def test_default_role_mappings_are_present_and_operator_overrides_win(self):
         config = normalize_inventory_config({
             "role_mappings": {
@@ -214,7 +314,7 @@ class InventoryImporterTests(unittest.TestCase):
         )
         self.assertEqual(created_device["role"], switch_role["id"])
 
-    def test_manufacturer_prefixed_csv_model_resolves_existing_device_type(self):
+    def test_defaultless_device_type_requires_explicit_platform(self):
         self.device_type.update({
             "manufacturer": {"id": 50, "name": "F5"},
             "model": "BIG-IP r4800",
@@ -227,7 +327,36 @@ class InventoryImporterTests(unittest.TestCase):
             self.row(model="F5 BIG-IP r4800"),
         ])
 
+        self.assertEqual(report.rows[0].status, ImportStatus.INVALID)
+        self.assertEqual(report.rows[0].reason, "platform_not_selected")
+
+    def test_nexus_explicit_nxos_is_allowed_for_defaultless_device_type(self):
+        self.device_type.update({
+            "model": "Nexus 93360YC-FX2",
+            "slug": "cisco-n9k-c93360yc-fx2",
+            "default_platform": None,
+        })
+        self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+        self.client.objects["/api/dcim/device-roles/"].append({
+            "id": 41, "name": "Switch", "slug": "switch",
+        })
+
+        report = self.importer.import_rows([
+            self.row(model="Nexus 93360YC-FX2", platform="cisco-nxos"),
+        ])
+
         self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
+
+    def test_explicit_platform_rejects_device_type_manufacturer_mismatch(self):
+        self.device_type["default_platform"] = None
+        self.platform["manufacturer"] = {"id": 51, "name": "HPE"}
+
+        report = self.importer.import_rows([
+            self.row(platform="cisco-ios"),
+        ])
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "platform_manufacturer_mismatch")
 
     def test_07_row_site_is_used(self):
         report = self.importer.import_rows([self.row(site="zilina-office")])
@@ -314,11 +443,13 @@ class InventoryImporterTests(unittest.TestCase):
         address = self.client.objects["/api/ipam/ip-addresses/"][0]
         device = self.client.objects["/api/dcim/devices/"][0]
         self.assertEqual(address["address"], "10.0.0.10/32")
+        self.assertEqual(address["vrf"], self.default_vrf["id"])
+        self.assertEqual(address["tenant"], self.tenant["id"])
         self.assertEqual(device["primary_ip4"], address["id"])
 
     def test_15_assigned_ip_conflict_is_detected_in_dry_run(self):
         self.client.objects["/api/ipam/ip-addresses/"].append({
-            "id": 77, "address": "10.0.0.10/32", "vrf": None,
+            "id": 77, "address": "10.0.0.10/32", "vrf": self.default_vrf["id"],
             "assigned_object_type": "dcim.interface", "assigned_object_id": 999,
         })
         report = self.importer.import_rows([self.row()])
@@ -326,7 +457,10 @@ class InventoryImporterTests(unittest.TestCase):
         self.assertEqual(report.rows[0].reason, "management_ip_assigned_elsewhere")
 
     def test_same_ip_in_another_vrf_does_not_conflict(self):
-        vrf = {"id": 55, "name": "CUSTOMER-A", "rd": "65000:55"}
+        vrf = {
+            "id": 55, "name": "CUSTOMER-A", "rd": "65000:55",
+            "tenant": {"id": self.tenant["id"]},
+        }
         self.client.objects["/api/ipam/vrfs/"].append(vrf)
         self.client.objects["/api/ipam/ip-addresses/"].append({
             "id": 77, "address": "10.0.0.10/32", "vrf": None,
@@ -337,6 +471,48 @@ class InventoryImporterTests(unittest.TestCase):
 
         self.assertEqual(report.rows[0].status, ImportStatus.CREATE)
 
+    def test_overlapping_ip_is_created_once_per_tenant_vrf(self):
+        tenant_b = {"id": 2, "name": "Customer B", "slug": "customer-b"}
+        site_b = {
+            "id": 12, "name": "Bratislava DC", "slug": "customer-b-bratislava-dc",
+            "tenant": {"id": 2},
+        }
+        vrf_a = {"id": 51, "name": "acme-mgmt", "tenant": {"id": 1}}
+        vrf_b = {"id": 52, "name": "customer-b-mgmt", "tenant": {"id": 2}}
+        self.client.objects["/api/tenancy/tenants/"].append(tenant_b)
+        self.client.objects["/api/dcim/sites/"].append(site_b)
+        self.client.objects["/api/ipam/vrfs/"].extend([vrf_a, vrf_b])
+
+        report = self.importer.import_rows([
+            self.row(
+                hostname="A-SW01", tenant="acme-slovakia", site="bratislava-dc",
+                management_ip="192.168.1.10/24", vrf="acme-mgmt",
+            ),
+            self.row(
+                number=3, hostname="B-SW01", tenant="customer-b",
+                site="customer-b-bratislava-dc",
+                management_ip="192.168.1.10/24", vrf="customer-b-mgmt",
+            ),
+        ], apply=True)
+
+        self.assertEqual([row.status for row in report.rows], [ImportStatus.CREATE] * 2)
+        addresses = self.client.objects["/api/ipam/ip-addresses/"]
+        self.assertEqual(len(addresses), 2)
+        self.assertEqual({item["vrf"] for item in addresses}, {51, 52})
+        self.assertEqual({item["tenant"] for item in addresses}, {1, 2})
+        prefixes = self.client.objects["/api/ipam/prefixes/"]
+        self.assertEqual(len(prefixes), 2)
+        self.assertEqual({item["vrf"] for item in prefixes}, {51, 52})
+
+    def test_device_cannot_use_site_owned_by_another_tenant(self):
+        other = {"id": 2, "name": "Customer B", "slug": "customer-b"}
+        self.client.objects["/api/tenancy/tenants/"].append(other)
+        report = self.importer.import_rows([
+            self.row(tenant="customer-b", site="bratislava-dc")
+        ])
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "site_belongs_to_different_tenant")
+
     def test_16_second_apply_is_unchanged(self):
         first = self.importer.import_rows([self.row()], apply=True)
         writes_after_first = len(self.client.writes)
@@ -344,6 +520,47 @@ class InventoryImporterTests(unittest.TestCase):
         self.assertEqual(first.rows[0].status, ImportStatus.CREATE)
         self.assertEqual(second.rows[0].status, ImportStatus.UNCHANGED)
         self.assertEqual(len(self.client.writes), writes_after_first)
+
+    def test_existing_device_with_missing_platform_is_enriched_without_overwrite(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = None
+
+        planned = self.importer.import_rows([self.row()])
+        applied = self.importer.import_rows([self.row()], apply=True)
+
+        self.assertEqual(planned.rows[0].status, ImportStatus.UPDATE)
+        self.assertEqual(planned.rows[0].operation, "ASSIGN_PLATFORM")
+        self.assertEqual(applied.rows[0].status, ImportStatus.UPDATE)
+        self.assertEqual(device["platform"], self.platform["id"])
+
+    def test_existing_non_null_platform_is_never_overwritten(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = {"id": 31, "slug": "cisco-nxos"}
+        writes_before = copy.deepcopy(self.client.writes)
+
+        report = self.importer.import_rows([self.row()], apply=True)
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "existing_device_platform_conflict")
+        self.assertEqual(device["platform"]["id"], 31)
+        self.assertEqual(self.client.writes, writes_before)
+
+    def test_existing_aci_platform_is_not_overwritten_by_explicit_nxos(self):
+        self.importer.import_rows([self.row()], apply=True)
+        device = self.client.objects["/api/dcim/devices/"][0]
+        device["platform"] = {"id": 31, "slug": "cisco-aci"}
+        self.device_type["default_platform"] = None
+        self.platform.update({"name": "Cisco NX-OS", "slug": "cisco-nxos"})
+
+        report = self.importer.import_rows([
+            self.row(platform="cisco-nxos", device_role="network-device"),
+        ], apply=True)
+
+        self.assertEqual(report.rows[0].status, ImportStatus.CONFLICT)
+        self.assertEqual(report.rows[0].reason, "existing_device_platform_conflict")
+        self.assertEqual(device["platform"]["slug"], "cisco-aci")
 
     def test_17_partial_api_failure_is_isolated_per_row(self):
         self.client.fail_endpoint = "/api/dcim/devices/"

@@ -1,39 +1,30 @@
 ---
-- name: Collect Cisco IOS operational-health commands
-  cisco.ios.ios_command:
-    commands:
-      - show clock
-      - show ntp status
-      - show ntp associations
-      - show logging
-      - show ip route
-      - show ip ospf neighbor
-      - show ip bgp summary
-      - show ip eigrp neighbors
-      - show standby brief
-      - show redundancy
-      - show switch
-      - show switch stack-ports summary
-      - dir
-      - "show flash: | include crash"
-  register: atlas_ios_operations
-  changed_when: false
+- name: Initialize Cisco IOS operational command buffer
+  ansible.builtin.set_fact:
+    atlas_command_outputs: {}
+
+- name: Collect Cisco IOS operational-health commands independently
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/common/run_cisco_ios_command.yml"
+  loop:
+    - {key: show_clock, command: show clock}
+    - {key: show_ntp_status, command: show ntp status}
+    - {key: show_ntp_associations, command: show ntp associations}
+    - {key: show_logging, command: show logging}
+    - {key: show_ip_route, command: show ip route}
+    - {key: show_ip_ospf_neighbor, command: show ip ospf neighbor}
+    - {key: show_ip_bgp_summary, command: show ip bgp summary}
+    - {key: show_ip_eigrp_neighbors, command: show ip eigrp neighbors}
+    - {key: show_standby_brief, command: show standby brief}
+    - {key: show_redundancy, command: show redundancy}
+    - {key: show_switch, command: show switch}
+    - {key: show_switch_stack_ports_summary, command: show switch stack-ports summary}
+    - {key: dir, command: dir}
+    - {key: show_flash_crash, command: "show flash: | include crash"}
+  loop_control:
+    loop_var: atlas_command_spec
+    label: "{{ atlas_command_spec.command }}"
 
 - name: Prepare Cisco IOS operational outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      data:
-        show_clock: "{{ atlas_ios_operations.stdout[0] }}"
-        show_ntp_status: "{{ atlas_ios_operations.stdout[1] }}"
-        show_ntp_associations: "{{ atlas_ios_operations.stdout[2] }}"
-        show_logging: "{{ atlas_ios_operations.stdout[3] }}"
-        show_ip_route: "{{ atlas_ios_operations.stdout[4] }}"
-        show_ip_ospf_neighbor: "{{ atlas_ios_operations.stdout[5] }}"
-        show_ip_bgp_summary: "{{ atlas_ios_operations.stdout[6] }}"
-        show_ip_eigrp_neighbors: "{{ atlas_ios_operations.stdout[7] }}"
-        show_standby_brief: "{{ atlas_ios_operations.stdout[8] }}"
-        show_redundancy: "{{ atlas_ios_operations.stdout[9] }}"
-        show_switch: "{{ atlas_ios_operations.stdout[10] }}"
-        show_switch_stack_ports_summary: "{{ atlas_ios_operations.stdout[11] }}"
-        dir: "{{ atlas_ios_operations.stdout[12] }}"
-        show_flash_crash: "{{ atlas_ios_operations.stdout[13] }}"
+      data: "{{ atlas_command_outputs }}"

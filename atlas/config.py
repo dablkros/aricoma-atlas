@@ -24,6 +24,11 @@ class Settings(BaseSettings):
     credential_writer_identity_file: Path = Path(
         ".runtime/openbao-credential-writer.json"
     )
+    vpn_profile_writer_identity_file: Path = Path('.runtime/openbao-vpn-profile-writer.json')
+    vpn_worker_url: Optional[AnyHttpUrl] = None
+    vpn_collector_url: Optional[AnyHttpUrl] = None
+    vpn_worker_token_file: Path = Path('.runtime/vpn/worker-token')
+    vpn_worker_timeout: float = Field(default=75.0, gt=5, le=180)
     monitoring_operator_token_file: Path = Path(".runtime/monitoring/operator-token")
     admin_session_ttl_seconds: int = Field(default=3600, ge=300, le=86400)
     app_name: str = Field(default="Aricoma Atlas", min_length=1, max_length=100)
@@ -46,6 +51,7 @@ class Settings(BaseSettings):
         "/run/atlas/prophylaxis/results.sqlite3"
     )
     prophylaxis_runs_directory: Path = Path("/run/atlas/prophylaxis/runs")
+    vpn_registry_file: Path = Path("/run/atlas/vpn/connections.sqlite3")
     prophylaxis_concurrency: int = Field(default=4, ge=1, le=32)
     prophylaxis_result_retention: int = Field(
         default=10_000,
@@ -53,11 +59,14 @@ class Settings(BaseSettings):
         le=1_000_000,
     )
     ansible_project_dir: Path = Path("automation")
-    ansible_job_timeout: int = Field(default=120, ge=1, le=1800)
+    ansible_job_timeout: int = Field(default=300, ge=1, le=1800)
     ssh_known_hosts_file: Path = Path("/run/atlas/ssh/known_hosts")
     ssh_strict_host_keys: bool = False
     ssh_connect_timeout: int = Field(default=10, ge=1, le=60)
-    ssh_command_timeout: int = Field(default=20, ge=1, le=300)
+    # Cisco SMB/Catalyst show commands can return large buffers slowly even
+    # after terminal paging is disabled. Keep the per-command timeout below
+    # the separate Ansible job timeout, but allow a complete prompt to return.
+    ssh_command_timeout: int = Field(default=120, ge=1, le=300)
     fortios_validate_certs: bool = False
     http_connect_timeout: float = Field(default=3.0, gt=0, le=30)
     http_read_timeout: float = Field(default=10.0, gt=0, le=120)
@@ -95,6 +104,15 @@ class Settings(BaseSettings):
             )
         return value
 
+    @field_validator("vpn_worker_url", "vpn_collector_url")
+    @classmethod
+    def validate_worker_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
+        if value is None:
+            return value
+        if value.scheme != "http" or value.username or value.password or value.query or value.fragment:
+            raise ValueError("vpn_worker_url must be an internal HTTP origin")
+        return value
+
     @field_validator("netbox_ui_url", "oxidized_ui_url", "zabbix_ui_url")
     @classmethod
     def validate_ui_url(cls, value: Optional[AnyHttpUrl]) -> Optional[AnyHttpUrl]:
@@ -110,10 +128,13 @@ class Settings(BaseSettings):
         "monitoring_config_file",
         "monitoring_identity_file",
         "credential_writer_identity_file",
+        "vpn_profile_writer_identity_file",
+        "vpn_worker_token_file",
         "monitoring_operator_token_file",
         "openbao_identity_file",
         "oxidized_inventory_file",
         "prophylaxis_results_file",
+        "vpn_registry_file",
         "ansible_project_dir",
         "ssh_known_hosts_file",
     )

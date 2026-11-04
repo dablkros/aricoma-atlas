@@ -3,6 +3,7 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
 import logging
+import re
 import threading
 
 from atlas.device_credentials import DeviceValidationError
@@ -69,6 +70,8 @@ CISCO_LIFECYCLE_OS_TYPES = {
     "cisco-ios-xe": "IOS-XE",
     "cisco-cbs": None,
     "cisco-cbs250-350": None,
+    "cisco-catalyst-1200": None,
+    "cisco-catalyst-1300": None,
     "cisco-nxos": "NX-OS",
     "cisco-asa": "ASA",
 }
@@ -100,6 +103,9 @@ class DeviceFactsRunService:
         oxidized=None,
         cisco_support=None,
         chart_renderer=render_metric_svg,
+        vpn_registry=None,
+        vpn_session=None,
+        vpn_backend=None,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -113,6 +119,9 @@ class DeviceFactsRunService:
         self.oxidized = oxidized
         self.cisco_support = cisco_support
         self.chart_renderer = chart_renderer
+        self.vpn_registry = vpn_registry
+        self.vpn_session = vpn_session
+        self.vpn_backend = vpn_backend
         self._slots = threading.BoundedSemaphore(concurrency)
         self._run_lock = threading.Lock()
         self._oxidized_nodes: dict[str, tuple[dict, ...]] = {}
@@ -140,11 +149,7 @@ class DeviceFactsRunService:
         try:
             devices = self.netbox.get_prophylaxis_devices()
             self._prepare_oxidized_backup_state(devices)
-            with ThreadPoolExecutor(
-                max_workers=self.concurrency,
-                thread_name_prefix="atlas-prophylaxis",
-            ) as executor:
-                per_device = tuple(executor.map(self._collect_guarded, devices))
+            per_device = self._collect_with_vpn_groups(devices)
             results = tuple(
                 result for device_results in per_device for result in device_results
             )
@@ -198,6 +203,103 @@ class DeviceFactsRunService:
                 },
             )
             self._fail_run(running, "execution_failed")
+
+    def _device_failure_results(
+        self, device: dict, code: str,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        device_id, name, management_ip, platform = self._identity(device)
+        known, unknown = self._selected_checks(device)
+        checks = tuple(check.value for check in known) + unknown
+        return tuple(
+            self._check_error(
+                device_id, name, management_ip, platform, check,
+                "failed", code, log_event=False,
+            )
+            for check in checks
+        )
+
+    def _collect_parallel(
+        self, devices: list[dict], *, backend=None,
+    ) -> tuple[tuple[ProphylaxisCheckResult, ...], ...]:
+        if not devices:
+            return ()
+        with ThreadPoolExecutor(
+            max_workers=self.concurrency,
+            thread_name_prefix="atlas-prophylaxis",
+        ) as executor:
+            return tuple(executor.map(
+                lambda device: self._collect_guarded(device, backend=backend),
+                devices,
+            ))
+
+    def _collect_with_vpn_groups(
+        self, devices: list[dict],
+    ) -> tuple[tuple[ProphylaxisCheckResult, ...], ...]:
+        if self.vpn_registry is None or self.vpn_session is None or self.vpn_backend is None:
+            return self._collect_parallel(devices)
+
+        direct: list[dict] = []
+        grouped: dict[str, list[dict]] = {}
+        collected: list[tuple[ProphylaxisCheckResult, ...]] = []
+        for device in devices:
+            device_id = device.get("id")
+            if isinstance(device_id, bool) or not isinstance(device_id, int):
+                collected.append(self._device_failure_results(device, "device_not_found"))
+                continue
+            try:
+                resolved = self.vpn_registry.resolve_for_execution(device_id)
+            except Exception as exc:
+                collected.append(self._device_failure_results(
+                    device, getattr(exc, "code", "vpn_assignment_invalid")
+                ))
+                continue
+            if resolved is None:
+                direct.append(device)
+            else:
+                grouped.setdefault(resolved["connection_id"], []).append(device)
+
+        collected.extend(self._collect_parallel(direct))
+        for connection_id, members in grouped.items():
+            try:
+                connection = self.vpn_registry.get(connection_id)
+                target_ips = tuple(
+                    management_ip
+                    for device in members
+                    for management_ip in (self._identity(device)[2],)
+                    if management_ip is not None
+                )
+                session_id = self.vpn_session.open(
+                    connection,
+                    target_ips=tuple(dict.fromkeys(target_ips)),
+                )
+            except Exception as exc:
+                code = getattr(exc, "code", "vpn_connection_failed")
+                collected.extend(
+                    self._device_failure_results(device, code) for device in members
+                )
+                continue
+
+            group_results = None
+            execution_error = None
+            try:
+                group_results = self._collect_parallel(
+                    members, backend=self.vpn_backend,
+                )
+            except Exception:
+                execution_error = "vpn_collection_failed"
+            finally:
+                try:
+                    self.vpn_session.close(session_id)
+                except Exception:
+                    execution_error = "vpn_cleanup_failed"
+            if execution_error is not None:
+                collected.extend(
+                    self._device_failure_results(device, execution_error)
+                    for device in members
+                )
+            elif group_results is not None:
+                collected.extend(group_results)
+        return tuple(collected)
 
     def _generate_charts_guarded(
         self,
@@ -461,14 +563,23 @@ class DeviceFactsRunService:
     def _collect_guarded(
         self,
         device: dict,
+        *,
+        backend=None,
     ) -> tuple[ProphylaxisCheckResult, ...]:
         with self._slots:
             try:
-                return self._collect(device)
+                return self._collect(device, backend=backend)
             except Exception as exc:
                 device_id, name, management_ip, platform = self._identity(device)
                 known, unknown = self._selected_checks(device)
                 checks = tuple(check.value for check in known) + unknown
+                candidate_code = getattr(exc, "code", None)
+                reason_code = (
+                    candidate_code
+                    if isinstance(candidate_code, str)
+                    and re.fullmatch(r"[a-z0-9_]{1,100}", candidate_code)
+                    else "unexpected_execution_error"
+                )
                 logger.warning(
                     "prophylaxis_device_failed",
                     extra={
@@ -476,7 +587,7 @@ class DeviceFactsRunService:
                         "device": name,
                         "platform": platform,
                         "operation": OPERATION,
-                        "reason_code": "unexpected_execution_error",
+                        "reason_code": reason_code,
                         "exception_type": type(exc).__name__,
                     },
                 )
@@ -488,7 +599,7 @@ class DeviceFactsRunService:
                         platform,
                         check,
                         "failed",
-                        "unexpected_execution_error",
+                        reason_code,
                         log_event=False,
                     )
                     for check in checks
@@ -515,7 +626,9 @@ class DeviceFactsRunService:
         )
         return device_id, name.strip(), management_ip, platform
 
-    def _collect(self, device: dict) -> tuple[ProphylaxisCheckResult, ...]:
+    def _collect(
+        self, device: dict, *, backend=None,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
         selected_checks, unknown_checks = self._selected_checks(device)
         backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks
@@ -726,7 +839,7 @@ class DeviceFactsRunService:
                         telnet_fallback_port,
                         credentials,
                     ) = prophylaxis_connection
-                raw = self.backend.execute(
+                raw = (backend or self.backend).execute(
                     host=target.host,
                     port=port,
                     profile=execution_profile,

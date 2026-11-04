@@ -18,7 +18,7 @@ flow zostáva zachovaný.
 ## Tenant a lokality
 
 ```bash
-sudo atlasctl inventory tenant add --name "ACME Slovakia"
+sudo atlasctl inventory tenant add --name "ACME Slovakia" --group customers
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Zilina Office"
 sudo atlasctl inventory site set-default \
@@ -27,8 +27,12 @@ sudo atlasctl inventory site set-default \
 ```
 
 Tieto príkazy vykonajú zmenu predvolene; `--dry-run` iba zobrazí plán. Slug je
-deterministický. Existujúci rovnaký slug s iným názvom alebo Site priradený
-inému Tenantovi je konflikt a Atlas objekt neprepíše.
+deterministický. Nový Site používa globálne unikátny slug
+`<tenant-slug>-<site-slug>`. Existujúci Site rovnakého názvu a Tenanta Atlas
+znovu použije bez premenovania; Site iného Tenanta nie je prepísaný.
+
+Tenant a Site možno rovnakým plan/apply flow vytvoriť aj v Operations UI cez
+**Manage tenants & sites**.
 
 `site set-default` Site idempotentne vytvorí alebo znovu použije a uloží ju do
 chránenej runtime konfigurácie. Import ju použije, ak riadok CSV/XLSX ani
@@ -50,13 +54,17 @@ V Atlas Operations UI otvorí v časti **Operator tools** položku **Import
 devices** a vykoná tento kontrolovaný postup:
 
 1. vloží tabuľku skopírovanú z Excelu alebo obsah CSV;
-2. voliteľne určí spoločný Tenant a Site, inak sa použijú hodnoty z tabuľky
-   alebo predvolená runtime konfigurácia;
+2. voliteľne vyberie spoločný Tenant z NetBox dropdownu a následne Site
+   filtrovaný iba na lokality tohto Tenanta; prázdna voľba použije hodnoty z
+   tabuľky alebo predvolenú runtime konfiguráciu;
 3. spustí **Create dry-run plan** bez zápisu do NetBoxu;
 4. vyrieši všetky riadky `INVALID`, `CONFLICT` alebo `ERROR`;
 5. ak chýba Device Type, vloží jeho YAML priamo v okne; Atlas ho schémovo
    overí, uloží do chráneného runtime katalógu a automaticky zopakuje plán;
-6. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
+6. ak Device Type nemá overenú predvolenú platformu, vyberie platformu pre
+   konkrétny riadok; Atlas povolí iba platformu rovnakého výrobcu a zopakuje
+   dry-run;
+7. skontroluje presný výsledok, označí potvrdzovacie pole a až potom použije
    **Apply approved plan**.
 
 Počas dlhšieho dry-runu UI zobrazuje spinner, aktuálnu fázu a uplynutý čas.
@@ -105,8 +113,23 @@ v `.runtime/inventory.yaml`.
 ## Rozlíšenie objektov
 
 Device Type sa rozlišuje ako jednoznačná presná zhoda modelu alebo
-nakonfigurovaného aliasu. Platforma sa prevezme z overeného
-`DeviceType.default_platform`; explicitná odlišná platforma je konflikt.
+nakonfigurovaného aliasu. Ak má Device Type overenú
+`DeviceType.default_platform`, importer ju použije a explicitná odlišná
+platforma je konflikt. Ak predvolená platforma chýba, import sa zastaví s
+`platform_not_selected`; operátor musí vybrať platformu pre konkrétny riadok v
+Operations UI alebo ju uviesť v stĺpci `Platform`. Zvolená platforma musí mať
+rovnakého výrobcu ako Device Type. Atlas preto neodhaduje napríklad NX-OS verzus
+ACI iba z názvu Nexus zariadenia.
+
+Pri už existujúcom Device s prázdnou platformou dry-run zobrazí operáciu
+`ASSIGN_PLATFORM` a Apply doplní iba platformu. Neprázdnu existujúcu platformu
+importer nikdy automaticky neprepíše; odlišná požadovaná hodnota je
+`existing_device_platform_conflict`.
+
+NetBox Platform je iba identita operačného systému. Jej existencia sama osebe
+nezapína Oxidized backup, Ansible/Profylaxia collector ani Zabbix template.
+Každý z týchto spotrebiteľov má vlastné explicitné mapovanie a môže danú
+platformu naďalej hlásiť ako nepodporovanú.
 Device Role sa vyberá v poradí: riadok, mapovanie modelu/platformy, predvolená
 rola. Atlas baseline pri deploymente idempotentne vytvára štandardné role
 `Network Device`, `Switch`, `Router`, `Firewall`, `Load Balancer` a
@@ -195,8 +218,20 @@ profylaxia_checks = []
 
 Importer vytvorí alebo znovu použije `mgmt0`, priradí IP a nastaví
 `primary_ip4`. Samotná IPv4 dostane `/32`; dodaný CIDR zostane zachovaný.
-Existujúca IP sa vyhodnocuje v konkrétnom VRF kontexte. Importer nevytvára
-Prefix, VLAN ani VRF a nepredpokladá IP oddelenie podľa Tenant/Site.
+Existujúca IP sa vyhodnocuje v konkrétnom VRF kontexte. Ak vstup obsahuje
+sieťový CIDR kratší ako `/32`, Atlas vytvorí alebo znovu použije rovnaký Prefix
+v tom istom Tenant/VRF kontexte. VRF sa vytvára samostatne a explicitne:
+
+```bash
+sudo atlasctl inventory vrf add \
+  --tenant acme-slovakia --name acme-mgmt --dry-run
+sudo atlasctl inventory vrf add \
+  --tenant acme-slovakia --name acme-mgmt --apply
+```
+
+VRF, Prefix a nová IP musia patriť rovnakému Tenantovi. Rovnakú IP možno
+evidovať pre viacerých zákazníkov iba v odlišných VRF. Atlas nemení VRF
+konfiguráciu fyzického zariadenia a nevytvára fiktívny Route Distinguisher.
 
 ## Výsledky a opakovanie
 

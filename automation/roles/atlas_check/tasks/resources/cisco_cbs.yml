@@ -1,15 +1,18 @@
 ---
-- name: Collect Cisco CBS resource and environment commands
-  community.ciscosmb.command:
-    commands:
-      - show cpu utilization
-      - show environment all
-  register: atlas_cbs_resources
-  changed_when: false
+- name: Initialize Cisco CBS resource command buffer
+  ansible.builtin.set_fact:
+    atlas_command_outputs: {}
+
+- name: Collect Cisco CBS resource and environment commands independently
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/common/run_cisco_cbs_command.yml"
+  loop:
+    - {key: show_cpu_utilization, command: show cpu utilization}
+    - {key: show_environment_all, command: show environment all}
+  loop_control:
+    loop_var: atlas_command_spec
+    label: "{{ atlas_command_spec.command }}"
 
 - name: Prepare Cisco CBS resource outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      data:
-        show_cpu_utilization: "{{ atlas_cbs_resources.stdout[0] }}"
-        show_environment_all: "{{ atlas_cbs_resources.stdout[1] }}"
+      data: "{{ atlas_command_outputs }}"

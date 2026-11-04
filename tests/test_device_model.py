@@ -98,6 +98,9 @@ class PlatformTests(unittest.TestCase):
             ("Cisco", "cisco-cbs250-24t-4g", "CBS250-24T-4G", "cisco-cbs250-350"),
             ("Cisco", "cisco-cbs350-12xt", "CBS350-12XT", "cisco-cbs250-350"),
             ("Cisco", "cisco-cbs350-48t-4g", "CBS350-48T-4G", "cisco-cbs250-350"),
+            ("Cisco", "cisco-c1200-24t-4x", "Catalyst C1200-24T-4X", "cisco-catalyst-1200"),
+            ("Cisco", "cisco-c1300-48fp-4x", "Catalyst 1300-48FP-4X", "cisco-catalyst-1300"),
+            ("Cisco", "cisco-c1300x-24p-4x", "Catalyst C1300X-24P-4X", "cisco-catalyst-1300"),
             ("Fortinet", "fortinet-fg-60f", "FortiGate 60F", "fortios"),
             ("Fortinet", "fortinet-fap-231f", "FortiAP 231F", "fortiap"),
             ("Fortinet", "fortinet-faz-810g", "FortiAnalyzer 810G", "fortianalyzer"),
@@ -126,6 +129,7 @@ class PlatformTests(unittest.TestCase):
             ("Check Point", "check-point-cpap-sbte2000x", "SandBlast TE2000X", None),
             ("Fortinet", "fortinet-fpm-7620f", "FortiGate Module 7620F", None),
             ("Cisco", "cisco-n9k-unknown", "N9K-unknown", None),
+            ("Cisco", "cisco-n9k-c93360yc-fx2", "Nexus 93360YC-FX2", None),
             ("Cisco", "unknown", "unknown", None),
         ]:
             with self.subTest(model=model):
@@ -141,6 +145,13 @@ class PlatformTests(unittest.TestCase):
         self.assertEqual(deployment["oxidized"]["docker_image"], self.config["oxidized"]["image"])
         self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs"]["model"], "ciscosmb")
         self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-cbs250-350"]["model"], "ciscosmb")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-catalyst-1200"]["model"], "ciscosmb")
+        self.assertEqual(self.config["oxidized_platform_mapping"]["cisco-catalyst-1300"]["model"], "ciscosmb")
+        for platform in (
+            "cisco-ios-xr", "cisco-aci", "cisco-ftd", "cisco-fxos",
+            "cisco-aireos", "cisco-viptela",
+        ):
+            self.assertNotIn(platform, self.config["oxidized_platform_mapping"])
         self.assertEqual(self.config["oxidized_platform_mapping"]["fortios"]["model"], "fortigate")
         self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-cx"]["model"], "aoscx")
         self.assertEqual(self.config["oxidized_platform_mapping"]["aruba-aos-switch"]["model"], "procurve")

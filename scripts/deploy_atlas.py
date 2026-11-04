@@ -30,6 +30,7 @@ OPENBAO_DEPLOY_SCRIPT = (
     SCRIPTS_DIR
     / "deploy_openbao.py"
 )
+OPENBAO_ACCESS_SCRIPT = SCRIPTS_DIR / "openbao_access.py"
 
 NETBOX_DEPLOY_SCRIPT = (
     SCRIPTS_DIR
@@ -60,6 +61,24 @@ OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE = (
     / ".runtime"
     / "openbao-credential-writer.json"
 )
+OPENBAO_VPN_PROFILE_WRITER_IDENTITY_FILE = (
+    ROOT
+    / ".runtime"
+    / "openbao-vpn-profile-writer.json"
+)
+OPENBAO_VPN_WORKER_IDENTITY_FILE = (
+    ROOT
+    / ".runtime"
+    / "openbao-vpn-worker.json"
+)
+
+OPENBAO_BACKEND_RUNTIME_IDENTITIES = {
+    "atlas-backend": OPENBAO_BACKEND_IDENTITY_FILE,
+    "atlas-monitoring-provisioner": OPENBAO_MONITORING_IDENTITY_FILE,
+    "atlas-credential-writer": OPENBAO_CREDENTIAL_WRITER_IDENTITY_FILE,
+    "atlas-vpn-profile-writer": OPENBAO_VPN_PROFILE_WRITER_IDENTITY_FILE,
+    "atlas-vpn-worker": OPENBAO_VPN_WORKER_IDENTITY_FILE,
+}
 
 OPENBAO_URL = os.environ.get(
     "OPENBAO_URL",
@@ -181,6 +200,36 @@ def run_script(
 # ===========================================================================
 # OpenBao readiness gate
 # ===========================================================================
+
+
+def missing_openbao_runtime_identities():
+    return tuple(
+        name
+        for name, path in OPENBAO_BACKEND_RUNTIME_IDENTITIES.items()
+        if path.is_symlink() or not path.is_file()
+    )
+
+
+def reconcile_missing_openbao_runtime_identities():
+    missing = missing_openbao_runtime_identities()
+    if not missing:
+        return False
+
+    info(
+        "OpenBao runtime identity reconciliation required: "
+        + ", ".join(missing)
+    )
+    run_script(
+        OPENBAO_ACCESS_SCRIPT,
+        ["--reconcile-runtime-roles"],
+    )
+    remaining = missing_openbao_runtime_identities()
+    if remaining:
+        raise RuntimeError(
+            "OpenBao runtime identity reconciliation did not create: "
+            + ", ".join(remaining)
+        )
+    return True
 
 
 def verify_openbao_ready():
@@ -405,6 +454,8 @@ def deploy_openbao():
                 "OpenBao returned incomplete "
                 "fresh-install unseal keys"
             )
+
+    reconcile_missing_openbao_runtime_identities()
 
     verify_openbao_ready()
 

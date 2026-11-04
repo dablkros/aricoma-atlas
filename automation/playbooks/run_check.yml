@@ -10,3 +10,6 @@
     ansible_become_method: enable
   roles:
     - atlas_check
+  post_tasks:
+    - name: Close the persistent Atlas device connection
+      ansible.builtin.meta: reset_connection

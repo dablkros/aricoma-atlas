@@ -1,0 +1,41 @@
+--- a/src/libcharon/sa/ikev2/tasks/ike_init.c
++++ b/src/libcharon/sa/ikev2/tasks/ike_init.c
+@@ -29,6 +29,7 @@
+ #include <encoding/payloads/sa_payload.h>
+ #include <encoding/payloads/ke_payload.h>
+ #include <encoding/payloads/nonce_payload.h>
++#include <encoding/payloads/vendor_id_payload.h>
+
+ /** maximum retries to do with cookies/other ke methods */
+ #define MAX_RETRIES 5
+@@ -909,7 +910,30 @@
+ 	{
+ 		return FAILED;
+ 	}
++	/* Atlas lab interoperability: one dedicated daemon and one Fortinet peer. */
++	if (!this->old_sa &&
++		strcmp(this->ike_sa->get_name(this->ike_sa), "forti-full") == 0)
++	{
++		int configured_id;
++		uint8_t network_id;
++
++		configured_id = lib->settings->get_int(lib->settings,
++						"%s.atlas_fortinet_network_id", -1, lib->ns);
++		if (configured_id < 0 || configured_id > 255)
++		{
++			DBG1(DBG_IKE, "Atlas Fortinet network ID not configured or invalid");
++			return FAILED;
++		}
++		network_id = configured_id;
++		message->add_payload(message, (payload_t*)vendor_id_payload_create_data(
++						PLV2_VENDOR_ID, chunk_clone(chunk_from_chars(
++						0xc1, 0xdc, 0x43, 0x50, 0x47, 0x6b, 0x98, 0xa4,
++						0x29, 0xb9, 0x17, 0x81, 0x91, 0x4c, 0xa4, 0x3e))));
++		message->add_notify(message, FALSE, (notify_type_t)61720, chunk_empty);
++		message->add_notify(message, FALSE, (notify_type_t)61520,
++							chunk_from_thing(network_id));
++	}
+ 
+ #ifdef ME
+ 	{
+ 		chunk_t connect_id = this->ike_sa->get_connect_id(this->ike_sa);

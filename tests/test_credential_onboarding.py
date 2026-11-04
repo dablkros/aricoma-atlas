@@ -36,6 +36,8 @@ class FakeNetBox:
             "id": 7,
             "name": "forti-mt-2",
             "status": {"value": "active"},
+            "tenant": {"id": 3, "name": "Acme", "slug": "acme"},
+            "site": {"id": 4, "name": "Bratislava", "slug": "bratislava"},
             "device_type": {
                 "manufacturer": {"name": "Fortinet", "slug": "fortinet"},
             },
@@ -82,7 +84,8 @@ class FakeNetBox:
 
     def patch(self, endpoint, payload):
         device = self.devices[self.device_id_from_endpoint(endpoint)]
-        device["platform"] = {"id": payload["platform"], "slug": "fortios"}
+        if "platform" in payload:
+            device["platform"] = {"id": payload["platform"], "slug": "fortios"}
         device["custom_fields"] = dict(payload["custom_fields"])
         self.patches.append((endpoint, payload))
         return self.device
@@ -216,6 +219,78 @@ class CredentialOnboardingTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(CredentialOnboardingInvalid, "same manufacturer"):
             self.service.plan(api_request(device_ids=[7, 8]))
+
+    def test_options_include_tenants_and_device_tenant(self):
+        result = self.service.options()
+
+        self.assertEqual(
+            [{"id": 3, "name": "Acme", "slug": "acme"}],
+            result["tenants"],
+        )
+        self.assertEqual(result["tenants"][0], result["devices"][0]["tenant"])
+
+    def test_batch_requires_one_tenant(self):
+        second = {
+            **self.netbox.device,
+            "id": 8,
+            "name": "forti-other-customer",
+            "tenant": {"id": 4, "name": "Other", "slug": "other"},
+            "custom_fields": {},
+        }
+        self.netbox.devices[8] = second
+
+        with self.assertRaisesRegex(CredentialOnboardingInvalid, "same tenant"):
+            self.service.plan(api_request(device_ids=[7, 8]))
+
+    def test_batch_rejects_device_without_tenant(self):
+        self.netbox.device["tenant"] = None
+
+        with self.assertRaisesRegex(CredentialOnboardingInvalid, "belong to a tenant"):
+            self.service.plan(api_request())
+
+    def test_shared_vendor_profile_preserves_each_device_platform(self):
+        self.netbox.device.update({
+            "device_type": {
+                "manufacturer": {"name": "Cisco", "slug": "cisco"},
+            },
+            "platform": {"id": 21, "slug": "cisco-ios"},
+        })
+        second = {
+            **self.netbox.device,
+            "id": 8,
+            "name": "access-1200",
+            "platform": {"id": 22, "slug": "cisco-catalyst-1200"},
+            "custom_fields": {},
+        }
+        self.netbox.devices[8] = second
+        request = api_request(
+            device_ids=[7, 8],
+            platform=None,
+            preserve_device_platforms=True,
+            credential_profile="site-cisco",
+            prophylaxis_auth="ssh",
+            prophylaxis_api=None,
+            prophylaxis_ssh={"username": "reader", "password": "password"},
+            fortios_api_port=None,
+        )
+
+        preview = self.service.plan(request)
+        result = self.service.apply(request, expected_plan=preview)
+
+        self.assertTrue(preview["apply_allowed"])
+        self.assertTrue(preview["preserve_device_platforms"])
+        self.assertEqual(
+            self.secrets.writes[0][0],
+            "devices/credentials/cisco/site-cisco/prophylaxis",
+        )
+        self.assertEqual(
+            [patch[1] for patch in self.netbox.patches],
+            [
+                {"custom_fields": self.netbox.devices[7]["custom_fields"]},
+                {"custom_fields": self.netbox.devices[8]["custom_fields"]},
+            ],
+        )
+        self.assertEqual(result["status"], "APPLIED")
 
 
 if __name__ == "__main__":

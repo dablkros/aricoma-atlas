@@ -22,6 +22,18 @@ HEADER_ALIASES = {
 REQUIRED = {"hostname", "model", "management_ip"}
 
 
+def _normalize_pasted_table(value: str) -> str:
+    """Normalize clipboard line endings and an optional Unicode BOM."""
+    return (
+        value.lstrip("\ufeff")
+        .replace("\r\n", "\n")
+        .replace("\r", "\n")
+        .replace("\u0085", "\n")
+        .replace("\u2028", "\n")
+        .replace("\u2029", "\n")
+    )
+
+
 def _header(value: object) -> str:
     return re.sub(r"\s+", " ", str(value or "").strip().casefold())
 
@@ -64,12 +76,13 @@ def _parse_rows(rows) -> list[InventoryRow]:
 def parse_inventory_table(value: str) -> list[InventoryRow]:
     if not isinstance(value, str) or not value.strip():
         raise ValueError("Inventory table is empty")
-    sample = value[:4096]
+    normalized = _normalize_pasted_table(value)
+    sample = normalized[:4096]
     try:
         dialect = csv.Sniffer().sniff(sample, delimiters=",;\t")
     except csv.Error:
         dialect = csv.excel_tab if "\t" in sample else csv.excel
-    return _parse_rows(iter(csv.reader(io.StringIO(value), dialect)))
+    return _parse_rows(iter(csv.reader(io.StringIO(normalized), dialect)))
 
 
 def _rows_xlsx(path: Path):

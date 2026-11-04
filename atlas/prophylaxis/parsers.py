@@ -110,6 +110,8 @@ CPU_PARSERS = {
     "cisco-ios-xe": parse_cisco_ios_cpu,
     "cisco-cbs": parse_cisco_cbs_cpu,
     "cisco-cbs250-350": parse_cisco_cbs_cpu,
+    "cisco-catalyst-1200": parse_cisco_cbs_cpu,
+    "cisco-catalyst-1300": parse_cisco_cbs_cpu,
     "fortios": parse_fortios_cpu,
 }
 
@@ -2957,6 +2959,8 @@ DEVICE_FACTS_PARSERS = {
     "cisco-ios-xe": parse_cisco_ios_device_facts,
     "cisco-cbs": parse_cisco_cbs_device_facts,
     "cisco-cbs250-350": parse_cisco_cbs_device_facts,
+    "cisco-catalyst-1200": parse_cisco_cbs_device_facts,
+    "cisco-catalyst-1300": parse_cisco_cbs_device_facts,
     "cisco-nxos": parse_cisco_nxos_device_facts,
     "cisco-asa": parse_cisco_asa_device_facts,
     "fortios": parse_fortios_device_facts,
