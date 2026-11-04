@@ -7,7 +7,7 @@ from starlette.requests import Request
 
 from atlas.vpn.worker_app import (
     WorkerSessionOpenRequest, WorkerTestRequest, _profile, _render_ssl_config,
-    _openvpn_target_ips, _ssl_profile, settings, test_vpn,
+    _openvpn_target_ips, _ssl_profile, _start_charon, settings, test_vpn,
 )
 
 
@@ -59,6 +59,21 @@ def ssl_secret():
 
 
 class VPNWorkerAppTests(unittest.TestCase):
+    def test_charon_readiness_removes_stale_socket_and_probes_vici(self):
+        process = MagicMock()
+        process.poll.return_value = None
+        probe = MagicMock(returncode=0)
+        with tempfile.TemporaryDirectory() as directory:
+            socket_path = Path(directory) / "charon.vici"
+            socket_path.write_text("stale", encoding="utf-8")
+            with patch("atlas.vpn.worker_app.subprocess.Popen", return_value=process), \
+                 patch("atlas.vpn.worker_app._run", return_value=probe) as run:
+                started = _start_charon(socket_path=socket_path)
+
+            self.assertFalse(socket_path.exists())
+        self.assertIs(started, process)
+        run.assert_called_once_with([settings.swanctl, "--stats"], timeout=2, check=False)
+
     def test_explicit_mfa_modes_and_legacy_boolean_are_distinguished(self):
         self.assertEqual(
             request().model_copy(update={"mfa_mode": "push"}).effective_mfa_mode,

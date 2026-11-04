@@ -49,6 +49,11 @@ odmietne druhý súbežný test. Backend nemá `NET_ADMIN`; worker má iba
 control network chránený náhodným bearer tokenom. Worker neposkytuje generický
 shell ani Docker socket.
 
+Pred každým strongSwan pokusom worker odstráni socket po predchádzajúcom
+ukončenom daemone a pripravenosť nového `charon-systemd` overí úspešným VICI
+dotazom. Samotná existencia `/run/charon.vici` nie je považovaná za readiness,
+pretože stale socket by mohol spôsobiť okamžité zlyhanie `--load-conns`.
+
 ## Overené hranice
 
 - ARICOMA: Ubuntu 24.04, strongSwan 6.1.0 s experimentálnym notify 61520,

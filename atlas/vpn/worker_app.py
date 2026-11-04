@@ -276,6 +276,40 @@ def _run(arguments: list[str], *, timeout: float = 10, check: bool = True) -> su
     return result
 
 
+def _start_charon(*, socket_path: Path = Path("/run/charon.vici")) -> subprocess.Popen:
+    """Start the per-operation daemon and verify that VICI accepts requests.
+
+    A socket path can survive a previous daemon exit. Existence alone is not a
+    readiness signal because swanctl may then race the new daemon and fail while
+    loading an otherwise valid connection.
+    """
+    try:
+        socket_path.unlink(missing_ok=True)
+    except OSError:
+        raise RuntimeError("charon_socket_cleanup_failed") from None
+    try:
+        charon = subprocess.Popen(
+            [settings.charon], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, close_fds=True,
+        )
+    except OSError:
+        raise RuntimeError("charon_start_failed") from None
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline and charon.poll() is None:
+        probe = _run([settings.swanctl, "--stats"], timeout=2, check=False)
+        if probe.returncode == 0:
+            return charon
+        time.sleep(0.1)
+    if charon.poll() is None:
+        charon.terminate()
+        try:
+            charon.wait(timeout=3)
+        except subprocess.TimeoutExpired:
+            charon.kill()
+            charon.wait(timeout=3)
+    raise RuntimeError("charon_start_failed")
+
+
 def _profile(secret: dict, body: WorkerTestRequest) -> tuple[FortiClientProfile, VPNSecrets]:
     if (secret.get("schema_version") != 1
             or secret.get("profile_type", "ipsec-ikev2") != "ipsec-ikev2"
@@ -668,16 +702,7 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
             )
             os.chmod(config_path, 0o600)
             os.chmod(daemon_path, 0o600)
-            charon = subprocess.Popen(
-                [settings.charon], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, close_fds=True,
-            )
-            socket_path = Path("/run/charon.vici")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline and not socket_path.exists() and charon.poll() is None:
-                time.sleep(0.1)
-            if charon.poll() is not None or not socket_path.exists():
-                raise RuntimeError("charon_start_failed")
+            charon = _start_charon()
             logger.info(
                 "vpn.worker_mfa_runtime_ready",
                 extra={
@@ -1030,16 +1055,7 @@ def test_vpn(
             daemon_path.write_text(daemon_config, encoding="utf-8")
             os.chmod(config_path, 0o600)
             os.chmod(daemon_path, 0o600)
-            charon = subprocess.Popen(
-                [settings.charon], stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                stderr=subprocess.DEVNULL, close_fds=True,
-            )
-            socket_path = Path("/run/charon.vici")
-            deadline = time.monotonic() + 10
-            while time.monotonic() < deadline and not socket_path.exists() and charon.poll() is None:
-                time.sleep(0.1)
-            if charon.poll() is not None or not socket_path.exists():
-                raise RuntimeError("charon_start_failed")
+            charon = _start_charon()
             _run([settings.swanctl, "--load-conns", "--file", str(config_path)])
             _run([settings.swanctl, "--load-creds", "--file", str(config_path)])
             deadline = time.monotonic() + connection_timeout
