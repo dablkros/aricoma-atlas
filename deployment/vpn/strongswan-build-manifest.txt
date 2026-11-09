@@ -1,0 +1,41 @@
+Atlas strongSwan Fortinet compatibility build
+
+strongSwan version: 6.1.0
+strongSwan source: https://download.strongswan.org/strongswan-6.1.0.tar.bz2
+strongSwan SHA-256: fe6c97481298767213cfc2e9a1da29fdd8018d481ff4cb9cf0283099654f20d4
+
+Community patch source: https://github.com/Noneawe/strongswan-deb-build
+Community source commit: 580192d321065a9628779ce77962cfd8851c2d73
+
+Patch SHA-256, in application order:
+7fb1992f458b5286103be20f56874c49e54d7b2d81b553820684cf577248a096  strongswan-6.1.0-fortinet-eap-payload.patch
+7802512fb2850e7aaaa29b58eb97af325b7015be144a5fe211bba4aabad23454  strongswan-6.1.0-fortinet-eap-authenticator.patch
+d61de7e8b220b7277b79fbfd709b924f798b12ea525e725dbd0a15f954ac88ea  strongswan-6.1.0-fortinet-eap-gtc-otp.patch
+31e6792ff5206863088914365d7b984b48522e1f9e4bd52059f18c35b8a29d96  strongswan-6.1.0-fortinet-eap-auth.patch
+a1a41995066fc4e0f1977ec8a090ef482a099b9c4ff7567be311cde0f6cee09e  strongswan-6.1.0-fortinet-ike-auth-fct.patch
+c1b4bc531afdec3d0cc690a43fc485af926d99a9954afc07a417e9357158e795  strongswan-6.1.0-fortinet-vendor-id.patch
+c420fe9c1cd821602b03c99be3c3cf484f33e6d27ff1d8937628d8270a54afcc  strongswan-6.1.0-fortinet-network-id.patch
+
+Atlas configure arguments:
+--prefix=/usr/local
+--sysconfdir=/usr/local/etc
+--with-systemdsystemunitdir=/usr/local/lib/systemd/system
+--enable-systemd
+--enable-swanctl
+--enable-vici
+--enable-md4
+--enable-eap-identity
+--enable-eap-mschapv2
+--enable-eap-gtc
+--enable-openssl
+--enable-kernel-netlink
+--enable-socket-default
+--enable-attr
+--enable-resolve
+--disable-ikev1
+
+Integration evidence still required from the original LAB VM:
+- output of config.status --config
+- strongSwan and OpenSSL versions
+- sanitized loaded-plugin list and successful IKE/CHILD SA log
+- size and SHA-256 of the approved per-connection fct_data.txt

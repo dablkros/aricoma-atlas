@@ -3,6 +3,7 @@
 import base64
 import binascii
 from dataclasses import asdict
+import hashlib
 import plistlib
 
 from defusedxml import ElementTree as SafeET
@@ -107,6 +108,8 @@ class VPNProfileImportService:
     def _values(self, body: ProfileImportRequest):
         try:
             if body.format == 'openvpn-config':
+                if body.fct_payload_base64 is not None:
+                    raise VPNImportError('fct_payload_not_applicable')
                 p = parse_openvpn_profile(
                     profile_bytes(body), source_name=body.source_name,
                 )
@@ -137,6 +140,8 @@ class VPNProfileImportService:
             p = parse_forticlient_any_profile(profile_bytes(body), body.profile_name, format=body.format)
             username, password = body.username.get_secret_value(), body.password.get_secret_value()
             if isinstance(p, FortiClientSSLProfile):
+                if body.fct_payload_base64 is not None:
+                    raise VPNImportError('fct_payload_not_applicable')
                 if p.sso_enabled:
                     raise VPNImportError('unsupported_ssl_sso')
                 record = VPNConnectionCreate(
@@ -182,6 +187,12 @@ class VPNProfileImportService:
                       'tenant_id': record.tenant_id, 'profile': profile,
                       'psk_base64': base64.b64encode(psk).decode('ascii'),
                       'username': username, 'password': password}
+            if body.fct_payload_base64 is not None:
+                fct_payload = base64.b64decode(
+                    body.fct_payload_base64.get_secret_value(), validate=True,
+                )
+                secret['fct_payload_base64'] = base64.b64encode(fct_payload).decode('ascii')
+                secret['fct_payload_sha256'] = hashlib.sha256(fct_payload).hexdigest()
             return record, secret, p
         except (FortiClientProfileError, OpenVPNProfileError) as exc:
             raise VPNImportError(exc.args[0] if exc.args else 'vpn_profile_invalid') from None
@@ -243,6 +254,14 @@ class VPNProfileImportService:
                 'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
                 'external_mfa': self._mfa_mode(body) != 'none',
                 'mfa_mode': self._mfa_mode(body),
+                'fct_payload_status': (
+                    'supplied' if body.fct_payload_base64 is not None else 'missing'
+                ),
+                'fct_payload_size': (
+                    len(base64.b64decode(secret['fct_payload_base64']))
+                    if 'fct_payload_base64' in secret else None
+                ),
+                'fct_payload_sha256': secret.get('fct_payload_sha256'),
                 'replace_existing': body.replace_existing,
                 'registry_action': registry_action,
                 'secret_action': secret_action,

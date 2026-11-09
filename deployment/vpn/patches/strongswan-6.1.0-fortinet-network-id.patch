@@ -1,14 +1,6 @@
 --- a/src/libcharon/sa/ikev2/tasks/ike_init.c
 +++ b/src/libcharon/sa/ikev2/tasks/ike_init.c
-@@ -29,6 +29,7 @@
- #include <encoding/payloads/sa_payload.h>
- #include <encoding/payloads/ke_payload.h>
- #include <encoding/payloads/nonce_payload.h>
-+#include <encoding/payloads/vendor_id_payload.h>
-
- /** maximum retries to do with cookies/other ke methods */
- #define MAX_RETRIES 5
-@@ -909,7 +910,30 @@
+@@ -909,7 +909,26 @@
  	{
  		return FAILED;
  	}
@@ -27,10 +19,6 @@
 +			return FAILED;
 +		}
 +		network_id = configured_id;
-+		message->add_payload(message, (payload_t*)vendor_id_payload_create_data(
-+						PLV2_VENDOR_ID, chunk_clone(chunk_from_chars(
-+						0xc1, 0xdc, 0x43, 0x50, 0x47, 0x6b, 0x98, 0xa4,
-+						0x29, 0xb9, 0x17, 0x81, 0x91, 0x4c, 0xa4, 0x3e))));
 +		message->add_notify(message, FALSE, (notify_type_t)61720, chunk_empty);
 +		message->add_notify(message, FALSE, (notify_type_t)61520,
 +							chunk_from_thing(network_id));

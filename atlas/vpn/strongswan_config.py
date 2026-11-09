@@ -3,14 +3,15 @@
 import base64
 from dataclasses import dataclass, field
 from ipaddress import ip_address, ip_network
+from pathlib import Path
 import re
 
 from atlas.vpn.forticlient_profile import FortiClientProfile, FortiClientProfileError
 
 _IKE = {
     'AES256GCM|PRFSHA512': 'aes256gcm16-prfsha512-ecp521',
-    'AES256|SHA256': 'aes256-sha256-ecp521',
-    'AES256|SHA512': 'aes256-sha512-ecp521',
+    'AES256|SHA256': 'aes256-sha256-prfsha256-ecp521',
+    'AES256|SHA512': 'aes256-sha512-prfsha512-ecp521',
 }
 _ESP = {
     'AES256GCM|NONE': 'aes256gcm16-ecp521',
@@ -26,9 +27,24 @@ class VPNSecrets:
     psk: bytes = field(repr=False)
 
 
+def _runtime_path(value: str, reason: str) -> str:
+    root = Path('/run/atlas-vpn-worker')
+    if not isinstance(value, str) or not re.fullmatch(r'/run/atlas-vpn-worker/[A-Za-z0-9._/-]+', value):
+        raise FortiClientProfileError(reason)
+    path = Path(value)
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        raise FortiClientProfileError(reason) from None
+    if not relative.parts or '..' in relative.parts:
+        raise FortiClientProfileError(reason)
+    return value
+
+
 def render_fortinet_daemon_fragment(
     network_id: int,
     *,
+    fct_file: str | None = None,
     otp_request_file: str | None = None,
     otp_response_file: str | None = None,
     otp_timeout: int = 120,
@@ -36,18 +52,26 @@ def render_fortinet_daemon_fragment(
     """Render a per-worker fragment for Atlas' strongSwan 6.1.0 lab patch."""
     if isinstance(network_id, bool) or not isinstance(network_id, int) or not 0 <= network_id <= 255:
         raise FortiClientProfileError('invalid_network_id')
-    lines = [f'    atlas_fortinet_network_id = {network_id}']
+    lines = [
+        f'    atlas_fortinet_network_id = {network_id}',
+        '    fortigate_auth_key = skp',
+        '    fortigate_suppress_eap_only = yes',
+        '    fortigate_send_forticlient_vid = yes',
+    ]
+    if fct_file is not None:
+        lines.append(
+            f'    fortigate_fct_file = {_runtime_path(fct_file, "invalid_fct_runtime_path")}'
+        )
     if (otp_request_file is None) != (otp_response_file is None):
         raise FortiClientProfileError('invalid_otp_bridge')
     if otp_request_file is not None:
-        allowed = re.compile(r'^/run/atlas-vpn-worker/[A-Za-z0-9._/-]+$')
-        if (not allowed.fullmatch(otp_request_file)
-                or not allowed.fullmatch(otp_response_file or '')
-                or not 30 <= otp_timeout <= 300):
+        if not 30 <= otp_timeout <= 300:
             raise FortiClientProfileError('invalid_otp_bridge')
+        request_path = _runtime_path(otp_request_file, 'invalid_otp_bridge')
+        response_path = _runtime_path(otp_response_file or '', 'invalid_otp_bridge')
         lines.extend((
-            f'    atlas_fortinet_otp_request_file = {otp_request_file}',
-            f'    atlas_fortinet_otp_response_file = {otp_response_file}',
+            f'    atlas_fortinet_otp_request_file = {request_path}',
+            f'    atlas_fortinet_otp_response_file = {response_path}',
             f'    atlas_fortinet_otp_timeout = {otp_timeout}',
         ))
     return 'charon {\n' + '\n'.join(lines) + '\n}\n'
@@ -126,10 +150,11 @@ def render_swanctl(profile: FortiClientProfile, secrets: VPNSecrets,
         f'        remote_addrs = {gateway}\n        remote_port = {profile.gateway_port}\n'
         f'        vips = 0.0.0.0\n        proposals = {ike}\n'
         '        remote {\n            auth = psk\n            id = %any\n        }\n'
-        '        local {\n            round = 2\n            auth = eap\n'
+        '        local {\n            round = 2\n            auth = eap-mschapv2\n'
         f'{local_identity}            eap_id = {username}\n        }}\n'
         '        children {\n            vpn {\n                local_ts = dynamic\n'
-        f'                remote_ts = {",".join(networks)}\n                esp_proposals = {esp}\n'
+        '                remote_ts = 0.0.0.0/0\n'
+        f'                esp_proposals = {esp}\n'
         '                start_action = none\n            }\n        }\n    }\n}\n'
         'secrets {\n    ike-vpn {\n'
         f'        secret = 0s{psk}\n    }}\n    eap-vpn {{\n        id = {username}\n'

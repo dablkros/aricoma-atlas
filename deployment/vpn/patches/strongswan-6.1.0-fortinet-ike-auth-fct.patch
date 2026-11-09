@@ -1,0 +1,63 @@
+--- a/src/libcharon/sa/ikev2/tasks/ike_auth.c	2026-07-08 15:32:09.691852646 +0200
++++ b/src/libcharon/sa/ikev2/tasks/ike_auth.c	2026-07-09 08:05:41.466394379 +0200
+@@ -835,12 +835,57 @@
+ 			message->add_notify(message, FALSE, MULTIPLE_AUTH_SUPPORTED,
+ 								chunk_empty);
+ 		}
+-		/* indicate support for EAP-only authentication */
+-		message->add_notify(message, FALSE, EAP_ONLY_AUTHENTICATION,
+-							chunk_empty);
++		/* indicate support for EAP-only authentication.
++		 * FortiGate (fortigate_eap_psk_auth) runs EAP only for user
++		 * authorisation and authenticates the IKE SA with the PSK; FortiClient
++		 * does NOT advertise EAP-only. Sending it makes the gateway expect an
++		 * MSK-keyed AUTH and reject our PSK-keyed one. Suppress it in that
++		 * mode to mirror FortiClient. */
++		if (!lib->settings->get_bool(lib->settings,
++						"%s.fortigate_suppress_eap_only", FALSE, lib->ns))
++		{
++			message->add_notify(message, FALSE, EAP_ONLY_AUTHENTICATION,
++								chunk_empty);
++		}
+ 		/* indicate support for RFC 6311 Message ID synchronization */
+ 		message->add_notify(message, FALSE, IKEV2_MESSAGE_ID_SYNC_SUPPORTED,
+ 							chunk_empty);
++		/* FortiGate: mirror FortiClient's first IKE_AUTH. It sends
++		 * N(INITIAL_CONTACT) and a proprietary FORTICLIENT_CONNECT notify
++		 * (type 0xF100) carrying endpoint (FCT) data. Without the FCT data the
++		 * gateway logs "FEC vendor ID received FEC but IP not set" and rejects
++		 * the otherwise-correct PSK-signed final AUTH. The FCT payload is read
++		 * from charon.fortigate_fct_file so it can be tuned per host. */
++		if (lib->settings->get_bool(lib->settings,
++						"%s.fortigate_send_forticlient_vid", FALSE, lib->ns))
++		{
++			char *fct_file;
++
++			message->add_notify(message, FALSE, INITIAL_CONTACT, chunk_empty);
++			fct_file = lib->settings->get_str(lib->settings,
++							"%s.fortigate_fct_file", NULL, lib->ns);
++			if (fct_file)
++			{
++				chunk_t *fct = chunk_map(fct_file, FALSE);
++				if (fct)
++				{
++					message->add_notify(message, FALSE,
++										(notify_type_t)0xF100, *fct);
++					chunk_unmap(fct);
++				}
++				else
++				{
++					DBG1(DBG_IKE, "FortiGate: cannot read fortigate_fct_file "
++						 "'%s'", fct_file);
++					return FAILED;
++				}
++			}
++			else
++			{
++				DBG1(DBG_IKE, "FortiGate: fortigate_fct_file is required");
++				return FAILED;
++			}
++		}
+ 		/* only use a PPK in the first round */
+ 		if (!get_ppk_i(this))
+ 		{

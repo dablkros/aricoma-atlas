@@ -129,6 +129,43 @@ class VPNImportTests(unittest.TestCase):
         self.assertNotIn('profile_type', self.writer.secret)
         self.assertNotIn('encrypted_auth_info', self.writer.secret['profile'])
 
+    def test_ipsec_fct_payload_is_hashed_and_stored_only_as_secret(self):
+        payload = b'approved-lab-fct-payload\x00'
+        body = request().model_copy(update={
+            'fct_payload_base64': SecretStr(base64.b64encode(payload).decode('ascii')),
+        })
+
+        plan = self.service.plan(body)
+
+        self.assertEqual(plan['fct_payload_status'], 'supplied')
+        self.assertEqual(plan['fct_payload_size'], len(payload))
+        self.assertEqual(plan['fct_payload_sha256'], hashlib.sha256(payload).hexdigest())
+        self.assertNotIn(base64.b64encode(payload).decode('ascii'), str(plan))
+        self.service.apply(body, plan)
+        self.assertEqual(base64.b64decode(self.writer.secret['fct_payload_base64']), payload)
+        self.assertEqual(self.writer.secret['fct_payload_sha256'], hashlib.sha256(payload).hexdigest())
+
+    def test_missing_fct_is_plannable_but_explicit(self):
+        plan = self.service.plan(request())
+
+        self.assertEqual(plan['profile_type'], 'ipsec-ikev2')
+        self.assertEqual(plan['fct_payload_status'], 'missing')
+        self.assertIsNone(plan['fct_payload_size'])
+        self.assertIsNone(plan['fct_payload_sha256'])
+
+    def test_fct_payload_is_rejected_for_non_ipsec_profiles(self):
+        encoded = base64.b64encode(openvpn_profile()).decode()
+        body = request().model_copy(update={
+            'format': 'openvpn-config',
+            'profile_base64': SecretStr(encoded),
+            'source_name': 'customer-access.ovpn',
+            'profile_name': 'customer-access',
+            'fct_payload_base64': SecretStr(base64.b64encode(b'not-applicable').decode()),
+        })
+
+        with self.assertRaisesRegex(VPNImportError, 'fct_payload_not_applicable'):
+            self.service.plan(body)
+
     def test_openvpn_profile_is_validated_and_stored_only_as_secret(self):
         encoded = base64.b64encode(openvpn_profile()).decode()
         inspected = inspect_profile(ProfileInspectRequest(

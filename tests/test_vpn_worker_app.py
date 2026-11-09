@@ -1,3 +1,5 @@
+import base64
+import hashlib
 from pathlib import Path
 import tempfile
 import unittest
@@ -6,8 +8,9 @@ from unittest.mock import MagicMock, patch
 from starlette.requests import Request
 
 from atlas.vpn.worker_app import (
-    WorkerSessionOpenRequest, WorkerTestRequest, _profile, _render_ssl_config,
-    _openvpn_target_ips, _ssl_profile, _start_charon, settings, test_vpn,
+    FortinetFCTError, WorkerSessionOpenRequest, WorkerTestRequest,
+    _fortinet_fct_payload, _openvpn_target_ips, _profile, _render_ssl_config,
+    _ssl_profile, _start_charon, _write_private_bytes, settings, test_vpn,
 )
 
 
@@ -29,6 +32,7 @@ def http_request():
 
 
 def secret():
+    fct_payload = b'approved-lab-fct-payload\x00'
     return {
         "schema_version": 1, "connection_id": "customer-vpn", "tenant_id": 1,
         "profile": {
@@ -39,6 +43,8 @@ def secret():
             "phase2_dh_group": 21, "pfs": True,
         },
         "psk_base64": "cHNr", "username": "person", "password": "password",
+        "fct_payload_base64": base64.b64encode(fct_payload).decode("ascii"),
+        "fct_payload_sha256": hashlib.sha256(fct_payload).hexdigest(),
     }
 
 
@@ -141,6 +147,28 @@ class VPNWorkerAppTests(unittest.TestCase):
         self.assertEqual(profile.network_id, 11)
         self.assertNotIn("psk", repr(credentials).lower())
         self.assertNotIn("password", repr(credentials).lower())
+
+    def test_fct_payload_requires_content_and_matching_hash(self):
+        value = secret()
+        expected = base64.b64decode(value["fct_payload_base64"])
+        self.assertEqual(_fortinet_fct_payload(value), expected)
+
+        for broken in (
+            {key: item for key, item in value.items() if key != "fct_payload_base64"},
+            {**value, "fct_payload_base64": "not-base64"},
+            {**value, "fct_payload_sha256": "0" * 64},
+        ):
+            with self.subTest(broken=broken), self.assertRaises(FortinetFCTError):
+                _fortinet_fct_payload(broken)
+
+    def test_fct_payload_is_written_as_private_exclusive_file(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "fct-data.bin"
+            _write_private_bytes(path, b"opaque-fct")
+            self.assertEqual(path.read_bytes(), b"opaque-fct")
+            self.assertEqual(path.stat().st_mode & 0o777, 0o600)
+            with self.assertRaises(FortinetFCTError):
+                _write_private_bytes(path, b"replacement")
 
     def test_ssl_profile_renders_private_config_without_command_line_secret(self):
         profile, username, password = _ssl_profile(ssl_secret(), ssl_request())

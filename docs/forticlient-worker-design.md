@@ -42,6 +42,25 @@ Ak gateway napriek tomu vyžiada EAP-GTC, test bezpečne skončí s dôvodom
 `unexpected_otp_challenge`. Výsledok obsahuje iba bezpečný `reason_code` a
 fázu zlyhania; stdout, heslá, PSK ani OTP sa do API a logov neposielajú.
 
+Fortinet IPsec profil má navyše samostatný per-connection FCT payload. Operations
+UI ho prijíma ako nepriehľadný binárny vstup s limitom 64 KiB, uloží jeho presné
+base64 dáta a SHA-256 iba do rovnakého OpenBao leafu ako dané VPN spojenie a
+nevracia jeho obsah v pláne ani API odpovedi. Dry-run zobrazí veľkosť a
+SHA-256, aby ich operátor mohol porovnať so schváleným LAB artefaktom. Worker
+pred každým IKE pokusom overí
+base64, veľkosť a hash, vytvorí ho výhradne v privátnom pokusovom adresári s
+režimom `0600` a jeho konkrétnu cestu vloží do `fortigate_fct_file`. Chýbajúci
+payload skončí `fortinet_fct_payload_missing`; poškodený obsah alebo nezhodný
+hash skončí `fortinet_fct_payload_invalid`. Tichý fallback neexistuje.
+
+Referenčný LAB artefakt je
+`/home/dablkros/atlas-strongswan-test/runtime-network-id-11-mfa/etc/strongswan.d/fct_data.txt`
+na pôvodnej LAB VM. Táto cesta nie je runtime cestou Atlas workera. Presný obsah,
+veľkosť ani SHA-256 zatiaľ neboli nezávisle získané a schválené pre produkciu,
+preto ich dokumentácia ani zdrojový kód nenahrádzajú odvodenou hodnotou. Import
+bez FCT možno uložiť kvôli príprave generického konektora, ale jeho IPsec test
+bezpečne zlyhá ešte pred spustením IKE.
+
 `finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
 workerovom network namespace a odstráni profilový fragment. Globálny zámok
 odmietne druhý súbežný test. Backend nemá `NET_ADMIN`; worker má iba
@@ -65,6 +84,11 @@ pretože stale socket by mohol spôsobiť okamžité zlyhanie `--load-conns`.
 - Zdrojové patche pre strongSwan 6.1.0 sa aplikujú na presný kontrolovaný
   upstream archív. Ich kompiláciu v cieľovom image a reálne vyjednávanie s
   FortiGate treba ešte overiť na Ubuntu VM.
+- Presná postupnosť siedmich patchov, SHA-256 upstream archívu, SHA-256 patchov
+  a build argumenty sú uložené v
+  `deployment/vpn/strongswan-build-manifest.txt`. Patch sequence sa staticky
+  aplikuje na čistý strongSwan 6.1.0 zdroj; kompilácia a golden LAB handshake
+  zostávajú samostatné akceptačné kroky.
 - Trvalý `runtime_status` zostáva `not_deployed`: MFA test používa krátkodobú
   asynchrónnu operáciu, ale po každom výsledku sa odpojí. Stav `passed` sa
   neukladá ako aktívna VPN.
@@ -98,6 +122,8 @@ Dešifrovanie `Enc` a `EncX` robí kontrolu integrity a skončí chybou pred
 použitím pri nezhode. Exportné heslo sa odlišuje od používateľského VPN hesla.
 Zostavený swanctl, openfortivpn alebo OpenVPN config je citlivý a smie existovať iba v
 privátnom krátkodobom súborovom priestore workera s režimom `0600`.
+Rovnaké pravidlo platí pre FCT payload. Backend ho nesmie čítať zo secret store;
+read-only identita workera má prístup iba ku konkrétnemu connection leafu.
 
 Komunikačné rozhranie workeru musí byť explicitne typované, overovať klienta a
 nesmie poskytovať generické vykonávanie shell príkazov alebo Docker socket.
@@ -126,3 +152,10 @@ tohto prvého session kontraktu; connectivity test pre ne zostáva zachovaný.
 adresami, reconnect a rekey, DNS, zabránenie úniku prevádzky, cleanup, chyby
 OpenBao a nepovolený prístup. Dovtedy sa stav nesmie označiť za `connected`
 podľa samotného uloženia profilu.
+
+Pred finálnym Fortinet MFA integračným testom treba na pôvodnej LAB VM overiť
+referenčný artefakt bez vypísania jeho obsahu, napríklad jeho existenciu,
+veľkosť, vlastníka, oprávnenia a SHA-256. Až schválené presné bajty sa nahrajú
+cez import konkrétneho VPN spojenia. Tento chýbajúci artefakt neblokuje build
+generického konektora, blokuje však tvrdenie, že Atlas reprodukoval golden
+IKE_AUTH a CHILD SA.

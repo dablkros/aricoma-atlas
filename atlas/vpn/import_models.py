@@ -1,5 +1,8 @@
 """Request models for FortiClient onboarding; secrets must never be echoed."""
 
+import base64
+import binascii
+
 from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, SecretStr, field_validator
 
@@ -16,6 +19,7 @@ class ProfileImportRequest(ProfileInspectRequest):
     export_password: SecretStr | None = Field(default=None, repr=False)
     username: SecretStr = Field(repr=False)
     password: SecretStr = Field(repr=False)
+    fct_payload_base64: SecretStr | None = Field(default=None, repr=False)
     connection_id: str = Field(min_length=1, max_length=100, pattern=r'^[a-z0-9]+(?:-[a-z0-9]+)*$')
     name: str = Field(min_length=1, max_length=200)
     tenant_id: int = Field(gt=0)
@@ -32,4 +36,20 @@ class ProfileImportRequest(ProfileInspectRequest):
     def limit_secret_length(cls, value):
         if value is not None and not 1 <= len(value.get_secret_value()) <= 4096:
             raise ValueError('invalid secret length')
+        return value
+
+    @field_validator('fct_payload_base64')
+    @classmethod
+    def validate_fct_payload(cls, value):
+        if value is None:
+            return value
+        encoded = value.get_secret_value()
+        if not encoded or len(encoded) > 96 * 1024:
+            raise ValueError('invalid FCT payload size')
+        try:
+            payload = base64.b64decode(encoded, validate=True)
+        except (ValueError, binascii.Error):
+            raise ValueError('invalid FCT payload encoding') from None
+        if not payload or len(payload) > 64 * 1024:
+            raise ValueError('invalid FCT payload size')
         return value

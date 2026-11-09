@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import base64
+import binascii
 from dataclasses import dataclass
+import hashlib
 import logging
 import os
 from pathlib import Path
@@ -49,6 +51,14 @@ class WorkerError(Exception):
         self.status_code = status_code
         self.code = code
         self.message = message
+
+
+class FortinetFCTError(RuntimeError):
+    """Safe, non-secret diagnostic for a missing or invalid FCT artifact."""
+
+    def __init__(self, code: str) -> None:
+        super().__init__(code)
+        self.code = code
 
 
 class WorkerTestRequest(BaseModel):
@@ -335,6 +345,41 @@ def _profile(secret: dict, body: WorkerTestRequest) -> tuple[FortiClientProfile,
     if profile.gateway != body.gateway_host or profile.gateway_port != body.gateway_port:
         raise RuntimeError("profile_registry_mismatch")
     return profile, credentials
+
+
+def _fortinet_fct_payload(secret: dict) -> bytes:
+    encoded = secret.get("fct_payload_base64")
+    expected_hash = secret.get("fct_payload_sha256")
+    if not isinstance(encoded, str) or not encoded:
+        raise FortinetFCTError("fortinet_fct_payload_missing")
+    if (not isinstance(expected_hash, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", expected_hash)):
+        raise FortinetFCTError("fortinet_fct_payload_invalid")
+    try:
+        payload = base64.b64decode(encoded, validate=True)
+    except (ValueError, TypeError, binascii.Error):
+        raise FortinetFCTError("fortinet_fct_payload_invalid") from None
+    if (not payload or len(payload) > 64 * 1024
+            or hashlib.sha256(payload).hexdigest() != expected_hash):
+        raise FortinetFCTError("fortinet_fct_payload_invalid")
+    return payload
+
+
+def _write_private_bytes(path: Path, payload: bytes) -> None:
+    flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        descriptor = os.open(path, flags, 0o600)
+        try:
+            view = memoryview(payload)
+            while view:
+                written = os.write(descriptor, view)
+                if written <= 0:
+                    raise OSError("short write")
+                view = view[written:]
+        finally:
+            os.close(descriptor)
+    except OSError:
+        raise FortinetFCTError("fortinet_fct_runtime_failed") from None
 
 
 def _config_value(value, name: str, *, maximum: int = 512) -> str:
@@ -678,6 +723,8 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
         secret = openbao.read_secret(body.secret_ref)
         failure_step = "validate_profile"
         profile, credentials = _profile(secret, body)
+        failure_step = "validate_fct_payload"
+        fct_payload = _fortinet_fct_payload(secret)
         failure_step = "prepare_runtime"
         settings.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="mfa-", dir=settings.runtime) as directory:
@@ -685,7 +732,9 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
             config_path = directory_path / "swanctl.conf"
             otp_request = directory_path / "otp-requested"
             otp_response = directory_path / "otp-response"
+            fct_path = directory_path / "fct-data.bin"
             daemon_path = settings.runtime / "profile.conf"
+            _write_private_bytes(fct_path, fct_payload)
             operation.otp_response_file = otp_response
             config_path.write_text(
                 render_swanctl(profile, credentials, (f"{body.target_ip}/32",)),
@@ -694,6 +743,7 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
             daemon_path.write_text(
                 render_fortinet_daemon_fragment(
                     profile.network_id,
+                    fct_file=str(fct_path),
                     otp_request_file=str(otp_request),
                     otp_response_file=str(otp_response),
                     otp_timeout=settings.mfa_timeout,
@@ -811,6 +861,15 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
                         failure_stage="target", reason_code="target_unreachable",
                         message="The tunnel established, but the selected TCP target did not answer.",
                     )
+    except FortinetFCTError as exc:
+        result.update(
+            failure_stage="configuration", reason_code=exc.code,
+            message=(
+                "The approved FortiClient metadata payload is missing."
+                if exc.code == "fortinet_fct_payload_missing"
+                else "The FortiClient metadata payload is invalid or unavailable."
+            ),
+        )
     except (FortiClientProfileError, OpenVPNProfileError):
         result.update(
             failure_stage="validation", reason_code="profile_validation_failed",
@@ -820,6 +879,7 @@ def _run_mfa_operation(operation: WorkerMFAOperation) -> None:
         reason_code = {
             "read_secret": "vpn_secret_unavailable",
             "validate_profile": "profile_validation_failed",
+            "validate_fct_payload": "fortinet_fct_payload_invalid",
             "prepare_runtime": "worker_runtime_failed",
             "load_connection": "ike_configuration_load_failed",
             "load_credentials": "ike_credentials_load_failed",
@@ -1038,6 +1098,7 @@ def test_vpn(
             return result
 
         profile, credentials = _profile(secret, body)
+        fct_payload = _fortinet_fct_payload(secret)
         connection_timeout = (
             settings.mfa_timeout
             if body.effective_mfa_mode != "none"
@@ -1045,13 +1106,17 @@ def test_vpn(
         )
         # The requested proof target is the only customer prefix installed for this test.
         swanctl_config = render_swanctl(profile, credentials, (f"{body.target_ip}/32",))
-        daemon_config = render_fortinet_daemon_fragment(profile.network_id)
         settings.runtime.mkdir(mode=0o700, parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="test-", dir=settings.runtime) as directory:
             directory_path = Path(directory)
             config_path = directory_path / "swanctl.conf"
+            fct_path = directory_path / "fct-data.bin"
             daemon_path = settings.runtime / "profile.conf"
+            _write_private_bytes(fct_path, fct_payload)
             config_path.write_text(swanctl_config, encoding="utf-8")
+            daemon_config = render_fortinet_daemon_fragment(
+                profile.network_id, fct_file=str(fct_path),
+            )
             daemon_path.write_text(daemon_config, encoding="utf-8")
             os.chmod(config_path, 0o600)
             os.chmod(daemon_path, 0o600)
@@ -1099,6 +1164,24 @@ def test_vpn(
                         failure_stage="target",
                         message="The tunnel established, but the selected TCP target did not answer.",
                     )
+    except FortinetFCTError as exc:
+        logger.warning(
+            "vpn.worker_test_fct_failed",
+            extra={
+                "event": "vpn.worker_test_fct_failed",
+                "request_id": request_id,
+                "connection_id": body.connection_id,
+                "reason_code": exc.code,
+            },
+        )
+        result.update(
+            failure_stage="configuration", reason_code=exc.code,
+            message=(
+                "The approved FortiClient metadata payload is missing."
+                if exc.code == "fortinet_fct_payload_missing"
+                else "The FortiClient metadata payload is invalid or unavailable."
+            ),
+        )
     except (FortiClientProfileError, OpenVPNProfileError):
         logger.warning(
             "vpn.worker_test_validation_failed",

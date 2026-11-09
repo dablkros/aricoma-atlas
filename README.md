@@ -100,6 +100,12 @@ certifikátmi a kľúčom. Pri profylaxii Atlas zoskupí zariadenia podľa Site/
 VPN priradenia, otvorí jedno dočasné OpenVPN spojenie, spustí collectory cez
 neprivilegovaný runner v izolovanom network namespace a spojenie vždy ukončí.
 IPsec a openfortivpn zostávajú v tejto verzii iba v connectivity-test flowe.
+Fortinet IPsec test navyše vyžaduje schválený per-connection FCT payload. Ten
+sa importuje spolu so spojením, uloží iba do OpenBao a worker ho sprístupní
+patched strongSwan iba v krátkodobom súbore `0600`; chýbajúci alebo poškodený
+payload nemá fallback. Referenčný LAB artefakt zatiaľ nie je schválenou
+produkčnou konfiguráciou. Podrobnosti a integračné medzery sú v
+[návrhu izolovaného VPN workera](docs/forticlient-worker-design.md).
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
 chýbajúci validný Device Type YAML, pre typ bez predvolenej platformy vyberie

@@ -1,0 +1,120 @@
+--- a/src/libcharon/sa/ikev2/authenticators/eap_authenticator.c	2026-07-08 15:25:14.198542265 +0200
++++ b/src/libcharon/sa/ikev2/authenticators/eap_authenticator.c	2026-07-09 08:37:35.656754761 +0200
+@@ -531,11 +531,36 @@
+ 
+ 	other_id = this->ike_sa->get_other_id(this->ike_sa);
+ 	keymat = (keymat_v2_t*)this->ike_sa->get_keymat(this->ike_sa);
+-	if (!keymat->get_psk_sig(keymat, TRUE, init, nonce, this->int_auth,
+-							 this->msk, this->ppk, other_id, this->reserved,
+-							 &auth_data))
+ 	{
+-		return FALSE;
++		/* FortiGate: verify the gateway's AUTH with the same shared secret we
++		 * use to build ours (see build_auth). "skp" -> empty -> SK_pr. */
++		chunk_t vkey = this->msk;
++		char *mode = lib->settings->get_str(lib->settings,
++						"%s.fortigate_auth_key", NULL, lib->ns);
++		if (mode)
++		{
++			if (streq(mode, "psk"))
++			{
++				shared_key_t *vpsk = lib->credmgr->get_shared(lib->credmgr,
++										SHARED_IKE, this->ike_sa->get_my_id(
++										this->ike_sa), other_id);
++				if (vpsk)
++				{
++					vkey = chunk_clone(vpsk->get_key(vpsk));
++					vpsk->destroy(vpsk);
++				}
++			}
++			else if (!streq(mode, "msk"))
++			{	/* "skp": empty secret -> keymat uses SK_pr */
++				vkey = chunk_empty;
++			}
++		}
++		if (!keymat->get_psk_sig(keymat, TRUE, init, nonce, this->int_auth,
++								 vkey, this->ppk, other_id, this->reserved,
++								 &auth_data))
++		{
++			return FALSE;
++		}
+ 	}
+ 	if (!auth_data.len || !chunk_equals_const(auth_data, recv_auth_data))
+ 	{
+@@ -571,6 +596,8 @@
+ 	identification_t *my_id;
+ 	chunk_t auth_data;
+ 	keymat_v2_t *keymat;
++	shared_key_t *psk = NULL;
++	chunk_t sig_key;
+ 
+ 	my_id = this->ike_sa->get_my_id(this->ike_sa);
+ 	keymat = (keymat_v2_t*)this->ike_sa->get_keymat(this->ike_sa);
+@@ -578,10 +605,47 @@
+ 	DBG1(DBG_IKE, "authentication of '%Y' (myself) with %N",
+ 		 my_id, auth_class_names, AUTH_CLASS_EAP);
+ 
++	/* FortiGate: the gateway runs EAP for user authorisation / 2FA and then
++	 * expects the IKE SA AUTH keyed a specific way. charon.fortigate_auth_key
++	 * selects the shared secret for the post-EAP AUTH (method PSK):
++	 *   "skp" (default) -> pass empty secret so keymat_v2 uses SK_pi (the IKE
++	 *                      session key). This is what FortiClient does: its
++	 *                      AUTH is method 2 (shared key) keyed from neither the
++	 *                      user PSK nor the EAP MSK.
++	 *   "psk"           -> the configured IKE pre-shared key.
++	 *   "msk"           -> the stashed EAP (MSCHAPv2) MSK. */
++	{
++		char *mode = lib->settings->get_str(lib->settings,
++						"%s.fortigate_auth_key", NULL, lib->ns);
++		if (!mode)
++		{
++			sig_key = this->msk;   /* unchanged stock behaviour */
++		}
++		else if (streq(mode, "psk"))
++		{
++			identification_t *oid = this->ike_sa->get_other_id(this->ike_sa);
++			psk = lib->credmgr->get_shared(lib->credmgr, SHARED_IKE, my_id, oid);
++			sig_key = psk ? psk->get_key(psk) : this->msk;
++			DBG1(DBG_IKE, "FortiGate: AUTH keyed from %s",
++				 psk ? "pre-shared key" : "EAP MSK (no PSK)");
++		}
++		else if (streq(mode, "msk"))
++		{
++			sig_key = this->msk;
++			DBG1(DBG_IKE, "FortiGate: AUTH keyed from EAP MSK");
++		}
++		else /* "skp" */
++		{
++			sig_key = chunk_empty;   /* keymat_v2 falls back to SK_pi */
++			DBG1(DBG_IKE, "FortiGate: AUTH keyed from SK_pi (empty secret)");
++		}
++	}
++
+ 	if (!keymat->get_psk_sig(keymat, FALSE, init, nonce, this->int_auth,
+-							 this->msk, this->ppk, my_id, this->reserved,
++							 sig_key, this->ppk, my_id, this->reserved,
+ 							 &auth_data))
+ 	{
++		DESTROY_IF(psk);
+ 		return FALSE;
+ 	}
+ 	auth_payload = auth_payload_create();
+@@ -593,15 +657,17 @@
+ 	if (this->no_ppk_auth)
+ 	{
+ 		if (!keymat->get_psk_sig(keymat, FALSE, init, nonce, this->int_auth,
+-								 this->msk, chunk_empty, my_id, this->reserved,
++								 sig_key, chunk_empty, my_id, this->reserved,
+ 								 &auth_data))
+ 		{
+ 			DBG1(DBG_IKE, "failed adding NO_PPK_AUTH notify");
++			DESTROY_IF(psk);
+ 			return FALSE;
+ 		}
+ 		message->add_notify(message, FALSE, NO_PPK_AUTH, auth_data);
+ 		chunk_free(&auth_data);
+ 	}
++	DESTROY_IF(psk);
+ 	return TRUE;
+ }
+ 

@@ -1,0 +1,20 @@
+--- a/src/libcharon/encoding/payloads/eap_payload.c	2026-06-18 08:48:30.897894369 +0000
++++ b/src/libcharon/encoding/payloads/eap_payload.c	2026-06-18 08:48:37.786808688 +0000
+@@ -134,9 +134,15 @@
+ 		case EAP_SUCCESS:
+ 		case EAP_FAILURE:
+ 		{
+-			if (this->data.len != 4)
++			/* RFC 3748 mandates a length of exactly 4 here. FortiGate's
++			 * proprietary multi-factor extension appends a trailing EAP-type
++			 * byte to an EAP-Success to chain a second factor (e.g. token via
++			 * EAP-GTC after the password via EAP-MSCHAPv2). Tolerate the extra
++			 * data instead of rejecting the whole IKE message; the trailing
++			 * byte is interpreted by the EAP authenticator. */
++			if (this->data.len < 4)
+ 			{
+-				DBG1(DBG_ENC, "EAP Success/Failure has data");
++				DBG1(DBG_ENC, "EAP Success/Failure too short");
+ 				return FAILED;
+ 			}
+ 			break;

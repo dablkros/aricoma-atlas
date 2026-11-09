@@ -2643,6 +2643,8 @@ const vpnImport = {
   profile: document.querySelector('#vpn-import-profile'),
   exportPassword: document.querySelector('#vpn-import-export-password'),
   exportPasswordGroup: document.querySelector('#vpn-import-export-password-group'),
+  fctFile: document.querySelector('#vpn-import-fct-file'),
+  fctGroup: document.querySelector('#vpn-import-fct-group'),
   tenant: document.querySelector('#vpn-import-tenant'),
   vrf: document.querySelector('#vpn-import-vrf'),
   id: document.querySelector('#vpn-import-id'),
@@ -2655,7 +2657,7 @@ const vpnImport = {
   planButton: document.querySelector('#vpn-import-plan'),
   apply: document.querySelector('#vpn-import-apply'),
   review: document.querySelector('#vpn-import-review'),
-  data: null, options: null, plan: null, busy: false, revision: 0, lastSaved: null,
+  data: null, fctData: null, options: null, plan: null, busy: false, revision: 0, lastSaved: null,
 };
 
 function resetVPNImportPlan() {
@@ -2726,7 +2728,8 @@ function vpnImportServerError(error) {
     name: [vpnImport.name, 'Enter a connection name.'],
     tenant_id: [vpnImport.tenant, 'Select a customer.'], management_vrf_id: [vpnImport.vrf, 'Select a management VRF.'],
     profile_name: [vpnImport.profile, 'Select a VPN profile.'], username: [vpnImport.username, 'Check the VPN username.'],
-    password: [vpnImport.password, 'Check the VPN password.'], export_password: [vpnImport.exportPassword, 'Check the export password.']};
+    password: [vpnImport.password, 'Check the VPN password.'], export_password: [vpnImport.exportPassword, 'Check the export password.'],
+    fct_payload_base64: [vpnImport.fctFile, 'Choose a valid FCT payload of up to 64 KiB.']};
   for (const detail of error.data?.error?.details || []) {
     const key = detail.location?.find((part) => Object.hasOwn(fields, part));
     if (key) return vpnImportFieldError(...fields[key]);
@@ -2801,6 +2804,7 @@ function vpnImportPayload() {
     source_name: vpnImport.file.files?.[0]?.name || null,
     profile_name: vpnImport.profile.value,
     export_password: vpnImport.exportPassword.value || null,
+    fct_payload_base64: vpnImport.fctData || null,
     username: vpnImport.username.value, password: vpnImport.password.value,
     connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
     tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
@@ -2842,6 +2846,7 @@ function vpnImportErrorMessage(error) {
     vpn_profile_unsupported_protocol: 'This OpenVPN transport is not supported by the Atlas worker.',
     invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
     invalid_decrypted_secret: 'The decrypted PSK is invalid.',
+    fct_payload_not_applicable: 'FortiClient metadata applies only to Fortinet IPsec profiles.',
   };
   const message = messages[error.code] || error.safeMessage || 'VPN profile import failed.';
   return error.requestId ? `${message} Request ID: ${error.requestId}.` : message;
@@ -2862,7 +2867,11 @@ async function planVPNImport() {
     const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
     const mfa = result.mfa_mode && result.mfa_mode !== 'none'
       ? `; MFA: ${result.mfa_mode}` : '';
-    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    const fct = result.profile_type !== 'ipsec-ikev2' ? ''
+      : result.fct_payload_status === 'supplied'
+        ? `; FCT payload: ${result.fct_payload_size} bytes; SHA-256 ${result.fct_payload_sha256}`
+        : '; FCT payload: missing (connection will fail closed)';
+    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}${fct}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;
     vpnImportMessage('Review the settings, then save the profile.');
@@ -2893,6 +2902,8 @@ async function applyVPNImport() {
     vpnImport.exportPassword.value = '';
     vpnImport.username.value = '';
     vpnImport.password.value = '';
+    vpnImport.fctFile.value = '';
+    vpnImport.fctData = null;
     vpnImport.mfa.value = 'none';
     vpnImport.replace.checked = false;
     vpnImport.data = null;
@@ -2915,16 +2926,44 @@ vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport
 vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
 vpnImport.dialog.addEventListener('close', () => {
   vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
+  vpnImport.fctFile.value = ''; vpnImport.fctData = null;
   vpnImport.mfa.value = 'none';
   vpnImport.replace.checked = false;
   vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
 });
 vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
+vpnImport.fctFile.addEventListener('change', async () => {
+  resetVPNImportPlan();
+  vpnImport.fctData = null;
+  vpnImport.fctFile.removeAttribute('aria-invalid');
+  const file = vpnImport.fctFile.files?.[0];
+  if (!file) return;
+  if (file.size === 0 || file.size > 64 * 1024) {
+    vpnImportFieldError(vpnImport.fctFile, 'The FCT payload must be between 1 byte and 64 KiB.');
+    return;
+  }
+  try {
+    vpnImport.fctData = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    vpnImportMessage('FCT payload loaded for secure storage with this connection.');
+  } catch (_error) {
+    vpnImportFieldError(vpnImport.fctFile, 'Could not read the FCT payload.');
+  }
+});
 function vpnImportFormatChanged() {
   const openvpn = vpnImport.format.value === 'openvpn-config';
   vpnImport.file.accept = openvpn ? '.ovpn' : '.conf,.xml,.plist';
   vpnImport.exportPasswordGroup.hidden = openvpn;
-  if (openvpn) vpnImport.exportPassword.value = '';
+  vpnImport.fctGroup.hidden = openvpn;
+  if (openvpn) {
+    vpnImport.exportPassword.value = '';
+    vpnImport.fctFile.value = '';
+    vpnImport.fctData = null;
+  }
   inspectVPNImportFile();
 }
 vpnImport.format.addEventListener('change', vpnImportFormatChanged);
@@ -2932,7 +2971,7 @@ vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
 vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
 for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
                      vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password,
-                     vpnImport.mfa, vpnImport.replace]) {
+                     vpnImport.mfa, vpnImport.replace, vpnImport.fctFile]) {
   const changed = () => { field.removeAttribute('aria-invalid'); resetVPNImportPlan(); };
   field.addEventListener('input', changed);
   field.addEventListener('change', changed);
