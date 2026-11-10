@@ -10,6 +10,8 @@ backend:
   ssh_strict_host_keys: false
   prophylaxis_result_retention: 10000
   prophylaxis_concurrency: 4
+  prophylaxis_raw_command_max_bytes: 1048576
+  prophylaxis_run_retention: 100
 
 vpn_worker:
   docker_image: "aricoma-atlas-vpn-worker:0.5.0-beta"

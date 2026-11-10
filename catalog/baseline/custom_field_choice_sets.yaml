@@ -4,6 +4,7 @@ choice_sets:
     base_choices: null
     extra_choices:
       - ["identity", "Identity & inventory"]
+      - ["full_collection", "Full collection"]
       - ["resources", "Resources & environment"]
       - ["interfaces", "Interfaces"]
       - ["compliance", "Compliance"]

@@ -1,0 +1,32 @@
+---
+- name: "Mark Cisco raw command start: {{ atlas_raw_command }}"
+  ansible.builtin.set_fact:
+    atlas_raw_command_started_at: "{{ now(utc=true, fmt='%Y-%m-%dT%H:%M:%S.%fZ') }}"
+
+- name: "Collect Cisco raw command: {{ atlas_raw_command }}"
+  ansible.netcommon.cli_command:
+    command: "{{ atlas_raw_command }}"
+  register: atlas_raw_command_result
+  changed_when: false
+  failed_when: false
+  ignore_unreachable: true
+
+- name: "Buffer Cisco raw command: {{ atlas_raw_command }}"
+  ansible.builtin.set_fact:
+    atlas_raw_command_results: >-
+      {{ atlas_raw_command_results + [{
+        'command': atlas_raw_command,
+        'started_at': atlas_raw_command_started_at,
+        'finished_at': now(utc=true, fmt='%Y-%m-%dT%H:%M:%S.%fZ'),
+        'stdout': atlas_raw_command_result.stdout | default('', true),
+        'message': atlas_raw_command_result.msg | default('', true),
+        'failed': atlas_raw_command_result.failed | default(false)
+      }] }}
+
+- name: Reset a lost Cisco CLI session before the next command
+  ansible.builtin.meta: reset_connection
+  when: >-
+    atlas_raw_command_result.unreachable | default(false) or
+    'timed out' in (atlas_raw_command_result.msg | default('') | lower) or
+    'timeout' in (atlas_raw_command_result.msg | default('') | lower) or
+    'connection reset' in (atlas_raw_command_result.msg | default('') | lower)

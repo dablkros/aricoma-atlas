@@ -36,6 +36,16 @@ from atlas.prophylaxis.models import (
     expand_check_selection,
 )
 from atlas.prophylaxis.charts import render_metric_svg
+from atlas.prophylaxis.cisco_raw import (
+    CISCO_FULL_COMMANDS,
+    CISCO_IDENTITY_COMMANDS,
+    CISCO_RAW_PLATFORMS,
+    CISCO_RAW_SCHEMA_VERSION,
+    CiscoRawDeviceReport,
+    classify_command_record,
+    parse_command_output,
+    site_artifact_name,
+)
 from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
 from atlas.prophylaxis.run_models import (
     ModelInventoryValues,
@@ -106,6 +116,7 @@ class DeviceFactsRunService:
         vpn_registry=None,
         vpn_session=None,
         vpn_backend=None,
+        raw_command_max_bytes: int = 1_048_576,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -122,10 +133,15 @@ class DeviceFactsRunService:
         self.vpn_registry = vpn_registry
         self.vpn_session = vpn_session
         self.vpn_backend = vpn_backend
+        self.raw_command_max_bytes = raw_command_max_bytes
         self._slots = threading.BoundedSemaphore(concurrency)
         self._run_lock = threading.Lock()
         self._oxidized_nodes: dict[str, tuple[dict, ...]] = {}
         self._oxidized_error: str | None = None
+        self._raw_report_lock = threading.Lock()
+        self._raw_device_reports: list[dict] = []
+        self._active_run_id = None
+        self._active_run_started_at: datetime | None = None
 
     def submit(self) -> ProphylaxisRun:
         return self.store.create()
@@ -146,6 +162,10 @@ class DeviceFactsRunService:
             update={"status": "RUNNING", "started_at": utc_now()}
         )
         self.store.save(running)
+        with self._raw_report_lock:
+            self._raw_device_reports = []
+            self._active_run_id = run_id
+            self._active_run_started_at = running.started_at
         try:
             devices = self.netbox.get_prophylaxis_devices()
             self._prepare_oxidized_backup_state(devices)
@@ -154,6 +174,13 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
+            with self._raw_report_lock:
+                raw_device_reports = tuple(self._raw_device_reports)
+            raw_reports = self.store.write_site_reports(
+                run_id,
+                raw_device_reports,
+                started_at=running.started_at,
+            ) if raw_device_reports else ()
             if (
                 summary.failure
                 and not summary.success
@@ -177,6 +204,7 @@ class DeviceFactsRunService:
                     "summary": summary,
                     "results": results,
                     "charts": self._generate_charts_guarded(run_id, results),
+                    "raw_reports": raw_reports,
                 }
             )
             self.store.save(completed)
@@ -203,13 +231,22 @@ class DeviceFactsRunService:
                 },
             )
             self._fail_run(running, "execution_failed")
+        finally:
+            with self._raw_report_lock:
+                self._active_run_id = None
+                self._active_run_started_at = None
+                self._raw_device_reports = []
 
     def _device_failure_results(
         self, device: dict, code: str,
     ) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
-        known, unknown = self._selected_checks(device)
-        checks = tuple(check.value for check in known) + unknown
+        raw_mode = self._selected_raw_mode(device)
+        if raw_mode is not None:
+            checks = (raw_mode,)
+        else:
+            known, unknown = self._selected_checks(device)
+            checks = tuple(check.value for check in known) + unknown
         return tuple(
             self._check_error(
                 device_id, name, management_ip, platform, check,
@@ -452,6 +489,275 @@ class DeviceFactsRunService:
         platform = platform_value if isinstance(platform_value, str) else None
         return expand_check_selection(raw_values, platform=platform)
 
+    @staticmethod
+    def _selected_raw_mode(device: dict) -> str | None:
+        fields = device.get("custom_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        selected = selected_check_values(fields.get("profylaxia_checks"))
+        platform_data = device.get("platform")
+        platform = platform_data.get("slug") if isinstance(platform_data, dict) else None
+        if platform not in CISCO_RAW_PLATFORMS:
+            return None
+        if CheckId.FULL_COLLECTION.value in selected:
+            return CheckId.FULL_COLLECTION.value
+        if "identity" in selected:
+            return "identity"
+        return None
+
+    @staticmethod
+    def _raw_identity(device: dict, target=None) -> dict:
+        device_type = device.get("device_type")
+        device_type = device_type if isinstance(device_type, dict) else {}
+        manufacturer = device_type.get("manufacturer")
+        manufacturer = manufacturer if isinstance(manufacturer, dict) else {}
+        tenant = device.get("tenant")
+        tenant = tenant if isinstance(tenant, dict) else {}
+        site = device.get("site")
+        site = site if isinstance(site, dict) else {}
+        fields = device.get("custom_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        device_id, name, management_ip, platform = DeviceFactsRunService._identity(device)
+        return {
+            "netbox_id": target.id if target is not None else device_id,
+            "hostname": target.name if target is not None else name,
+            "platform": target.platform if target is not None else platform,
+            "manufacturer": manufacturer.get("name") or manufacturer.get("slug"),
+            "device_type": device_type.get("model"),
+            "management_ip": target.host if target is not None else management_ip,
+            "tenant": {
+                "id": tenant.get("id"),
+                "name": tenant.get("name") or "No tenant",
+                "slug": tenant.get("slug") or "no-tenant",
+            },
+            "site": {
+                "id": site.get("id"),
+                "name": site.get("name") or "No site",
+                "slug": site.get("slug") or "no-site",
+            },
+            "credential_profile": (
+                target.credential_profile if target is not None
+                else fields.get("credential_profile")
+            ),
+        }
+
+    def _append_raw_device_report(self, report: dict) -> None:
+        validated = CiscoRawDeviceReport.model_validate(report).model_dump(
+            mode="json", exclude_none=True,
+        )
+        with self._raw_report_lock:
+            self._raw_device_reports.append(validated)
+
+    def _collect_cisco_raw(
+        self,
+        device: dict,
+        mode: str,
+        *,
+        backend=None,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        started_at = utc_now()
+        commands = (
+            CISCO_FULL_COMMANDS if mode == CheckId.FULL_COLLECTION.value
+            else CISCO_IDENTITY_COMMANDS
+        )
+        device_id, name, management_ip, platform = self._identity(device)
+        identity = self._raw_identity(device)
+        report = {
+            "schema_version": CISCO_RAW_SCHEMA_VERSION,
+            "run_id": str(self._active_run_id),
+            "mode": mode,
+            "device": identity,
+            "connection": {"transport": "ssh", "status": "failed"},
+            "collection": {
+                "status": "failed",
+                "total_commands": len(commands),
+                "attempted": 0,
+                "successful": 0,
+                "unsupported": 0,
+                "empty": 0,
+                "permission_denied": 0,
+                "timeout": 0,
+                "error": 0,
+                "truncated": 0,
+            },
+            "outputs": {},
+            "ignored_commands": [],
+            "started_at": started_at.isoformat(),
+        }
+        try:
+            target = device_target(device)
+            identity = self._raw_identity(device, target)
+            report["device"] = identity
+            device_id, name, management_ip, platform = (
+                target.id, target.name, target.host, target.platform,
+            )
+            base_profile = self.registry.resolve(target.platform)
+            profile, resolved_port = resolve_execution_profile(
+                self.netbox, target, base_profile,
+            )
+            if not profile.supports_collector(CollectorId.CISCO_RAW):
+                raise UnsupportedPlatformError()
+            telnet_services = (
+                self.netbox.get_device_services(
+                    target.id, profile.telnet_fallback_service_name,
+                )
+                if profile.telnet_fallback_service_name else []
+            )
+            telnet_fallback_port = (
+                resolve_service_port(
+                    telnet_services, profile.telnet_fallback_default_port,
+                ) if telnet_services else None
+            )
+            credentials = self.openbao.get_device_credentials(
+                target.vendor,
+                target.credential_profile,
+                authentication=profile.authentication,
+                purpose="prophylaxis",
+            )
+            raw = (backend or self.backend).execute(
+                host=target.host,
+                port=resolved_port,
+                profile=profile,
+                collector_id=CollectorId.CISCO_RAW,
+                check_id=(
+                    CheckId.FULL_COLLECTION
+                    if mode == CheckId.FULL_COLLECTION.value
+                    else CheckId.DEVICE_FACTS
+                ),
+                credentials=credentials,
+                telnet_fallback_port=telnet_fallback_port,
+                device_model=target.model,
+                raw_mode=mode,
+            )
+            if raw.status != "ok" or not isinstance(raw.data, dict):
+                raise ProphylaxisExecutionError()
+            raw_commands = raw.data.get("commands")
+            if not isinstance(raw_commands, list):
+                raise ProphylaxisExecutionError()
+
+            command_results = []
+            for index, command in enumerate(commands):
+                candidate = raw_commands[index] if index < len(raw_commands) else {}
+                if not isinstance(candidate, dict) or candidate.get("command") != command:
+                    candidate = {
+                        "command": command,
+                        "started_at": utc_now().isoformat(),
+                        "finished_at": utc_now().isoformat(),
+                        "message": "collector did not return a command result",
+                        "failed": True,
+                    }
+                classified = classify_command_record(
+                    candidate,
+                    max_output_bytes=self.raw_command_max_bytes,
+                )
+                command_results.append(parse_command_output(
+                    classified, platform=target.platform,
+                ))
+
+            counts = {
+                status: sum(result.status == status for result in command_results)
+                for status in (
+                    "success", "unsupported", "empty", "permission_denied",
+                    "timeout", "error", "truncated",
+                )
+            }
+            outputs = {
+                result.command: result.model_dump(
+                    mode="json", exclude_none=True,
+                )
+                for result in command_results
+                if result.status in {"success", "truncated"}
+            }
+            ignored = [
+                {
+                    "command": result.command,
+                    "status": result.status,
+                    "reason_code": result.reason_code,
+                    "duration_ms": result.duration_ms,
+                    "started_at": result.started_at.isoformat(),
+                    "finished_at": result.finished_at.isoformat(),
+                }
+                for result in command_results
+                if result.status not in {"success", "truncated"}
+            ]
+            real_failures = counts["permission_denied"] + counts["timeout"] + counts["error"]
+            finished_at = utc_now()
+            report.update({
+                "connection": {
+                    "transport": raw.context.get("transport", profile.transport),
+                    "port": raw.context.get("port", resolved_port),
+                    "status": "connected",
+                },
+                "collection": {
+                    "status": "completed_with_errors" if real_failures else "completed",
+                    "total_commands": len(commands),
+                    "attempted": len(command_results),
+                    "successful": counts["success"] + counts["truncated"],
+                    "unsupported": counts["unsupported"],
+                    "empty": counts["empty"],
+                    "permission_denied": counts["permission_denied"],
+                    "timeout": counts["timeout"],
+                    "error": counts["error"],
+                    "truncated": counts["truncated"],
+                },
+                "outputs": outputs,
+                "ignored_commands": ignored,
+                "finished_at": finished_at.isoformat(),
+            })
+            self._append_raw_device_report(report)
+            started = self._active_run_started_at or started_at
+            artifact = site_artifact_name(
+                identity["tenant"]["slug"], identity["site"]["slug"], started,
+            )
+            outcome = EvaluationOutcome.WARNING if real_failures else EvaluationOutcome.PASS
+            values = DiagnosticValues(
+                outcome=outcome,
+                reason_code=("command_errors_present" if real_failures else None),
+                summary=(
+                    "Cisco raw collection completed with command-level errors"
+                    if real_failures else "Cisco raw collection completed"
+                ),
+                metrics={
+                    "mode": mode,
+                    "connection_status": "connected",
+                    "total_commands": len(commands),
+                    "successful": counts["success"] + counts["truncated"],
+                    "unsupported": counts["unsupported"],
+                    "failed": real_failures,
+                    "report_artifact": artifact,
+                },
+            )
+            result = ProphylaxisCheckResult(
+                check=mode,
+                device_id=device_id,
+                device_name=name,
+                management_ip=management_ip,
+                platform=platform,
+                status="success",
+                collection_status=CollectionStatus.COLLECTED,
+                evaluation=outcome,
+                values=values,
+            )
+            return (result,)
+        except Exception as exc:
+            finished_at = utc_now()
+            candidate_code = getattr(exc, "code", None)
+            reason_code = (
+                candidate_code
+                if isinstance(candidate_code, str)
+                and re.fullmatch(r"[a-z0-9_]{1,100}", candidate_code)
+                else "raw_collection_failed"
+            )
+            report["connection"]["reason_code"] = reason_code
+            report["collection"]["reason_code"] = reason_code
+            report["finished_at"] = finished_at.isoformat()
+            self._append_raw_device_report(report)
+            return (
+                self._check_error(
+                    device_id, name, management_ip, platform, mode,
+                    "failed", reason_code,
+                ),
+            )
+
     def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
         self._oxidized_nodes = {}
         self._oxidized_error = None
@@ -629,6 +935,9 @@ class DeviceFactsRunService:
     def _collect(
         self, device: dict, *, backend=None,
     ) -> tuple[ProphylaxisCheckResult, ...]:
+        raw_mode = self._selected_raw_mode(device)
+        if raw_mode is not None:
+            return self._collect_cisco_raw(device, raw_mode, backend=backend)
         device_id, name, management_ip, platform = self._identity(device)
         selected_checks, unknown_checks = self._selected_checks(device)
         backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks

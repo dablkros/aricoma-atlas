@@ -190,6 +190,17 @@ class ProphylaxisChart(BaseModel):
         return self
 
 
+class ProphylaxisRawReport(BaseModel):
+    """Secret-free reference to one protected tenant/site raw report."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    tenant: str = Field(min_length=1, max_length=100)
+    site: str = Field(min_length=1, max_length=100)
+    artifact: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{0,240}\.json$")
+    device_count: int = Field(ge=1)
+
+
 class ProphylaxisDeviceCheck(BaseModel):
     """One check nested under its device in the grouped run representation."""
 
@@ -231,6 +242,7 @@ class ProphylaxisRun(BaseModel):
     summary: RunSummary = Field(default_factory=RunSummary)
     results: tuple[ProphylaxisCheckResult, ...] = ()
     charts: tuple[ProphylaxisChart, ...] = ()
+    raw_reports: tuple[ProphylaxisRawReport, ...] = ()
     report_path: str
     error: str | None = Field(default=None, max_length=128)
 
@@ -324,6 +336,7 @@ __all__ = [
     "ProphylaxisDeviceCheck",
     "ProphylaxisDeviceResult",
     "ProphylaxisRun",
+    "ProphylaxisRawReport",
     "RunSummary",
     "SerialInventoryValues",
     "utc_now",

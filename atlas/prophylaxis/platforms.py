@@ -87,6 +87,7 @@ FORTIOS_SSH_PROFILE = AnsiblePlatformProfile(
     preferred_collectors=FORTIOS_COLLECTOR_PREFERENCES,
 )
 IOS_IMPLEMENTED_COLLECTORS = frozenset({
+    CollectorId.CISCO_RAW,
     CollectorId.IOS_IDENTITY,
     CollectorId.IOS_RESOURCES,
     CollectorId.IOS_INTERFACES,
@@ -117,8 +118,9 @@ IOS_COLLECTOR_PREFERENCES = (
     (CheckId.ROUTING_PROTOCOL_NEIGHBORS, CollectorId.IOS_OPERATIONS),
     (CheckId.HA_STATUS, CollectorId.IOS_OPERATIONS),
 )
-FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS})
+FACTS_ONLY = frozenset({CollectorId.DEVICE_FACTS, CollectorId.CISCO_RAW})
 CBS_COLLECTORS = frozenset({
+    CollectorId.CISCO_RAW,
     CollectorId.CPU_USAGE,
     CollectorId.DEVICE_FACTS,
     CollectorId.SNMP_SYSTEM,

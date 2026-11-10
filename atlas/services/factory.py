@@ -188,8 +188,12 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             netbox,
             openbao,
             backend=ansible_backend,
-            store=FileRunStore(settings.prophylaxis_runs_directory),
+            store=FileRunStore(
+                settings.prophylaxis_runs_directory,
+                max_runs=settings.prophylaxis_run_retention,
+            ),
             concurrency=settings.prophylaxis_concurrency,
+            raw_command_max_bytes=settings.prophylaxis_raw_command_max_bytes,
             inventory_reconciliation_enabled=True,
             zabbix_monitoring=(zabbix_monitoring if settings.zabbix_enabled else None),
             oxidized=(oxidized if settings.oxidized_enabled else None),

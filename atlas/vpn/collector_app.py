@@ -33,6 +33,7 @@ class CollectorRequest(BaseModel):
     credentials: dict
     telnet_fallback_port: int | None = Field(default=None, ge=1, le=65535)
     device_model: str | None = Field(default=None, max_length=255)
+    raw_mode: str | None = Field(default=None, pattern="^(identity|full_collection)$")
 
 
 def _token() -> str:
@@ -111,6 +112,7 @@ def execute(body: CollectorRequest, authorization: str | None = Header(default=N
         credentials=body.credentials,
         telnet_fallback_port=body.telnet_fallback_port,
         device_model=body.device_model,
+        raw_mode=body.raw_mode,
     )
     return result.model_dump(mode="json")
 

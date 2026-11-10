@@ -20,6 +20,7 @@ from atlas.prophylaxis.errors import (
 )
 from atlas.prophylaxis.models import CheckId, CollectorId, RawCollectorResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
+from atlas.prophylaxis.cisco_raw import CISCO_FULL_COMMANDS, CISCO_IDENTITY_COMMANDS
 
 
 RESULT_TASK_SUFFIX = "ATLAS_RESULT"
@@ -320,6 +321,7 @@ class AnsibleBackend:
         credentials: dict,
         telnet_fallback_port: int | None = None,
         device_model: str | None = None,
+        raw_mode: str | None = None,
     ) -> RawCollectorResult:
         if collector_id is None:
             collector_id = (
@@ -327,6 +329,11 @@ class AnsibleBackend:
                 if check_id == CheckId.DEVICE_FACTS
                 else CollectorId.CPU_USAGE
             )
+        if (
+            collector_id == CollectorId.CISCO_RAW
+            and raw_mode not in {"identity", "full_collection"}
+        ):
+            raise AnsibleExecutionError()
         if not profile.supports_collector(collector_id):
             return RawCollectorResult(
                 collector=collector_id,
@@ -430,13 +437,22 @@ class AnsibleBackend:
                             "atlas_schema_version": 1,
                             "atlas_transport": transport,
                             "atlas_device_model": device_model or "",
+                            "atlas_cisco_raw_commands": list(
+                                CISCO_FULL_COMMANDS
+                                if raw_mode == "full_collection"
+                                else CISCO_IDENTITY_COMMANDS
+                            ) if collector_id == CollectorId.CISCO_RAW else [],
                         },
                         envvars=environment,
                         suppress_env_files=True,
                         event_handler=event_handler,
                         quiet=True,
                         rotate_artifacts=0,
-                        timeout=self.job_timeout,
+                        timeout=(
+                            max(self.job_timeout, 900)
+                            if collector_id == CollectorId.CISCO_RAW
+                            else self.job_timeout
+                        ),
                     )
                 except Exception as exc:
                     logger.warning(

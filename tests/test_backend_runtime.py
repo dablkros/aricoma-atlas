@@ -30,6 +30,8 @@ def backend_config(**overrides):
             "ssh_strict_host_keys": True,
             "prophylaxis_result_retention": 10000,
             "prophylaxis_concurrency": 4,
+            "prophylaxis_raw_command_max_bytes": 1048576,
+            "prophylaxis_run_retention": 100,
         },
         "vpn_worker": {
             "docker_image": f"aricoma-atlas-vpn-worker:{__version__}",
@@ -96,6 +98,17 @@ class BackendConfigurationTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ValueError, "result_retention"):
             deploy_backend.validate_config(config)
+
+    def test_invalid_raw_collection_limits_are_rejected(self):
+        cases = (
+            ({"prophylaxis_raw_command_max_bytes": 4095}, "raw_command_max_bytes"),
+            ({"prophylaxis_run_retention": 0}, "run_retention"),
+        )
+        for values, message in cases:
+            with self.subTest(values=values), self.assertRaisesRegex(
+                ValueError, message
+            ):
+                deploy_backend.validate_config(backend_config(backend=values))
 
     def test_invalid_ansible_and_fortios_settings_are_rejected(self):
         cases = (
@@ -558,6 +571,14 @@ class BackendRuntimeTests(unittest.TestCase):
         self.assertEqual(
             service["environment"]["ATLAS_PROPHYLAXIS_RESULT_RETENTION"],
             "10000",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_PROPHYLAXIS_RAW_COMMAND_MAX_BYTES"],
+            "1048576",
+        )
+        self.assertEqual(
+            service["environment"]["ATLAS_PROPHYLAXIS_RUN_RETENTION"],
+            "100",
         )
         self.assertEqual(
             service["environment"]["ATLAS_ANSIBLE_PROJECT_DIR"],

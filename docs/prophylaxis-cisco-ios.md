@@ -1,8 +1,27 @@
-# Cisco IOS/IOS-XE tematické collectory profylaxie
+# Cisco CLI profylaxia: tematické collectory a raw collection
 
-Stav implementácie: 2026-10-23. Rozsah: NetBox platformy `cisco-ios` a
-`cisco-ios-xe`; CLI normalizátory sú zámerne predbežné do overenia na reálnych
-anonymizovaných výstupoch.
+Stav implementácie: 2026-11-10. Raw režimy podporujú presné platformové slugs
+`cisco-ios`, `cisco-ios-xe`, `cisco-nxos`, `cisco-asa`, `cisco-cbs`,
+`cisco-cbs250-350`, `cisco-catalyst-1200` a `cisco-catalyst-1300`.
+Tematické collectory zostávajú kompatibilné s existujúcimi nastaveniami.
+
+## Raw režimy
+
+`identity` je ľahký connection/authentication/privileged CLI test s tromi
+samostatnými príkazmi. `full_collection` sekvenčne vykoná fixný katalóg 49
+príkazov v jednej Ansible `network_cli` session. Každý príkaz má stav
+`success`, `unsupported`, `empty`, `permission_denied`, `timeout`, `error`
+alebo `truncated`; nepodporovaný príkaz nezlyhá celé zariadenie.
+
+Atlas uchová raw stdout po line-based redakcii známych secret tvarov a
+best-effort TextFSM reprezentáciu. TextFSM nie je hodnotiaca autorita:
+`template_missing` a `failed` sú parser metadáta, nie chyby transportu. Limity
+výstupu riadi `backend.prophylaxis_raw_command_max_bytes`, predvolene 1 MiB na
+príkaz.
+
+Výsledné chránené JSON artefakty sú zoskupené po Tenant/Site, pričom každý
+záznam zariadenia nesie NetBox Device ID, platformu, Device Type, management
+IP, credential profile, connection status, počty a jednotlivé výstupy.
 
 ## Skupiny, výsledky a capability register
 
@@ -127,12 +146,11 @@ Výstupy nesmú obsahovať heslá, tokeny ani `show running-config`.
 
 ## Zámerne nezaradené príkazy
 
-**Fakt:** `show running-config` sa v profylaxii nevykonáva; konfiguráciu a jej
-históriu vlastní Oxidized. `show arp`, `show mac address-table`, `show vlan`,
-CDP a LLDP sú topologické/inventárne dáta, nie samostatný zdravotný výsledok v
-aktuálnom modeli. Nexus `show vpc` a ASA `show asp drop`/`show failover` sa
-neposielajú na všeobecný IOS alebo CBS profil. Duplicitné varianty `show int`
-a `show interface` sú zredukované na jednu platformovú sadu.
+**Fakt:** Tematické collectory naďalej nepoužívajú `show running-config`.
+Explicitný režim `full_collection` ho však obsahuje ako citlivý diagnostický
+snapshot spolu s ARP/MAC/VLAN/CDP/LLDP, Nexus a ASA príkazmi. Tento snapshot
+nenahrádza Oxidized backup ani jeho Git históriu a nepodporované príkazy sa
+nefiltrujú vopred.
 
 **Inference:** Ak budú topológia, AAA/RADIUS alebo platformovo špecifické HA
 kontroly požadované ako samostatné výsledky, majú dostať vlastný `CheckId`,

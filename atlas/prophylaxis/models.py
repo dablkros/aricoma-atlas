@@ -22,6 +22,7 @@ CHECK_VALUE_ALIASES = {
 
 
 class CheckId(StrEnum):
+    FULL_COLLECTION = "full_collection"
     DEVICE_FACTS = "device_facts"
     CPU_UTILIZATION = "cpu_utilization"
     OS_VERSION = "os_version"
@@ -61,9 +62,11 @@ class CheckGroupId(StrEnum):
     INTERFACES = "interfaces"
     COMPLIANCE = "compliance"
     OPERATIONS = "operations"
+    FULL_COLLECTION = "full_collection"
 
 
 CHECK_GROUP_CHECKS = {
+    CheckGroupId.FULL_COLLECTION: (CheckId.FULL_COLLECTION,),
     CheckGroupId.IDENTITY: (
         CheckId.DEVICE_FACTS,
         CheckId.OS_VERSION,
@@ -154,6 +157,7 @@ def expand_check_selection(
 
 
 class CollectorId(StrEnum):
+    CISCO_RAW = "cisco_raw"
     IOS_IDENTITY = "ios_identity"
     IOS_RESOURCES = "ios_resources"
     IOS_INTERFACES = "ios_interfaces"

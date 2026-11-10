@@ -2087,6 +2087,14 @@ manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Sk
 `resources` na Cisco CBS používa jeden read-only SNMP GET job pre overené
 CPU/teplotné/fan OID a samostatný read-only CLI job pre prostredie a pokus o
 normalizáciu pamäte. Cisco IOS/IOS-XE používajú tematické SSH collectory.
+Pre Cisco platformy je navyše dostupný `full_collection`: Atlas v jednej
+Ansible session vykoná fixný allow-list 49 príkazov a uloží jeden chránený JSON
+za Tenant/Site pod
+`runs/<run_id>/sites/<tenant>-<site>-<UTC timestamp>.json`. Ak sú vybraté
+`identity` aj `full_collection`, prednosť má úplný zber. Raw stdout zostáva
+autoritatívny; NTC/TextFSM 9.3.0 pridá `structured_data` iba tam, kde existuje
+kompatibilná šablóna. Parser failure nezmení úspešný CLI výsledok. UI a bežné
+API zobrazujú iba bezpečné počty a názov artefaktu, nie citlivý obsah.
 Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
@@ -2161,9 +2169,10 @@ credentials aj dáta bez šifrovania; služba v NetBoxe preto predstavuje vedom�
 povolenie pre dané zariadenie. Telnet facts sa parsujú cez pripnuté NTC
 Templates `cisco_ios`.
 
-Textový Profylaxia report pri úspešných checkoch uvádza normalizované CPU
+Textový Profylaxia report pri úspešných tematických checkoch uvádza normalizované CPU
 percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. Raw
-CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
+CLI výstupy a credentials do reportu nezapisuje; raw Cisco režim ukladá stdout
+iba do samostatného chráneného Site artefaktu. Typované hodnoty zostávajú
 dostupné aj v `result.json` a API behu.
 
 Pre platformy `cisco-ios` a `cisco-ios-xe` Atlas plánuje tematické collectory

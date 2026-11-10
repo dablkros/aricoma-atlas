@@ -6,6 +6,21 @@ the corresponding Git tag.
 
 ## [Unreleased]
 
+### Added
+
+- Cisco `identity` and `full_collection` prophylaxis modes for IOS, IOS-XE,
+  NX-OS, ASA, CBS and Catalyst 1200/1300. Full collection executes the fixed
+  49-command allow-list and persists one protected JSON artifact per
+  Tenant/Site.
+- Best-effort NTC/TextFSM structured data alongside authoritative raw CLI
+  output, with explicit parser status and no impact on collection success.
+
+### Security
+
+- Atomic `0600` Cisco Site reports under `0700` run directories, per-command
+  output limits and redaction of common CLI secret forms. Raw stdout is not
+  returned by the normal run API or application logs.
+
 ## [0.5.0-beta] - 2026-11-10
 
 ### Added

@@ -215,6 +215,29 @@ def validate_config(raw):
             "backend.prophylaxis_concurrency must be an integer from 1 to 32"
         )
 
+    raw_command_max_bytes = backend.get(
+        "prophylaxis_raw_command_max_bytes", 1_048_576
+    )
+    if (
+        isinstance(raw_command_max_bytes, bool)
+        or not isinstance(raw_command_max_bytes, int)
+        or not 4_096 <= raw_command_max_bytes <= 10_485_760
+    ):
+        raise ValueError(
+            "backend.prophylaxis_raw_command_max_bytes must be an integer "
+            "from 4096 to 10485760"
+        )
+
+    run_retention = backend.get("prophylaxis_run_retention", 100)
+    if (
+        isinstance(run_retention, bool)
+        or not isinstance(run_retention, int)
+        or not 1 <= run_retention <= 10_000
+    ):
+        raise ValueError(
+            "backend.prophylaxis_run_retention must be an integer from 1 to 10000"
+        )
+
     dockerfile = Path(backend["dockerfile"])
     if dockerfile.is_absolute() or ".." in dockerfile.parts:
         raise ValueError("backend.dockerfile must be a safe repository-relative path")
@@ -803,6 +826,12 @@ def prepare_runtime(
         ),
         "ATLAS_PROPHYLAXIS_RESULT_RETENTION": str(backend["prophylaxis_result_retention"]),
         "ATLAS_PROPHYLAXIS_CONCURRENCY": str(backend["prophylaxis_concurrency"]),
+        "ATLAS_PROPHYLAXIS_RAW_COMMAND_MAX_BYTES": str(
+            backend.get("prophylaxis_raw_command_max_bytes", 1_048_576)
+        ),
+        "ATLAS_PROPHYLAXIS_RUN_RETENTION": str(
+            backend.get("prophylaxis_run_retention", 100)
+        ),
         "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
         "ATLAS_ANSIBLE_JOB_TIMEOUT": str(backend["ansible_job_timeout"]),
         "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",

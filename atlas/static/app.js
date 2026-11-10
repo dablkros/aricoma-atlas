@@ -2187,8 +2187,9 @@ function renderProphylaxisRun(run = state.prophylaxisRun) {
   elements.prophylaxisUnknown.textContent = String(run?.summary?.unknown ?? 0);
   elements.prophylaxisFailure.textContent = String(run?.summary?.failure ?? 0);
   elements.prophylaxisSkipped.textContent = String(run?.summary?.skipped ?? 0);
+  const rawArtifacts = run?.raw_reports?.map((report) => report.artifact) || [];
   elements.prophylaxisReport.textContent = run
-    ? `Run ${run.run_id} · Report: ${run.report_path}`
+    ? `Run ${run.run_id} · Report: ${run.report_path}${rawArtifacts.length ? ` · Raw: ${rawArtifacts.join(", ")}` : ""}`
     : "No run has been launched.";
   elements.prophylaxisRun.disabled = ["PENDING", "RUNNING"].includes(status);
   renderProphylaxisCharts(run);

@@ -613,6 +613,7 @@ STABLE_ID_PROPHYLAXIS_CHOICES = [
 
 GROUPED_PROPHYLAXIS_CHOICES = [
     ["identity", "Identity & inventory"],
+    ["full_collection", "Full collection"],
     ["resources", "Resources & environment"],
     ["interfaces", "Interfaces"],
     ["compliance", "Compliance"],
@@ -647,6 +648,13 @@ PROPHYLAXIS_CHOICE_MIGRATION_SOURCES = (
     DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
     STABLE_ID_PROPHYLAXIS_CHOICES_V1,
     STABLE_ID_PROPHYLAXIS_CHOICES,
+    [
+        ["identity", "Identity & inventory"],
+        ["resources", "Resources & environment"],
+        ["interfaces", "Interfaces"],
+        ["compliance", "Compliance"],
+        ["operations", "Operations"],
+    ],
 )
 
 
