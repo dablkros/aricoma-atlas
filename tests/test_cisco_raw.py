@@ -123,6 +123,8 @@ class CiscoRawContractTests(unittest.TestCase):
                 "device": {
                     "netbox_id": 7,
                     "hostname": "SW01",
+                    "platform": "cisco-ios-xe",
+                    "management_ip": "192.0.2.7",
                     "tenant": {"name": "Customer A", "slug": "customer-a"},
                     "site": {"name": "DC Martin", "slug": "dc-martin"},
                 },
