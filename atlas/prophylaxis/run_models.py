@@ -197,7 +197,7 @@ class ProphylaxisRawReport(BaseModel):
 
     tenant: str = Field(min_length=1, max_length=100)
     site: str = Field(min_length=1, max_length=100)
-    artifact: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{0,240}\.json$")
+    artifact: str = Field(pattern=r"^[a-z0-9][a-z0-9.-]{0,239}Z?\.json$")
     device_count: int = Field(ge=1)
 
 
