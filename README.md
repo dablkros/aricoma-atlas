@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - voliteľný **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - voliteľný **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.3** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.4.4** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
   pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -100,11 +100,13 @@ certifikátmi a kľúčom. Pri profylaxii Atlas zoskupí zariadenia podľa Site/
 VPN priradenia, otvorí jedno dočasné OpenVPN spojenie, spustí collectory cez
 neprivilegovaný runner v izolovanom network namespace a spojenie vždy ukončí.
 IPsec a openfortivpn zostávajú v tejto verzii iba v connectivity-test flowe.
-Fortinet IPsec test navyše vyžaduje schválený per-connection FCT payload. Ten
-sa importuje spolu so spojením, uloží iba do OpenBao a worker ho sprístupní
-patched strongSwan iba v krátkodobom súbore `0600`; chýbajúci alebo poškodený
-payload nemá fallback. Referenčný LAB artefakt zatiaľ nie je schválenou
-produkčnou konfiguráciou. Podrobnosti a integračné medzery sú v
+Fortinet IPsec test podporuje voliteľný per-connection FCT payload pre gateway,
+ktorý ho vyžaduje. Bez neho Atlas nenastaví `fortigate_fct_file` ani neodošle
+Notify 61696; nevytvára žiadnu náhradnú hodnotu. Ak je payload dodaný, uloží sa
+iba do OpenBao a worker ho sprístupní patched strongSwan iba v krátkodobom
+súbore `0600`. LAB A/B test z 10. 11. 2026 na HBM-Ext1 vytvoril IKE SA aj
+CHILD SA s Notify 61696 aj bez neho; výsledok nie je automaticky prenositeľný
+na iné FortiGate konfigurácie. Podrobnosti a integračné medzery sú v
 [návrhu izolovaného VPN workera](docs/forticlient-worker-design.md).
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
@@ -128,13 +130,15 @@ bezpečný fallback `Network Device`; hostname sa na odhad role nepoužíva.
 
 # Aktuálny stav
 
-**Verzia tejto dokumentácie a backendu:** `v0.4.3`
+**Verzia tejto dokumentácie a backendu:** `v0.4.4`
 
-Zmeny oproti `v0.4.2` zahŕňajú riadený import zariadení z CSV/XLSX alebo
-vloženého obsahu tabuľky, automatický preflight Device Types, runtime YAML
-fallback, štandardné Device Roles, bezpečný dry-run/confirm/apply flow,
-rozšírenú FortiOS profylaxiu cez API aj SSH a Cisco Software Suggestion/EoX
-integráciu. Podrobný prehľad je v [CHANGELOG.md](CHANGELOG.md).
+Zmeny oproti `v0.4.3` zahŕňajú multi-tenant NetBox model s management VRF,
+UI onboarding credentials, perzistentný VPN register, import a priradenie VPN
+profilov, izolovaný VPN worker, OpenVPN profylaxiu, Fortinet IPsec/MFA beta
+integráciu a rozšírené Cisco platformy vrátane Catalyst 1200/1300. Podrobný
+prehľad a známe obmedzenia sú v [CHANGELOG.md](CHANGELOG.md).
+Aktuálne release gate, neoverené integračné body a podmienky vytvorenia tagu
+sú v [release readiness pre v0.4.4](docs/release-readiness-0.4.4.md).
 
 V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
 zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
@@ -184,7 +188,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.3`
+- Atlas backend image `aricoma-atlas-backend:0.4.4`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -194,27 +198,28 @@ Deklarovaná kombinácia pre tento deployment:
 
 | Výrobca | Device Types |
 |---|---:|
-| Cisco | 238 |
+| Cisco | 282 |
 | Fortinet | 162 |
 | Juniper | 290 |
 | Sophos | 21 |
 | HPE Aruba switches | 109 |
-| **Spolu** | **820** |
+| Check Point | 41 |
+| **Spolu** | **905** |
 
 ## Component templates
 
 | Typ komponentu | Počet |
 |---|---:|
-| Console ports | 1 111 |
+| Console ports | 1 295 |
 | Console server ports | 5 |
-| Power ports | 456 |
-| Interfaces | 27 545 |
+| Power ports | 540 |
+| Interfaces | 29 333 |
 | Rear ports | 2 |
 | Front ports | 0 |
-| Module bays | 1 962 |
+| Module bays | 2 039 |
 | Device bays | 2 |
 | Power outlets | 4 |
-| **Spolu** | **31 087** |
+| **Spolu** | **33 220** |
 
 ---
 
@@ -597,7 +602,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.3","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.4","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -2292,13 +2297,14 @@ Manifest obsahuje:
 Aktuálny katalóg:
 
 ```text
-Cisco       238
+Cisco       282
 Fortinet    162
 Juniper     290
 Sophos       21
 HPE         109
+Check Point  41
 ----------------
-Spolu       820
+Spolu       905
 ```
 
 ---
@@ -2841,7 +2847,7 @@ Príklad katalógu:
 
 ```text
 Device Types
-Existing: 820
+Existing: 905
 Missing:  0
 ```
 
@@ -2849,8 +2855,8 @@ Component templates:
 
 ```text
 TOTAL COMPONENTS
-catalog=31087
-existing=31087
+catalog=33220
+existing=33220
 missing=0
 ```
 
@@ -2942,18 +2948,18 @@ Kontroluje napríklad:
 Aktuálne overený stav:
 
 ```text
-Device Types: 820
+Device Types: 905
 ```
 
 Component coverage:
 
 ```text
-console-ports         1111
+console-ports         1295
 console-server-ports     5
-power-ports            456
-interfaces           27545
+power-ports            540
+interfaces           29333
 rear-ports               2
-module-bays            1962
+module-bays            2039
 device-bays               2
 power-outlets             4
 ```
@@ -3107,7 +3113,7 @@ v0.1.0-beta
 Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.4.3
+v0.4.4
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -3140,8 +3146,8 @@ python3 -m unittest discover -s tests -v
 # Po merge PR a úspešnom CI na konkrétnom main commite:
 git switch main
 git pull --ff-only
-git tag -a v0.4.3 -m "Aricoma Atlas v0.4.3"
-git push origin v0.4.3
+git tag -a v0.4.4 -m "Aricoma Atlas v0.4.4"
+git push origin v0.4.4
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.

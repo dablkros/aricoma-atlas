@@ -2870,7 +2870,7 @@ async function planVPNImport() {
     const fct = result.profile_type !== 'ipsec-ikev2' ? ''
       : result.fct_payload_status === 'supplied'
         ? `; FCT payload: ${result.fct_payload_size} bytes; SHA-256 ${result.fct_payload_sha256}`
-        : '; FCT payload: missing (connection will fail closed)';
+        : '; FCT payload: not supplied (optional compatibility metadata)';
     vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}${fct}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
     vpnImport.review.hidden = false;
     vpnImport.apply.disabled = !result.apply_allowed;

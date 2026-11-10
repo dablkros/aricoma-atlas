@@ -30,7 +30,9 @@ class StrongSwanConfigTests(unittest.TestCase):
             render_swanctl(self.profile, VPNSecrets('bad\nname', 'p', b'key'), ('192.0.2.0/24',))
 
     def test_network_id_is_explicit_per_worker(self):
-        self.assertIn('atlas_fortinet_network_id = 11', render_fortinet_daemon_fragment(11))
+        result = render_fortinet_daemon_fragment(11)
+        self.assertIn('atlas_fortinet_network_id = 11', result)
+        self.assertNotIn('fortigate_fct_file', result)
         for value in (-1, 256, True, '11'):
             with self.subTest(value=value), self.assertRaises(FortiClientProfileError):
                 render_fortinet_daemon_fragment(value)

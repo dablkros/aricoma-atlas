@@ -255,7 +255,7 @@ class VPNProfileImportService:
                 'external_mfa': self._mfa_mode(body) != 'none',
                 'mfa_mode': self._mfa_mode(body),
                 'fct_payload_status': (
-                    'supplied' if body.fct_payload_base64 is not None else 'missing'
+                    'supplied' if body.fct_payload_base64 is not None else 'not_supplied'
                 ),
                 'fct_payload_size': (
                     len(base64.b64decode(secret['fct_payload_base64']))

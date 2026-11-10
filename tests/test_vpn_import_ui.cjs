@@ -71,7 +71,7 @@ vm.runInContext(app.slice(start, end), context);
   assert.equal(payload.replace_existing, true);
   assert.equal(payload.fct_payload_base64, null);
   settlePlan({tenant_id:1,management_vrf_id:30,gateway:'vpn.example',port:500,network_id:11,
-    profile_type:'ipsec-ikev2',fct_payload_status:'missing',fct_payload_size:null,
+    profile_type:'ipsec-ikev2',fct_payload_status:'not_supplied',fct_payload_size:null,
     fct_payload_sha256:null,allowed_prefixes:[],external_mfa:true,
     mfa_mode:'otp',replace_existing:true,registry_action:'create',secret_action:'create',
     apply_allowed:true,plan_hash:'a'.repeat(64)});

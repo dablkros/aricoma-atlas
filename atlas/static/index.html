@@ -360,7 +360,7 @@
               <div class="field-group"><label for="vpn-import-file">Profile file</label><input id="vpn-import-file" type="file" accept=".ovpn"></div>
               <div class="field-group"><label for="vpn-import-profile">VPN profile</label><select id="vpn-import-profile"><option value="">Choose a file first</option></select></div>
               <div id="vpn-import-export-password-group" class="field-group" hidden><label for="vpn-import-export-password">Export password <span class="vpn-optional">if required</span></label><input id="vpn-import-export-password" type="password" autocomplete="new-password" aria-describedby="vpn-export-help"><small id="vpn-export-help">Password used when the FortiClient profile was exported (EncX).</small></div>
-              <div id="vpn-import-fct-group" class="field-group" hidden><label for="vpn-import-fct-file">FortiClient metadata (FCT) <span class="vpn-optional">LAB artifact</span></label><input id="vpn-import-fct-file" type="file"><small>The approved per-connection FCT payload is required when this IPsec profile is connected. Atlas stores it only in OpenBao.</small></div>
+              <div id="vpn-import-fct-group" class="field-group" hidden><label for="vpn-import-fct-file">FortiClient metadata (FCT) <span class="vpn-optional">optional compatibility input</span></label><input id="vpn-import-fct-file" type="file"><small>Leave empty unless this FortiGate profile requires an approved FCT payload. Atlas never generates one and stores supplied data only in OpenBao.</small></div>
             </div>
           </section>
           <section class="vpn-import-section" aria-labelledby="vpn-import-customer-heading">

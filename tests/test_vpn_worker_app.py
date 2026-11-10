@@ -148,10 +148,11 @@ class VPNWorkerAppTests(unittest.TestCase):
         self.assertNotIn("psk", repr(credentials).lower())
         self.assertNotIn("password", repr(credentials).lower())
 
-    def test_fct_payload_requires_content_and_matching_hash(self):
+    def test_fct_payload_is_optional_but_supplied_content_requires_matching_hash(self):
         value = secret()
         expected = base64.b64decode(value["fct_payload_base64"])
         self.assertEqual(_fortinet_fct_payload(value), expected)
+        self.assertIsNone(_fortinet_fct_payload({}))
 
         for broken in (
             {key: item for key, item in value.items() if key != "fct_payload_base64"},

@@ -12,7 +12,7 @@ Patch SHA-256, in application order:
 7802512fb2850e7aaaa29b58eb97af325b7015be144a5fe211bba4aabad23454  strongswan-6.1.0-fortinet-eap-authenticator.patch
 d61de7e8b220b7277b79fbfd709b924f798b12ea525e725dbd0a15f954ac88ea  strongswan-6.1.0-fortinet-eap-gtc-otp.patch
 31e6792ff5206863088914365d7b984b48522e1f9e4bd52059f18c35b8a29d96  strongswan-6.1.0-fortinet-eap-auth.patch
-a1a41995066fc4e0f1977ec8a090ef482a099b9c4ff7567be311cde0f6cee09e  strongswan-6.1.0-fortinet-ike-auth-fct.patch
+d6fe8f3b0f0efc176d70b2c4e55c4a6a9588fa6fbcc597e0247cd21b4052a663  strongswan-6.1.0-fortinet-ike-auth-fct.patch
 c1b4bc531afdec3d0cc690a43fc485af926d99a9954afc07a417e9357158e795  strongswan-6.1.0-fortinet-vendor-id.patch
 c420fe9c1cd821602b03c99be3c3cf484f33e6d27ff1d8937628d8270a54afcc  strongswan-6.1.0-fortinet-network-id.patch
 
@@ -34,8 +34,13 @@ Atlas configure arguments:
 --enable-resolve
 --disable-ikev1
 
-Integration evidence still required from the original LAB VM:
+LAB A/B evidence reported on 2026-11-10 for the HBM-Ext1 gateway:
+- FCT Notify 61696 enabled: IKE SA and CHILD SA established
+- FCT Notify 61696 disabled: IKE SA and CHILD SA established
+- both paths completed EAP-MSCHAPv2, EAP-GTC email OTP, final IKE_AUTH and disconnect
+
+Integration evidence still required for production use:
 - output of config.status --config
 - strongSwan and OpenSSL versions
 - sanitized loaded-plugin list and successful IKE/CHILD SA log
-- size and SHA-256 of the approved per-connection fct_data.txt
+- when an FCT payload is supplied, its approved size and SHA-256

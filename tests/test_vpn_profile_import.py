@@ -145,11 +145,11 @@ class VPNImportTests(unittest.TestCase):
         self.assertEqual(base64.b64decode(self.writer.secret['fct_payload_base64']), payload)
         self.assertEqual(self.writer.secret['fct_payload_sha256'], hashlib.sha256(payload).hexdigest())
 
-    def test_missing_fct_is_plannable_but_explicit(self):
+    def test_absent_optional_fct_is_plannable_and_explicit(self):
         plan = self.service.plan(request())
 
         self.assertEqual(plan['profile_type'], 'ipsec-ikev2')
-        self.assertEqual(plan['fct_payload_status'], 'missing')
+        self.assertEqual(plan['fct_payload_status'], 'not_supplied')
         self.assertIsNone(plan['fct_payload_size'])
         self.assertIsNone(plan['fct_payload_sha256'])
 

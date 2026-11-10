@@ -1,6 +1,6 @@
 --- a/src/libcharon/sa/ikev2/tasks/ike_auth.c	2026-07-08 15:32:09.691852646 +0200
 +++ b/src/libcharon/sa/ikev2/tasks/ike_auth.c	2026-07-09 08:05:41.466394379 +0200
-@@ -835,12 +835,57 @@
+@@ -835,12 +835,51 @@
  			message->add_notify(message, FALSE, MULTIPLE_AUTH_SUPPORTED,
  								chunk_empty);
  		}
@@ -22,12 +22,11 @@
  		/* indicate support for RFC 6311 Message ID synchronization */
  		message->add_notify(message, FALSE, IKEV2_MESSAGE_ID_SYNC_SUPPORTED,
  							chunk_empty);
-+		/* FortiGate: mirror FortiClient's first IKE_AUTH. It sends
-+		 * N(INITIAL_CONTACT) and a proprietary FORTICLIENT_CONNECT notify
-+		 * (type 0xF100) carrying endpoint (FCT) data. Without the FCT data the
-+		 * gateway logs "FEC vendor ID received FEC but IP not set" and rejects
-+		 * the otherwise-correct PSK-signed final AUTH. The FCT payload is read
-+		 * from charon.fortigate_fct_file so it can be tuned per host. */
++		/* FortiGate compatibility: mirror FortiClient's INITIAL_CONTACT and,
++		 * only when explicitly configured, its proprietary FORTICLIENT_CONNECT
++		 * notify (type 0xF100) carrying endpoint (FCT) data. Atlas LAB A/B
++		 * testing confirmed that FCT is not universally required, so an absent
++		 * charon.fortigate_fct_file must not synthesize or send this notify. */
 +		if (lib->settings->get_bool(lib->settings,
 +						"%s.fortigate_send_forticlient_vid", FALSE, lib->ns))
 +		{
@@ -51,11 +50,6 @@
 +						 "'%s'", fct_file);
 +					return FAILED;
 +				}
-+			}
-+			else
-+			{
-+				DBG1(DBG_IKE, "FortiGate: fortigate_fct_file is required");
-+				return FAILED;
 +			}
 +		}
  		/* only use a PPK in the first round */

@@ -132,8 +132,9 @@ zostáva dostupný.
    CA, klientsky certifikát a privátny kľúč vložené priamo v súbore; skripty,
    pluginy a externé referencie sa odmietnu. Klasický Windows
    SSL-VPN profil s menom/heslom exportné heslo ani PSK nepotrebuje.
-   Pre Fortinet IPsec priložte aj schválený FCT payload pre konkrétne spojenie.
-   Atlas ho neodvodzuje z profilu a pri jeho absencii nevykoná IPsec handshake.
+   Pre Fortinet IPsec môžete voliteľne priložiť schválený FCT payload, ak ho
+   konkrétna gateway vyžaduje. Atlas ho neodvodzuje z profilu. Bez payloadu
+   nenastaví `fortigate_fct_file` ani neodošle Notify 61696.
 4. Pozrite plán a potvrďte uloženie. Rozšifrované PSK a prihlasovacie údaje sa
    uložia do OpenBao. Pri OpenVPN sa validovaný profil vrátane certifikátov a
    kľúča uloží iba ako secret; pri FortiClient sa exportné heslo ani pôvodný
@@ -158,10 +159,11 @@ autentifikácia sa odmietnu. MFA režim sa pri importe vyberá explicitne ako
 FortiGate IPsec worker čaká na skutočnú EAP-GTC výzvu a až potom zobrazí
 jednorazové OTP pole; pri Push režime pole nezobrazí. Kód sa používa iba v rozbehnutom IKE pokuse, neukladá sa
 do OpenBao a opätovné odoslanie nevytvára nové paralelné prihlásenie.
-FCT payload je povinný až pri pripojení Fortinet IPsec spojenia. Jeho chýbanie
-sa hlási ako `fortinet_fct_payload_missing`, nezhoda hashu alebo neplatné dáta
-ako `fortinet_fct_payload_invalid`; worker nepoužije globálnu ani náhradnú
-hodnotu.
+FCT payload je voliteľný kompatibilitný vstup. Ak nie je dodaný, worker
+pokračuje bez Notify 61696. Ak je dodaný, nezhoda hashu alebo neplatné dáta sa
+hlásia ako `fortinet_fct_payload_invalid`; worker nepoužije globálnu ani
+náhradnú hodnotu. A/B výsledok je overený pre HBM-Ext1 LAB gateway, nie pre
+všetky FortiGate konfigurácie.
 Správnosť hesla `EncX` sa kontroluje pred spracovaním PSK. Rozdielne existujúce
 spojenie alebo secret sa neprepisujú. Ak zlyhá OpenBao po vytvorení záznamu,
 vytvorte nový plán s rovnakými vstupmi a import zopakujte.

@@ -42,24 +42,27 @@ Ak gateway napriek tomu vyžiada EAP-GTC, test bezpečne skončí s dôvodom
 `unexpected_otp_challenge`. Výsledok obsahuje iba bezpečný `reason_code` a
 fázu zlyhania; stdout, heslá, PSK ani OTP sa do API a logov neposielajú.
 
-Fortinet IPsec profil má navyše samostatný per-connection FCT payload. Operations
-UI ho prijíma ako nepriehľadný binárny vstup s limitom 64 KiB, uloží jeho presné
-base64 dáta a SHA-256 iba do rovnakého OpenBao leafu ako dané VPN spojenie a
-nevracia jeho obsah v pláne ani API odpovedi. Dry-run zobrazí veľkosť a
-SHA-256, aby ich operátor mohol porovnať so schváleným LAB artefaktom. Worker
-pred každým IKE pokusom overí
-base64, veľkosť a hash, vytvorí ho výhradne v privátnom pokusovom adresári s
-režimom `0600` a jeho konkrétnu cestu vloží do `fortigate_fct_file`. Chýbajúci
-payload skončí `fortinet_fct_payload_missing`; poškodený obsah alebo nezhodný
-hash skončí `fortinet_fct_payload_invalid`. Tichý fallback neexistuje.
+Fortinet IPsec profil môže obsahovať voliteľný per-connection FCT payload.
+Operations UI ho prijíma ako nepriehľadný binárny vstup s limitom 64 KiB,
+uloží jeho presné base64 dáta a SHA-256 iba do rovnakého OpenBao leafu ako dané
+VPN spojenie a nevracia jeho obsah v pláne ani API odpovedi. Dry-run zobrazí
+veľkosť a SHA-256. Ak payload nie je dodaný, worker nevytvorí súbor, nenastaví
+`fortigate_fct_file` a patched strongSwan neodošle Notify 61696. Nevytvára sa
+žiadna odvodená ani fiktívna hodnota. Ak payload dodaný je, worker pred IKE
+pokusom overí base64, veľkosť a hash, vytvorí ho výhradne v privátnom pokusovom
+adresári s režimom `0600` a jeho konkrétnu cestu vloží do
+`fortigate_fct_file`. Poškodený obsah alebo nezhodný hash skončí
+`fortinet_fct_payload_invalid`.
 
 Referenčný LAB artefakt je
 `/home/dablkros/atlas-strongswan-test/runtime-network-id-11-mfa/etc/strongswan.d/fct_data.txt`
-na pôvodnej LAB VM. Táto cesta nie je runtime cestou Atlas workera. Presný obsah,
-veľkosť ani SHA-256 zatiaľ neboli nezávisle získané a schválené pre produkciu,
-preto ich dokumentácia ani zdrojový kód nenahrádzajú odvodenou hodnotou. Import
-bez FCT možno uložiť kvôli príprave generického konektora, ale jeho IPsec test
-bezpečne zlyhá ešte pred spustením IKE.
+na pôvodnej LAB VM. Táto cesta nie je runtime cestou Atlas workera. Presný
+obsah, veľkosť ani SHA-256 zatiaľ neboli nezávisle získané a schválené pre
+produkciu, preto ich dokumentácia ani zdrojový kód nenahrádzajú odvodenou
+hodnotou. LAB A/B test z 10. 11. 2026 na HBM-Ext1 úspešne dokončil
+EAP-MSCHAPv2, EAP-GTC, finálny IKE_AUTH a vytvorenie IKE/CHILD SA s FCT Notify
+61696 aj bez neho. Tento výsledok robí FCT voliteľným pre daný LAB gateway;
+nepreukazuje, že je voliteľný pre každú FortiGate konfiguráciu.
 
 `finally` vetva ukončí IKE SA aj daemon, flushne XFRM state/policy iba vo
 workerovom network namespace a odstráni profilový fragment. Globálny zámok
