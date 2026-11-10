@@ -19,10 +19,20 @@ const state = {
   inventoryActivityTimer: null,
   inventoryActivityStarted: 0,
   inventoryActivityKind: null,
+  inventoryPlatformOptions: [],
+  inventoryPlatformOverrides: {},
+  inventoryStructurePlan: null,
   credentialOptions: null,
   credentialPlan: null,
   credentialBusy: false,
   credentialSelectedDeviceIds: new Set(),
+  vpnAssignmentOptions: null,
+  vpnAssignmentPlan: null,
+  vpnAssignmentBusy: false,
+  vpnAssignmentSelectedIds: new Set(),
+  vpnTestOptions: null,
+  vpnTestBusy: false,
+  vpnTestOTPResolve: null,
   authenticated: false,
   principal: null,
   adminExpiryTimer: null,
@@ -102,12 +112,17 @@ const elements = {
   inventoryPlanResult: document.querySelector("#inventory-plan-result"),
   inventoryPlanStatus: document.querySelector("#inventory-plan-status"),
   inventoryCreateCount: document.querySelector("#inventory-create-count"),
+  inventoryUpdateCount: document.querySelector("#inventory-update-count"),
   inventoryUnchangedCount: document.querySelector("#inventory-unchanged-count"),
   inventoryInvalidCount: document.querySelector("#inventory-invalid-count"),
   inventoryConflictCount: document.querySelector("#inventory-conflict-count"),
   inventoryErrorCount: document.querySelector("#inventory-error-count"),
   inventoryPlanMessage: document.querySelector("#inventory-plan-message"),
   inventoryPlanRows: document.querySelector("#inventory-plan-rows"),
+  inventoryPlatformResolution: document.querySelector("#inventory-platform-resolution"),
+  inventoryPlatformModel: document.querySelector("#inventory-platform-model"),
+  inventoryPlatformValue: document.querySelector("#inventory-platform-value"),
+  inventoryPlatformAssign: document.querySelector("#inventory-platform-assign"),
   inventoryDeviceTypeResolution: document.querySelector("#inventory-device-type-resolution"),
   inventoryDeviceTypeMessage: document.querySelector("#inventory-device-type-message"),
   inventoryDeviceTypeModel: document.querySelector("#inventory-device-type-model"),
@@ -119,14 +134,32 @@ const elements = {
   inventoryRetry: document.querySelector("#inventory-retry"),
   inventoryApplyConfirm: document.querySelector("#inventory-apply-confirm"),
   inventoryApply: document.querySelector("#inventory-apply"),
+  inventoryStructureOpen: document.querySelector("#inventory-structure-open"),
+  inventoryStructureDialog: document.querySelector("#inventory-structure-dialog"),
+  inventoryStructureClose: document.querySelector("#inventory-structure-close"),
+  inventoryStructureKind: document.querySelector("#inventory-structure-kind"),
+  inventoryStructureTenantField: document.querySelector("#inventory-structure-tenant-field"),
+  inventoryStructureTenant: document.querySelector("#inventory-structure-tenant"),
+  inventoryStructureName: document.querySelector("#inventory-structure-name"),
+  inventoryStructureSlugField: document.querySelector("#inventory-structure-slug-field"),
+  inventoryStructureSlug: document.querySelector("#inventory-structure-slug"),
+  inventoryStructureGroupField: document.querySelector("#inventory-structure-group-field"),
+  inventoryStructureGroup: document.querySelector("#inventory-structure-group"),
+  inventoryStructureResult: document.querySelector("#inventory-structure-result"),
+  inventoryStructureConfirm: document.querySelector("#inventory-structure-confirm"),
+  inventoryStructurePlan: document.querySelector("#inventory-structure-plan"),
+  inventoryStructureApply: document.querySelector("#inventory-structure-apply"),
   credentialOpen: document.querySelector("#credential-onboarding-open"),
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
+  credentialTenant: document.querySelector("#credential-tenant"),
+  credentialSite: document.querySelector("#credential-site"),
   credentialManufacturer: document.querySelector("#credential-manufacturer"),
   credentialDeviceFilter: document.querySelector("#credential-device-filter"),
   credentialDeviceList: document.querySelector("#credential-device-list"),
   credentialDeviceCount: document.querySelector("#credential-device-count"),
   credentialPlatform: document.querySelector("#credential-platform"),
+  credentialPreservePlatforms: document.querySelector("#credential-preserve-platforms"),
   credentialProfile: document.querySelector("#credential-profile"),
   credentialProfileOptions: document.querySelector("#credential-profile-options"),
   credentialAuth: document.querySelector("#credential-fortios-auth"),
@@ -152,6 +185,47 @@ const elements = {
   credentialPlanOperations: document.querySelector("#credential-plan-operations"),
   credentialApplyConfirm: document.querySelector("#credential-apply-confirm"),
   credentialApply: document.querySelector("#credential-apply"),
+  vpnAssignmentOpen: document.querySelector("#vpn-assignment-open"),
+  vpnAssignmentDialog: document.querySelector("#vpn-assignment-dialog"),
+  vpnAssignmentClose: document.querySelector("#vpn-assignment-close"),
+  vpnAssignmentTenant: document.querySelector("#vpn-assignment-tenant"),
+  vpnAssignmentConnection: document.querySelector("#vpn-assignment-connection"),
+  vpnAssignmentTargetType: document.querySelector("#vpn-assignment-target-type"),
+  vpnAssignmentFilter: document.querySelector("#vpn-assignment-filter"),
+  vpnAssignmentSelectAll: document.querySelector("#vpn-assignment-select-all"),
+  vpnAssignmentTargets: document.querySelector("#vpn-assignment-targets"),
+  vpnAssignmentCount: document.querySelector("#vpn-assignment-count"),
+  vpnAssignmentPlanButton: document.querySelector("#vpn-assignment-plan"),
+  vpnAssignmentActivity: document.querySelector("#vpn-assignment-activity"),
+  vpnAssignmentPlanResult: document.querySelector("#vpn-assignment-plan-result"),
+  vpnAssignmentPlanStatus: document.querySelector("#vpn-assignment-plan-status"),
+  vpnAssignmentOperations: document.querySelector("#vpn-assignment-operations"),
+  vpnAssignmentConfirm: document.querySelector("#vpn-assignment-confirm"),
+  vpnAssignmentApply: document.querySelector("#vpn-assignment-apply"),
+  vpnTestOpen: document.querySelector("#vpn-test-open"),
+  vpnTestDialog: document.querySelector("#vpn-test-dialog"),
+  vpnTestClose: document.querySelector("#vpn-test-close"),
+  vpnTestTenant: document.querySelector("#vpn-test-tenant"),
+  vpnTestConnection: document.querySelector("#vpn-test-connection"),
+  vpnTestSite: document.querySelector("#vpn-test-site"),
+  vpnTestDevice: document.querySelector("#vpn-test-device"),
+  vpnTestPort: document.querySelector("#vpn-test-port"),
+  vpnTestRun: document.querySelector("#vpn-test-run"),
+  vpnTestMessage: document.querySelector("#vpn-test-message"),
+  vpnTestActivity: document.querySelector("#vpn-test-activity"),
+  vpnTestActivityTitle: document.querySelector("#vpn-test-activity-title"),
+  vpnTestActivityDetail: document.querySelector("#vpn-test-activity-detail"),
+  vpnTestOTP: document.querySelector("#vpn-test-otp"),
+  vpnTestOTPCode: document.querySelector("#vpn-test-otp-code"),
+  vpnTestOTPSubmit: document.querySelector("#vpn-test-otp-submit"),
+  vpnTestResult: document.querySelector("#vpn-test-result"),
+  vpnTestResultTitle: document.querySelector("#vpn-test-result-title"),
+  vpnTestStatus: document.querySelector("#vpn-test-status"),
+  vpnTestTunnel: document.querySelector("#vpn-test-tunnel"),
+  vpnTestTarget: document.querySelector("#vpn-test-target"),
+  vpnTestAddress: document.querySelector("#vpn-test-address"),
+  vpnTestCleanup: document.querySelector("#vpn-test-cleanup"),
+  vpnTestDetail: document.querySelector("#vpn-test-detail"),
   adminSessionButton: document.querySelector("#admin-session-button"),
   adminSessionIdentity: document.querySelector("#admin-session-identity"),
   adminLoginDialog: document.querySelector("#admin-login-dialog"),
@@ -172,6 +246,7 @@ class ApiError extends Error {
     this.data = data;
     this.code = data?.error?.code || "request_failed";
     this.safeMessage = data?.error?.message || "The operation could not be completed.";
+    this.requestId = data?.error?.request_id || null;
   }
 }
 
@@ -369,7 +444,106 @@ function inventoryPayload() {
     table: elements.inventoryTable.value,
     ...(tenant ? { tenant } : {}),
     ...(site ? { site } : {}),
+    platform_overrides: { ...state.inventoryPlatformOverrides },
   };
+}
+
+function inventoryOption(value, label) {
+  const option = document.createElement("option");
+  option.value = value;
+  option.textContent = label;
+  return option;
+}
+
+function resetInventorySiteOptions(label = "Select a tenant to override site") {
+  elements.inventorySite.replaceChildren(inventoryOption("", label));
+  elements.inventorySite.disabled = true;
+}
+
+async function loadInventoryImportSites(preferredSite = "") {
+  const tenant = elements.inventoryTenant.value;
+  if (!tenant) {
+    resetInventorySiteOptions();
+    return;
+  }
+  resetInventorySiteOptions("Loading sites…");
+  const sites = await apiRequest(
+    `/api/inventory/sites?tenant=${encodeURIComponent(tenant)}`,
+    { headers: operatorHeaders() },
+  );
+  const options = [inventoryOption("", "Use table or configured default")];
+  for (const site of sites.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  ).sort((left, right) => (
+    String(left.name || left.slug).localeCompare(String(right.name || right.slug))
+  ))) {
+    options.push(inventoryOption(site.slug, `${site.name} (${site.slug})`));
+  }
+  elements.inventorySite.replaceChildren(...options);
+  elements.inventorySite.disabled = false;
+  if ([...elements.inventorySite.options].some((option) => option.value === preferredSite)) {
+    elements.inventorySite.value = preferredSite;
+  } else if (preferredSite) {
+    resetInventoryPlan();
+  }
+}
+
+async function loadInventoryImportTenants() {
+  const preferredTenant = elements.inventoryTenant.value;
+  const preferredSite = elements.inventorySite.value;
+  elements.inventoryTenant.replaceChildren(inventoryOption("", "Loading tenants…"));
+  elements.inventoryTenant.disabled = true;
+  resetInventorySiteOptions("Select a tenant to override site");
+  const tenants = await apiRequest("/api/inventory/tenants", {
+    headers: operatorHeaders(),
+  });
+  const options = [inventoryOption("", "Use table or configured default")];
+  for (const tenant of tenants.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  ).sort((left, right) => (
+    String(left.name || left.slug).localeCompare(String(right.name || right.slug))
+  ))) {
+    options.push(inventoryOption(tenant.slug, `${tenant.name} (${tenant.slug})`));
+  }
+  elements.inventoryTenant.replaceChildren(...options);
+  elements.inventoryTenant.disabled = false;
+  if ([...elements.inventoryTenant.options].some((option) => option.value === preferredTenant)) {
+    elements.inventoryTenant.value = preferredTenant;
+  } else if (preferredTenant) {
+    resetInventoryPlan();
+  }
+  await loadInventoryImportSites(preferredSite);
+}
+
+async function loadInventoryPlatforms() {
+  const values = await apiRequest("/api/inventory/platforms", {
+    headers: operatorHeaders(),
+  });
+  state.inventoryPlatformOptions = values.filter(
+    (value) => value && typeof value.slug === "string" && typeof value.name === "string",
+  );
+}
+
+async function openInventoryImport() {
+  if (!requireOperatorToken()) return;
+  elements.inventoryImportDialog.showModal();
+  elements.inventoryTable.focus();
+  try {
+    await loadInventoryImportTenants();
+  } catch (error) {
+    elements.inventoryTenant.replaceChildren(
+      inventoryOption("", "Tenant list unavailable"),
+    );
+    elements.inventoryTenant.disabled = true;
+    resetInventorySiteOptions("Site list unavailable");
+    toast(error.safeMessage || "Tenant and site lists are unavailable.", "error");
+  }
+  try {
+    await loadInventoryPlatforms();
+  } catch (error) {
+    state.inventoryPlatformOptions = [];
+    toast(error.safeMessage || "Platform list is unavailable.", "error");
+  }
 }
 
 function clearCredentialSecrets() {
@@ -403,6 +577,66 @@ function selectedCredentialPlatform() {
   ) || null;
 }
 
+function selectedCredentialPlatforms() {
+  if (!elements.credentialPreservePlatforms.checked) {
+    const platform = selectedCredentialPlatform();
+    return platform ? [platform] : [];
+  }
+  const slugs = new Set(selectedCredentialDevices().map((device) => device.platform));
+  if (slugs.has(null) || slugs.has(undefined) || slugs.has("")) return [];
+  return [...slugs].map((slug) => (
+    state.credentialOptions?.platforms?.find((platform) => platform.slug === slug)
+  )).filter(Boolean);
+}
+
+function renderCredentialSiteOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const sites = new Map();
+  for (const device of state.credentialOptions?.devices || []) {
+    if (String(device.tenant?.id ?? "") !== tenantId || !device.site?.id) continue;
+    sites.set(String(device.site.id), device.site.name);
+  }
+  elements.credentialSite.replaceChildren(
+    new Option("All sites in tenant", ""),
+    ...[...sites.entries()]
+      .sort((left, right) => left[1].localeCompare(right[1]))
+      .map(([id, name]) => new Option(name, id)),
+  );
+  elements.credentialSite.disabled = !tenantId;
+}
+
+function renderCredentialManufacturerOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const siteId = elements.credentialSite.value;
+  const manufacturers = [...new Set(
+    (state.credentialOptions?.devices || [])
+      .filter((device) => (
+        String(device.tenant?.id ?? "") === tenantId
+        && (!siteId || String(device.site?.id ?? "") === siteId)
+      ))
+      .map((device) => device.manufacturer?.name)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right));
+  elements.credentialManufacturer.replaceChildren(
+    new Option(tenantId ? "Select a manufacturer" : "Select a tenant first", ""),
+    ...manufacturers.map((manufacturer) => new Option(manufacturer, manufacturer)),
+  );
+  elements.credentialManufacturer.disabled = !tenantId;
+}
+
+function renderCredentialProfileOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const profiles = [...new Set(
+    (state.credentialOptions?.devices || [])
+      .filter((device) => String(device.tenant?.id ?? "") === tenantId)
+      .map((device) => device.credential_profile)
+      .filter(Boolean),
+  )].sort((left, right) => left.localeCompare(right));
+  elements.credentialProfileOptions.replaceChildren(
+    ...profiles.map((profile) => new Option(profile)),
+  );
+}
+
 function renderCredentialPlatformOptions() {
   const manufacturer = elements.credentialManufacturer.value;
   const devices = selectedCredentialDevices();
@@ -411,9 +645,15 @@ function renderCredentialPlatformOptions() {
     (platform) => platform.manufacturer === manufacturer,
   );
   elements.credentialPlatform.replaceChildren(
-    new Option(manufacturer ? "Select platform" : "Select a manufacturer first", ""),
+    new Option(
+      elements.credentialPreservePlatforms.checked
+        ? "Existing platform on each device"
+        : (manufacturer ? "Select platform" : "Select a manufacturer first"),
+      "",
+    ),
     ...platforms.map((platform) => new Option(platform.name, platform.slug)),
   );
+  elements.credentialPlatform.disabled = elements.credentialPreservePlatforms.checked;
   const selectedPlatforms = new Set(devices.map((device) => device.platform).filter(Boolean));
   const preferred = selectedPlatforms.size === 1 ? [...selectedPlatforms][0] : previous;
   if (platforms.some((item) => item.slug === preferred)) {
@@ -431,14 +671,24 @@ function renderCredentialPlatformOptions() {
 }
 
 function renderCredentialDeviceOptions() {
+  const tenantId = elements.credentialTenant.value;
+  const siteId = elements.credentialSite.value;
   const manufacturer = elements.credentialManufacturer.value;
   const query = elements.credentialDeviceFilter.value.trim().toLocaleLowerCase();
   const selected = state.credentialSelectedDeviceIds;
   const devices = (state.credentialOptions?.devices || []).filter((device) => (
-    device.manufacturer?.name === manufacturer
+    String(device.tenant?.id ?? "") === tenantId
+    && (!siteId || String(device.site?.id ?? "") === siteId)
+    && device.manufacturer?.name === manufacturer
     && (!query || device.name.toLocaleLowerCase().includes(query))
   ));
-  if (!manufacturer) {
+  if (!tenantId) {
+    elements.credentialDeviceList.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "Select a tenant first.",
+      }),
+    );
+  } else if (!manufacturer) {
     elements.credentialDeviceList.replaceChildren(
       Object.assign(document.createElement("p"), {
         className: "field-help", textContent: "Select a manufacturer first.",
@@ -474,14 +724,19 @@ function credentialDeviceSelectionChanged() {
 }
 
 function renderCredentialAuthOptions() {
-  const platform = selectedCredentialPlatform();
-  const choices = platform?.prophylaxis_auth || [];
+  const platforms = selectedCredentialPlatforms();
+  const choices = platforms.length
+    ? platforms
+      .map((platform) => new Set(platform.prophylaxis_auth || []))
+      .reduce((common, values) => new Set([...common].filter((value) => values.has(value))))
+    : new Set();
   elements.credentialAuth.replaceChildren(
-    ...choices.map((value) => new Option(value === "api_token" ? "HTTPS API token" : "SSH", value)),
+    ...[...choices].map((value) => new Option(value === "api_token" ? "HTTPS API token" : "SSH", value)),
   );
-  if (!choices.length) elements.credentialAuth.append(new Option("Unsupported", ""));
-  elements.credentialProphylaxisEnabled.disabled = !choices.length;
-  elements.credentialOxidizedEnabled.disabled = !platform?.oxidized_supported;
+  if (!choices.size) elements.credentialAuth.append(new Option("Unsupported", ""));
+  elements.credentialProphylaxisEnabled.disabled = !choices.size;
+  elements.credentialOxidizedEnabled.disabled = !platforms.length
+    || !platforms.every((platform) => platform.oxidized_supported);
   renderCredentialAuthFields();
 }
 
@@ -498,24 +753,21 @@ async function openCredentialOnboarding() {
     state.credentialOptions = await apiRequest("/api/credentials/options", {
       headers: operatorHeaders(),
     });
-    const manufacturers = [...new Set(
-      (state.credentialOptions.devices || [])
-        .map((device) => device.manufacturer?.name)
-        .filter(Boolean),
-    )].sort((left, right) => left.localeCompare(right));
-    elements.credentialManufacturer.replaceChildren(
-      new Option("Select a manufacturer", ""),
-      ...manufacturers.map((manufacturer) => new Option(manufacturer, manufacturer)),
+    elements.credentialTenant.replaceChildren(
+      new Option("Select a tenant", ""),
+      ...(state.credentialOptions.tenants || []).map(
+        (tenant) => new Option(tenant.name, String(tenant.id)),
+      ),
     );
+    renderCredentialSiteOptions();
+    renderCredentialManufacturerOptions();
+    renderCredentialProfileOptions();
     state.credentialSelectedDeviceIds.clear();
     elements.credentialDeviceFilter.value = "";
     renderCredentialDeviceOptions();
     renderCredentialPlatformOptions();
-    elements.credentialProfileOptions.replaceChildren(
-      ...(state.credentialOptions.profiles || []).map((profile) => new Option(profile)),
-    );
     elements.credentialDialog.showModal();
-    elements.credentialManufacturer.focus();
+    elements.credentialTenant.focus();
   } catch (error) {
     toast(error.safeMessage || "Could not load credential onboarding options.", "error");
   } finally {
@@ -531,7 +783,10 @@ function credentialPayload() {
   const enablePassword = elements.credentialProphylaxisEnable.value;
   const payload = {
     device_ids: selectedCredentialDevices().map((device) => device.id),
-    platform: elements.credentialPlatform.value,
+    platform: elements.credentialPreservePlatforms.checked
+      ? null
+      : elements.credentialPlatform.value,
+    preserve_device_platforms: elements.credentialPreservePlatforms.checked,
     credential_profile: elements.credentialProfile.value.trim(),
     prophylaxis_enabled: prophylaxis,
     oxidized_enabled: oxidized,
@@ -570,7 +825,7 @@ function renderCredentialPlan(result) {
   elements.credentialPlanOperations.replaceChildren(...result.operations.map((operation) => {
     const row = document.createElement("tr");
     for (const value of [
-      operation.device?.name || "Shared profile",
+      operation.device?.name || `${result.tenant?.name || "Selected tenant"} — shared profile`,
       operation.target,
       operation.purpose || operation.object || "—",
       operation.action,
@@ -597,11 +852,15 @@ function setCredentialBusy(busy) {
 
 async function planCredentials() {
   if (!requireOperatorToken()) return;
+  if (!elements.credentialTenant.value) {
+    toast("Select a tenant for this credential batch.", "warning");
+    return;
+  }
   if (!selectedCredentialDevices().length) {
     toast("Select at least one device.", "warning");
     return;
   }
-  if (!elements.credentialPlatform.value) {
+  if (!elements.credentialPreservePlatforms.checked && !elements.credentialPlatform.value) {
     toast("Select the platform for this device batch.", "warning");
     return;
   }
@@ -646,12 +905,337 @@ async function applyCredentials() {
   }
 }
 
+function resetVPNAssignmentPlan() {
+  state.vpnAssignmentPlan = null;
+  elements.vpnAssignmentPlanResult.hidden = true;
+  elements.vpnAssignmentConfirm.checked = false;
+  elements.vpnAssignmentConfirm.disabled = true;
+  elements.vpnAssignmentApply.disabled = true;
+}
+
+function vpnAssignmentTargets() {
+  if (!state.vpnAssignmentOptions) return [];
+  return elements.vpnAssignmentTargetType.value === "device"
+    ? state.vpnAssignmentOptions.devices || []
+    : state.vpnAssignmentOptions.sites || [];
+}
+
+function filteredVPNAssignmentTargets() {
+  const query = elements.vpnAssignmentFilter.value.trim().toLocaleLowerCase();
+  return vpnAssignmentTargets().filter((target) => {
+    const searchable = `${target.name || ""} ${target.site_name || ""}`.toLocaleLowerCase();
+    return !query || searchable.includes(query);
+  });
+}
+
+function updateVPNAssignmentControls() {
+  const ready = Boolean(
+    elements.vpnAssignmentTenant.value
+    && elements.vpnAssignmentConnection.value
+    && state.vpnAssignmentSelectedIds.size,
+  );
+  elements.vpnAssignmentPlanButton.disabled = state.vpnAssignmentBusy || !ready;
+  elements.vpnAssignmentCount.textContent = `${state.vpnAssignmentSelectedIds.size} selected`;
+}
+
+function renderVPNAssignmentTargets() {
+  const targets = filteredVPNAssignmentTargets();
+  const selected = state.vpnAssignmentSelectedIds;
+  const targetType = elements.vpnAssignmentTargetType.value;
+  elements.vpnAssignmentFilter.placeholder = targetType === "device"
+    ? "Filter Devices by name or Site" : "Filter Sites by name";
+  elements.vpnAssignmentSelectAll.textContent = targetType === "device"
+    ? "Select all Devices" : "Select all Sites";
+  if (!elements.vpnAssignmentTenant.value) {
+    elements.vpnAssignmentTargets.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "Select a tenant first.",
+      }),
+    );
+  } else if (!targets.length) {
+    elements.vpnAssignmentTargets.replaceChildren(
+      Object.assign(document.createElement("p"), {
+        className: "field-help", textContent: "No matching targets.",
+      }),
+    );
+  } else {
+    elements.vpnAssignmentTargets.replaceChildren(...targets.map((target) => {
+      const checkbox = Object.assign(document.createElement("input"), {
+        type: "checkbox", value: String(target.id), checked: selected.has(target.id),
+      });
+      const label = document.createElement("label");
+      label.className = "credential-device-option";
+      const text = document.createElement("span");
+      const site = targetType === "device" && target.site_name ? ` — ${target.site_name}` : "";
+      const current = target.connection_id ? ` · ${target.connection_id}` : " · no assignment";
+      text.textContent = `${target.name || target.id}${site}${current}`;
+      label.append(checkbox, text);
+      return label;
+    }));
+  }
+  elements.vpnAssignmentSelectAll.disabled = !targets.length;
+  updateVPNAssignmentControls();
+}
+
+function renderVPNAssignmentOptions() {
+  const options = state.vpnAssignmentOptions;
+  elements.vpnAssignmentConnection.replaceChildren(
+    new Option("Select a VPN connection", ""),
+    ...(options?.connections || []).map((connection) => new Option(
+      `${connection.name} (${connection.connection_id})`, connection.connection_id,
+    )),
+    new Option("Remove assignment / use Site inheritance", "__remove__"),
+  );
+  const enabled = Boolean(options);
+  elements.vpnAssignmentConnection.disabled = !enabled;
+  elements.vpnAssignmentTargetType.disabled = !enabled;
+  elements.vpnAssignmentFilter.disabled = !enabled;
+  renderVPNAssignmentTargets();
+}
+
+async function openVPNAssignment({ tenantId = null, connectionId = null } = {}) {
+  if (!requireOperatorToken()) return;
+  elements.vpnAssignmentDialog.showModal();
+  elements.vpnAssignmentOpen.disabled = true;
+  resetVPNAssignmentPlan();
+  state.vpnAssignmentOptions = null;
+  state.vpnAssignmentSelectedIds.clear();
+  try {
+    const tenants = await apiRequest("/api/inventory/tenants", {
+      headers: operatorHeaders(),
+    });
+    elements.vpnAssignmentTenant.replaceChildren(
+      new Option("Select a tenant", ""),
+      ...tenants.map((tenant) => new Option(
+        `${tenant.name} (${tenant.slug})`, String(tenant.id),
+      )),
+    );
+    renderVPNAssignmentOptions();
+    if (tenantId && [...elements.vpnAssignmentTenant.options].some((option) => option.value === String(tenantId))) {
+      elements.vpnAssignmentTenant.value = String(tenantId);
+      await loadVPNAssignmentOptions();
+      if (connectionId && [...elements.vpnAssignmentConnection.options].some((option) => option.value === connectionId)) {
+        elements.vpnAssignmentConnection.value = connectionId;
+        updateVPNAssignmentControls();
+      }
+    }
+    elements.vpnAssignmentTenant.focus();
+  } catch (error) {
+    toast(error.safeMessage || "Could not load VPN assignment tenants.", "error");
+  } finally {
+    elements.vpnAssignmentOpen.disabled = false;
+  }
+}
+
+async function loadVPNAssignmentOptions() {
+  resetVPNAssignmentPlan();
+  state.vpnAssignmentOptions = null;
+  state.vpnAssignmentSelectedIds.clear();
+  elements.vpnAssignmentFilter.value = "";
+  const tenantId = elements.vpnAssignmentTenant.value;
+  if (!tenantId) {
+    renderVPNAssignmentOptions();
+    return;
+  }
+  setVPNAssignmentBusy(true);
+  try {
+    state.vpnAssignmentOptions = await apiRequest(
+      `/api/v1/vpn/assignments/options?tenant_id=${encodeURIComponent(tenantId)}`,
+      { headers: operatorHeaders() },
+    );
+    renderVPNAssignmentOptions();
+  } catch (error) {
+    renderVPNAssignmentOptions();
+    toast(error.safeMessage || "Could not load tenant VPN assignments.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
+  }
+}
+
+function vpnAssignmentPayload() {
+  const selectedConnection = elements.vpnAssignmentConnection.value;
+  return {
+    tenant_id: Number(elements.vpnAssignmentTenant.value),
+    connection_id: selectedConnection === "__remove__" ? null : selectedConnection,
+    target_type: elements.vpnAssignmentTargetType.value,
+    target_ids: [...state.vpnAssignmentSelectedIds].sort((left, right) => left - right),
+  };
+}
+
+function renderVPNAssignmentPlan(result) {
+  state.vpnAssignmentPlan = result;
+  elements.vpnAssignmentPlanResult.hidden = false;
+  setPill(elements.vpnAssignmentPlanStatus, "healthy", "Ready to apply");
+  elements.vpnAssignmentOperations.replaceChildren(...result.operations.map((operation) => {
+    const row = document.createElement("tr");
+    for (const value of [
+      operation.target_name,
+      operation.current_connection_id || "—",
+      operation.desired_connection_id || "Site inheritance / none",
+      operation.action,
+    ]) {
+      const cell = document.createElement("td");
+      cell.textContent = value;
+      row.append(cell);
+    }
+    return row;
+  }));
+  elements.vpnAssignmentConfirm.disabled = false;
+  elements.vpnAssignmentConfirm.checked = false;
+  elements.vpnAssignmentApply.disabled = true;
+}
+
+function setVPNAssignmentBusy(busy) {
+  state.vpnAssignmentBusy = busy;
+  elements.vpnAssignmentActivity.hidden = !busy;
+  elements.vpnAssignmentDialog.setAttribute("aria-busy", String(busy));
+  updateVPNAssignmentControls();
+  elements.vpnAssignmentApply.disabled = busy
+    || !state.vpnAssignmentPlan
+    || !elements.vpnAssignmentConfirm.checked;
+}
+
+async function planVPNAssignment() {
+  if (!requireOperatorToken()) return;
+  setVPNAssignmentBusy(true);
+  try {
+    const result = await apiRequest("/api/v1/vpn/assignments/plan", {
+      method: "POST", headers: operatorHeaders(), body: vpnAssignmentPayload(),
+    });
+    renderVPNAssignmentPlan(result);
+    toast("VPN assignment plan is ready for review.", "success");
+  } catch (error) {
+    resetVPNAssignmentPlan();
+    toast(error.safeMessage || "VPN assignment planning failed.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
+  }
+}
+
+async function applyVPNAssignment() {
+  if (!state.vpnAssignmentPlan || !elements.vpnAssignmentConfirm.checked) return;
+  setVPNAssignmentBusy(true);
+  try {
+    const result = await apiRequest("/api/v1/vpn/assignments/apply", {
+      method: "POST",
+      headers: operatorHeaders(),
+      body: { ...vpnAssignmentPayload(), plan_hash: state.vpnAssignmentPlan.plan_hash },
+    });
+    renderVPNAssignmentPlan(result);
+    setPill(elements.vpnAssignmentPlanStatus, "healthy", "Applied");
+    for (const operation of result.operations) {
+      const target = vpnAssignmentTargets().find(
+        (item) => item.id === operation.target_id,
+      );
+      if (target) target.connection_id = operation.desired_connection_id;
+    }
+    renderVPNAssignmentTargets();
+    state.vpnAssignmentPlan = null;
+    elements.vpnAssignmentConfirm.disabled = true;
+    elements.vpnAssignmentApply.disabled = true;
+    toast("VPN assignments were applied to NetBox.", "success");
+  } catch (error) {
+    if (error.code === "vpn_assignment_plan_stale") resetVPNAssignmentPlan();
+    toast(error.safeMessage || "VPN assignment apply failed.", "error");
+  } finally {
+    setVPNAssignmentBusy(false);
+  }
+}
+
 function resetInventoryPlan() {
   state.inventoryPlan = null;
   elements.inventoryPlanResult.hidden = true;
   elements.inventoryApplyConfirm.checked = false;
   elements.inventoryApplyConfirm.disabled = true;
   elements.inventoryApply.disabled = true;
+}
+
+function resetInventoryStructurePlan() {
+  state.inventoryStructurePlan = null;
+  elements.inventoryStructureResult.textContent = "No plan created.";
+  elements.inventoryStructureConfirm.checked = false;
+  elements.inventoryStructureConfirm.disabled = true;
+  elements.inventoryStructureApply.disabled = true;
+}
+
+function inventoryStructurePayload() {
+  const kind = elements.inventoryStructureKind.value;
+  const payload = { name: elements.inventoryStructureName.value.trim() };
+  if (kind === "tenant") {
+    const slug = elements.inventoryStructureSlug.value.trim();
+    if (slug) payload.slug = slug;
+    const group = elements.inventoryStructureGroup.value.trim();
+    if (group) payload.group = group;
+  } else {
+    payload.tenant = elements.inventoryStructureTenant.value;
+  }
+  return payload;
+}
+
+function renderInventoryStructureFields() {
+  const site = elements.inventoryStructureKind.value === "site";
+  elements.inventoryStructureTenantField.hidden = !site;
+  elements.inventoryStructureSlugField.hidden = site;
+  elements.inventoryStructureGroupField.hidden = site;
+  resetInventoryStructurePlan();
+}
+
+async function loadInventoryTenants() {
+  const tenants = await apiRequest("/api/inventory/tenants", {
+    headers: operatorHeaders(),
+  });
+  elements.inventoryStructureTenant.replaceChildren(...tenants.map((tenant) => {
+    const option = document.createElement("option");
+    option.value = tenant.slug;
+    option.textContent = `${tenant.name} (${tenant.slug})`;
+    return option;
+  }));
+}
+
+async function openInventoryStructure() {
+  if (!requireOperatorToken()) return;
+  try {
+    await loadInventoryTenants();
+    elements.inventoryStructureDialog.showModal();
+    elements.inventoryStructureName.focus();
+  } catch (error) {
+    toast(error.safeMessage || "Tenant list is unavailable.", "error");
+  }
+}
+
+async function runInventoryStructure(apply) {
+  if (!requireOperatorToken()) return;
+  const kind = elements.inventoryStructureKind.value;
+  const payload = inventoryStructurePayload();
+  if (!payload.name || (kind === "site" && !payload.tenant)) {
+    toast("Enter the required name and tenant.", "warning");
+    return;
+  }
+  elements.inventoryStructurePlan.disabled = true;
+  elements.inventoryStructureApply.disabled = true;
+  try {
+    if (apply) payload.plan_hash = state.inventoryStructurePlan?.plan_hash;
+    const result = await apiRequest(`/api/inventory/${kind}s/${apply ? "apply" : "plan"}`, {
+      method: "POST", headers: operatorHeaders(), body: payload,
+    });
+    state.inventoryStructurePlan = result;
+    const target = result.object?.slug || result.object?.name || payload.name;
+    const managementVrf = kind === "tenant" ? result.management_vrf?.name : null;
+    elements.inventoryStructureResult.textContent = managementVrf
+      ? `${titleCase(result.operation)} ${kind}: ${target}; management VRF: ${managementVrf}`
+      : `${titleCase(result.operation)} ${kind}: ${target}`;
+    elements.inventoryStructureConfirm.checked = false;
+    elements.inventoryStructureConfirm.disabled = apply;
+    if (apply) {
+      toast(`${titleCase(kind)} operation applied.`, "success");
+      await loadInventoryTenants();
+    }
+  } catch (error) {
+    resetInventoryStructurePlan();
+    toast(error.safeMessage || `${titleCase(kind)} operation failed.`, "error");
+  } finally {
+    elements.inventoryStructurePlan.disabled = false;
+  }
 }
 
 function inventoryFilename(model) {
@@ -678,7 +1262,7 @@ function setInventoryDeviceTypeError(message = "") {
 }
 
 function inventoryStatusTone(status) {
-  if (["CREATE", "UNCHANGED"].includes(status)) return "healthy";
+  if (["CREATE", "UPDATE", "UNCHANGED"].includes(status)) return "healthy";
   if (status === "INVALID") return "degraded";
   return "unhealthy";
 }
@@ -688,11 +1272,13 @@ function renderInventoryPlan(result) {
   const report = result.report || {};
   const summary = report.summary || {};
   const issues = result.device_type_issues || [];
+  const platformIssues = result.platform_issues || [];
   const uploadable = issues.filter((issue) => issue.yaml_upload_allowed);
   const blocked = (summary.INVALID || 0) + (summary.CONFLICT || 0) + (summary.ERROR || 0);
 
   elements.inventoryPlanResult.hidden = false;
   elements.inventoryCreateCount.textContent = String(summary.CREATE || 0);
+  elements.inventoryUpdateCount.textContent = String(summary.UPDATE || 0);
   elements.inventoryUnchangedCount.textContent = String(summary.UNCHANGED || 0);
   elements.inventoryInvalidCount.textContent = String(summary.INVALID || 0);
   elements.inventoryConflictCount.textContent = String(summary.CONFLICT || 0);
@@ -731,6 +1317,22 @@ function renderInventoryPlan(result) {
     return row;
   }));
 
+  elements.inventoryPlatformResolution.hidden = platformIssues.length === 0;
+  elements.inventoryPlatformModel.replaceChildren(...platformIssues.map((issue) => (
+    new Option(
+      `Row ${issue.row} — ${issue.hostname} — ${issue.model} — ${titleCase(issue.reason)}`,
+      String(issue.row),
+    )
+  )));
+  elements.inventoryPlatformValue.replaceChildren(
+    new Option("Select a platform", ""),
+    ...state.inventoryPlatformOptions.map((platform) => new Option(
+      `${platform.manufacturer || "Generic"} — ${platform.name} (${platform.slug})`,
+      platform.slug,
+    )),
+  );
+  elements.inventoryPlatformAssign.disabled = platformIssues.length === 0;
+
   elements.inventoryDeviceTypeResolution.hidden = issues.length === 0;
   elements.inventoryDeviceTypeUpload.hidden = uploadable.length === 0;
   elements.inventoryDeviceTypeModel.replaceChildren(...issues.map((issue) => {
@@ -758,6 +1360,7 @@ function setInventoryBusy(busy) {
   for (const button of [
     elements.inventoryPlanButton,
     elements.inventoryRetry,
+    elements.inventoryPlatformAssign,
     elements.inventoryDeviceTypeUpload,
     elements.inventoryApply,
   ]) button.disabled = busy || (button === elements.inventoryApply && !elements.inventoryApplyConfirm.checked);
@@ -881,6 +1484,17 @@ async function uploadInventoryDeviceType() {
   }
   stopInventoryActivity();
   setInventoryBusy(false);
+  await planInventory();
+}
+
+async function assignInventoryPlatform() {
+  const row = elements.inventoryPlatformModel.value;
+  const platform = elements.inventoryPlatformValue.value;
+  if (!row || !platform) {
+    toast("Select an affected device and its verified platform.", "warning");
+    return;
+  }
+  state.inventoryPlatformOverrides[row] = platform;
   await planInventory();
 }
 
@@ -1746,6 +2360,11 @@ function toast(message, type = "success") {
       activeDialog.append(region);
     }
   }
+  const duplicate = [...region.children].find(
+    (candidate) => candidate.classList.contains(`toast-${type}`)
+      && candidate.textContent === String(message),
+  );
+  if (duplicate) return;
   region.append(item);
   window.setTimeout(() => {
     item.remove();
@@ -1930,10 +2549,48 @@ elements.operatorToken.addEventListener("input", () => {
 });
 elements.ciscoTest.addEventListener("click", testCiscoIntegration);
 elements.zabbixSync.addEventListener("click", synchronizeZabbix);
+elements.inventoryStructureOpen.addEventListener("click", openInventoryStructure);
+elements.inventoryStructureClose.addEventListener("click", () => {
+  elements.inventoryStructureDialog.close();
+});
+elements.inventoryStructureKind.addEventListener("change", renderInventoryStructureFields);
+elements.inventoryStructureName.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureSlug.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureGroup.addEventListener("input", resetInventoryStructurePlan);
+elements.inventoryStructureTenant.addEventListener("change", resetInventoryStructurePlan);
+elements.inventoryStructurePlan.addEventListener("click", () => runInventoryStructure(false));
+elements.inventoryStructureApply.addEventListener("click", () => runInventoryStructure(true));
+elements.inventoryStructureConfirm.addEventListener("change", () => {
+  elements.inventoryStructureApply.disabled = !state.inventoryStructurePlan
+    || !elements.inventoryStructureConfirm.checked;
+});
 elements.credentialOpen.addEventListener("click", openCredentialOnboarding);
 elements.credentialClose.addEventListener("click", () => {
   clearCredentialSecrets();
   elements.credentialDialog.close();
+});
+elements.credentialTenant.addEventListener("change", () => {
+  state.credentialSelectedDeviceIds.clear();
+  elements.credentialDeviceFilter.value = "";
+  elements.credentialProfile.value = "";
+  elements.credentialProphylaxisUsername.value = "";
+  elements.credentialOxidizedUsername.value = "";
+  elements.credentialReplace.checked = false;
+  clearCredentialSecrets();
+  renderCredentialSiteOptions();
+  renderCredentialManufacturerOptions();
+  renderCredentialProfileOptions();
+  renderCredentialDeviceOptions();
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
+});
+elements.credentialSite.addEventListener("change", () => {
+  state.credentialSelectedDeviceIds.clear();
+  elements.credentialDeviceFilter.value = "";
+  renderCredentialManufacturerOptions();
+  renderCredentialDeviceOptions();
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
 });
 elements.credentialManufacturer.addEventListener("change", () => {
   state.credentialSelectedDeviceIds.clear();
@@ -1954,6 +2611,10 @@ elements.credentialPlatform.addEventListener("change", () => {
   renderCredentialAuthOptions();
   resetCredentialPlan();
 });
+elements.credentialPreservePlatforms.addEventListener("change", () => {
+  renderCredentialPlatformOptions();
+  resetCredentialPlan();
+});
 elements.credentialAuth.addEventListener("change", () => {
   renderCredentialAuthFields();
   resetCredentialPlan();
@@ -1966,6 +2627,683 @@ elements.credentialApplyConfirm.addEventListener("change", () => {
     || !state.credentialPlan?.apply_allowed
     || !elements.credentialApplyConfirm.checked;
 });
+// VPN profile import never renders or stores decrypted credentials in the UI.
+const vpnImport = {
+  open: document.querySelector('#vpn-import-open'),
+  dialog: document.querySelector('#vpn-import-dialog'),
+  close: document.querySelector('#vpn-import-close'),
+  message: document.querySelector('#vpn-import-message'),
+  fields: document.querySelector('#vpn-import-fields'),
+  advanced: document.querySelector('#vpn-import-advanced'),
+  activity: document.querySelector('#vpn-import-activity'),
+  activityTitle: document.querySelector('#vpn-import-activity-title'),
+  activityDetail: document.querySelector('#vpn-import-activity-detail'),
+  file: document.querySelector('#vpn-import-file'),
+  format: document.querySelector('#vpn-import-format'),
+  profile: document.querySelector('#vpn-import-profile'),
+  exportPassword: document.querySelector('#vpn-import-export-password'),
+  exportPasswordGroup: document.querySelector('#vpn-import-export-password-group'),
+  fctFile: document.querySelector('#vpn-import-fct-file'),
+  fctGroup: document.querySelector('#vpn-import-fct-group'),
+  tenant: document.querySelector('#vpn-import-tenant'),
+  vrf: document.querySelector('#vpn-import-vrf'),
+  id: document.querySelector('#vpn-import-id'),
+  name: document.querySelector('#vpn-import-name'),
+  username: document.querySelector('#vpn-import-username'),
+  password: document.querySelector('#vpn-import-password'),
+  mfa: document.querySelector('#vpn-import-mfa'),
+  replace: document.querySelector('#vpn-import-replace'),
+  assign: document.querySelector('#vpn-import-assign'),
+  planButton: document.querySelector('#vpn-import-plan'),
+  apply: document.querySelector('#vpn-import-apply'),
+  review: document.querySelector('#vpn-import-review'),
+  data: null, fctData: null, options: null, plan: null, busy: false, revision: 0, lastSaved: null,
+};
+
+function resetVPNImportPlan() {
+  vpnImport.revision += 1;
+  vpnImport.plan = null;
+  vpnImport.apply.disabled = true;
+  vpnImport.review.hidden = true;
+  vpnImport.review.textContent = '';
+}
+
+function vpnImportMessage(message, isError = false) {
+  vpnImport.message.textContent = message;
+  vpnImport.message.classList.toggle('is-error', isError);
+}
+
+function setVPNImportBusy(title = '', detail = '') {
+  vpnImport.busy = Boolean(title);
+  vpnImport.fields.disabled = vpnImport.busy;
+  vpnImport.close.disabled = vpnImport.busy;
+  vpnImport.planButton.disabled = vpnImport.busy;
+  vpnImport.apply.disabled = vpnImport.busy || !vpnImport.plan?.apply_allowed;
+  vpnImport.activity.hidden = !vpnImport.busy;
+  vpnImport.dialog.setAttribute('aria-busy', String(vpnImport.busy));
+  if (vpnImport.busy) {
+    vpnImport.activityTitle.textContent = title;
+    vpnImport.activityDetail.textContent = detail;
+  }
+}
+
+function suggestVPNConnectionDetails() {
+  const name = vpnImport.profile.value;
+  if (!name) return;
+  const id = name.normalize('NFKD').replace(/[\u0300-\u036f]/g, '').toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 100).replace(/-+$/g, '');
+  for (const [field, suggestion] of [[vpnImport.id, id], [vpnImport.name, name]]) {
+    if (!field.value || field.value === field.dataset.generated) {
+      field.value = suggestion;
+      field.dataset.generated = suggestion;
+    }
+  }
+}
+
+function vpnImportFieldError(field, message) {
+  if (vpnImport.busy) setVPNImportBusy();
+  if (field === vpnImport.id || field === vpnImport.name) vpnImport.advanced.open = true;
+  field.setAttribute('aria-invalid', 'true');
+  vpnImportMessage(message, true);
+  field.focus();
+  return false;
+}
+
+function validateVPNImport() {
+  const payload = vpnImportPayload();
+  if (!vpnImport.data) return vpnImportFieldError(vpnImport.file, 'Choose a VPN profile file.');
+  if (!payload.profile_name) return vpnImportFieldError(vpnImport.profile, 'Select a VPN profile from the file.');
+  if (!payload.tenant_id) return vpnImportFieldError(vpnImport.tenant, 'Select a customer.');
+  if (!payload.management_vrf_id) return vpnImportFieldError(vpnImport.vrf, 'Select the customer’s management VRF.');
+  if (!payload.username) return vpnImportFieldError(vpnImport.username, 'Enter the VPN username.');
+  if (!payload.password) return vpnImportFieldError(vpnImport.password, 'Enter the VPN password.');
+  if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(payload.connection_id) || payload.connection_id.length > 100)
+    return vpnImportFieldError(vpnImport.id, 'Connection ID may contain only lowercase letters, numbers and single hyphens.');
+  if (!payload.name || payload.name.length > 200) return vpnImportFieldError(vpnImport.name, 'Enter a connection name of up to 200 characters.');
+  return true;
+}
+
+function vpnImportServerError(error) {
+  const fields = {connection_id: [vpnImport.id, 'Use lowercase letters, numbers and single hyphens for the connection ID.'],
+    name: [vpnImport.name, 'Enter a connection name.'],
+    tenant_id: [vpnImport.tenant, 'Select a customer.'], management_vrf_id: [vpnImport.vrf, 'Select a management VRF.'],
+    profile_name: [vpnImport.profile, 'Select a VPN profile.'], username: [vpnImport.username, 'Check the VPN username.'],
+    password: [vpnImport.password, 'Check the VPN password.'], export_password: [vpnImport.exportPassword, 'Check the export password.'],
+    fct_payload_base64: [vpnImport.fctFile, 'Choose a valid FCT payload of up to 64 KiB.']};
+  for (const detail of error.data?.error?.details || []) {
+    const key = detail.location?.find((part) => Object.hasOwn(fields, part));
+    if (key) return vpnImportFieldError(...fields[key]);
+  }
+  return null;
+}
+
+function renderVPNImportVrfs() {
+  const owner = Number(vpnImport.tenant.value);
+  vpnImport.vrf.replaceChildren(new Option('Select a management VRF', ''),
+    ...(vpnImport.options?.vrfs || []).filter((vrf) => vrf.tenant_id === owner)
+      .map((vrf) => new Option(vrf.name, String(vrf.id))));
+}
+
+async function openVPNImport() {
+  if (!requireOperatorToken()) return;
+  vpnImport.dialog.showModal();
+  vpnImport.assign.hidden = true;
+  vpnImport.lastSaved = null;
+  setVPNImportBusy('Loading customers', 'Atlas is loading customers and management VRFs from NetBox.');
+  vpnImportMessage('Import saves the profile; it does not connect the VPN.');
+  try {
+    vpnImport.options = await apiRequest('/api/v1/vpn/forticlient/options', { headers: operatorHeaders() });
+    vpnImport.tenant.replaceChildren(new Option('Select a customer', ''),
+      ...vpnImport.options.tenants.map((tenant) => new Option(tenant.name, String(tenant.id))));
+    renderVPNImportVrfs();
+    vpnImportMessage('Select a profile file. Import saves settings but does not connect the VPN.');
+  } catch (error) {
+    vpnImportMessage(error.safeMessage || 'Could not load customers.', true);
+  } finally { setVPNImportBusy(); }
+}
+
+async function inspectVPNImportFile() {
+  resetVPNImportPlan();
+  vpnImport.data = null;
+  vpnImport.profile.replaceChildren(new Option('Choose a file first', ''));
+  const file = vpnImport.file.files?.[0];
+  const revision = vpnImport.revision;
+  if (!file) return;
+  if (file.size === 0 || file.size > 2 * 1024 * 1024) {
+    vpnImportMessage('The file must be between 1 byte and 2 MiB.', true);
+    return;
+  }
+  setVPNImportBusy('Reading VPN profile', 'Atlas is inspecting the selected file.');
+  try {
+    const encoded = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    const result = await apiRequest('/api/v1/vpn/forticlient/inspect', {
+      method: 'POST', headers: operatorHeaders(),
+      body: { format: vpnImport.format.value, profile_base64: encoded,
+              source_name: file.name || null },
+    });
+    if (!vpnImport.dialog.open || vpnImport.revision !== revision || vpnImport.file.files?.[0] !== file) return;
+    vpnImport.data = encoded;
+    vpnImport.profile.replaceChildren(new Option('Select a VPN profile', ''),
+      ...result.profiles.map((name) => new Option(name, name)));
+    if (result.profiles.length === 1) vpnImport.profile.value = result.profiles[0];
+    suggestVPNConnectionDetails();
+    vpnImportMessage('Choose the customer and VPN credentials.');
+  } catch (error) {
+    vpnImportMessage(error.safeMessage || 'Could not read this profile.', true);
+  } finally { setVPNImportBusy(); }
+}
+
+function vpnImportPayload() {
+  return {
+    format: vpnImport.format.value, profile_base64: vpnImport.data || '',
+    source_name: vpnImport.file.files?.[0]?.name || null,
+    profile_name: vpnImport.profile.value,
+    export_password: vpnImport.exportPassword.value || null,
+    fct_payload_base64: vpnImport.fctData || null,
+    username: vpnImport.username.value, password: vpnImport.password.value,
+    connection_id: vpnImport.id.value.trim(), name: vpnImport.name.value.trim(),
+    tenant_id: Number(vpnImport.tenant.value), management_vrf_id: Number(vpnImport.vrf.value),
+    allowed_prefixes: [], mfa_mode: vpnImport.mfa.value,
+    external_mfa: false,
+    replace_existing: vpnImport.replace.checked,
+  };
+}
+
+function vpnImportErrorMessage(error) {
+  const messages = {
+    vpn_export_password_required: 'Enter the password used to export this profile.',
+    encrypted_secret_integrity_failed: 'The export password does not verify the encrypted profile. Check the export password and try again.',
+    invalid_phase1_dh: 'The profile contains an invalid Phase 1 DH group.',
+    unsupported_phase1_dh: 'The profile does not offer the supported Phase 1 DH group 21.',
+    invalid_phase2_dh: 'The profile contains an invalid Phase 2 DH group.',
+    unsupported_phase2_dh: 'The profile does not offer the supported Phase 2 DH group 21.',
+    tenant_not_found: 'This Connection ID belongs to a stale VPN record whose customer no longer exists. Open Connection details and explicitly allow replacement.',
+    management_vrf_not_found: 'The selected management VRF no longer exists in NetBox.',
+    management_vrf_tenant_mismatch: 'The selected management VRF does not belong to this customer.',
+    netbox_unavailable: 'NetBox is unavailable. The VPN profile was not changed.',
+    vpn_connection_stale_tenant: 'This Connection ID belongs to a stale customer. Open Connection details and explicitly allow replacement.',
+    vpn_connection_conflict: 'This Connection ID already has different settings. Open Connection details and explicitly allow replacement if intentional.',
+    vpn_secret_conflict: 'Different credentials already exist for this Connection ID. Open Connection details and explicitly allow replacement if intentional.',
+    vpn_secret_unavailable: 'VPN credential storage is unavailable. Check the VPN writer identity.',
+    vpn_import_partial: 'The registry was updated but OpenBao could not be saved. Review the same import again to retry.',
+    vpn_import_plan_stale: 'The VPN state changed after review. Create a new import plan.',
+    vpn_secret_format_unsupported: 'This encrypted secret format is not supported.',
+    unsupported_encrypted_secret_format: 'This encrypted secret format is not supported.',
+    unsupported_ipsec_profile: 'The IPsec profile does not match the IKEv2 parameters currently supported by Atlas.',
+    unsupported_proposal: 'The encryption proposal in this profile is not supported.',
+    unsupported_username: 'The username contains unsupported characters.',
+    unsupported_local_id: 'The local ID contains unsupported characters.',
+    unsupported_auth_method: 'This authentication method is not supported.',
+    unsupported_ssl_sso: 'This SSL-VPN profile uses SSO/SAML, which the Atlas worker cannot automate.',
+    vpn_profile_unsupported_directive: 'This OpenVPN profile contains a directive that Atlas does not execute.',
+    vpn_profile_external_reference: 'The OpenVPN profile must contain certificates and keys inline and may not reference external files.',
+    vpn_profile_unsupported_device: 'Atlas currently supports only OpenVPN tun profiles.',
+    vpn_profile_unsupported_protocol: 'This OpenVPN transport is not supported by the Atlas worker.',
+    invalid_encrypted_secret: 'The encrypted PSK is invalid or incomplete.',
+    invalid_decrypted_secret: 'The decrypted PSK is invalid.',
+    fct_payload_not_applicable: 'FortiClient metadata applies only to Fortinet IPsec profiles.',
+  };
+  const message = messages[error.code] || error.safeMessage || 'VPN profile import failed.';
+  return error.requestId ? `${message} Request ID: ${error.requestId}.` : message;
+}
+
+async function planVPNImport() {
+  if (vpnImport.busy || !requireOperatorToken()) return;
+  resetVPNImportPlan();
+  if (!validateVPNImport()) return;
+  setVPNImportBusy('Reviewing import', 'Atlas is checking the profile, NetBox and OpenBao.');
+  const revision = vpnImport.revision;
+  try {
+    const result = await apiRequest('/api/v1/vpn/forticlient/plan', {
+      method: 'POST', headers: operatorHeaders(), body: vpnImportPayload(),
+    });
+    if (!vpnImport.dialog.open || vpnImport.revision !== revision) return;
+    vpnImport.plan = result;
+    const networkId = result.network_id === null ? '' : `; Network ID ${result.network_id}`;
+    const mfa = result.mfa_mode && result.mfa_mode !== 'none'
+      ? `; MFA: ${result.mfa_mode}` : '';
+    const fct = result.profile_type !== 'ipsec-ikev2' ? ''
+      : result.fct_payload_status === 'supplied'
+        ? `; FCT payload: ${result.fct_payload_size} bytes; SHA-256 ${result.fct_payload_sha256}`
+        : '; FCT payload: not supplied (optional compatibility metadata)';
+    vpnImport.review.textContent = `Type ${result.profile_type}; customer ID ${result.tenant_id}; VRF ${result.management_vrf_id}; gateway ${result.gateway}:${result.port}${networkId}${mfa}${fct}. Device targets: NetBox Site. Registry: ${result.registry_action}; OpenBao: ${result.secret_action}.`;
+    vpnImport.review.hidden = false;
+    vpnImport.apply.disabled = !result.apply_allowed;
+    vpnImportMessage('Review the settings, then save the profile.');
+  } catch (error) {
+    if (error.code === 'validation_error' && vpnImportServerError(error) === false) return;
+    if (['vpn_export_password_required', 'encrypted_secret_integrity_failed'].includes(error.code)) {
+      vpnImportFieldError(vpnImport.exportPassword, vpnImportErrorMessage(error));
+      return;
+    }
+    if (['tenant_not_found', 'vpn_connection_stale_tenant', 'vpn_connection_conflict', 'vpn_secret_conflict'].includes(error.code)) {
+      vpnImport.advanced.open = true;
+    }
+    vpnImportMessage(vpnImportErrorMessage(error), true);
+  } finally { setVPNImportBusy(); }
+}
+
+async function applyVPNImport() {
+  if (!vpnImport.plan || vpnImport.busy) return;
+  setVPNImportBusy('Saving VPN profile', 'Atlas is saving the connection and its credentials.');
+  try {
+    const result = await apiRequest('/api/v1/vpn/forticlient/apply', {
+      method: 'POST', headers: operatorHeaders(),
+      body: { ...vpnImportPayload(), plan_hash: vpnImport.plan.plan_hash },
+    });
+    vpnImport.lastSaved = { tenantId: result.tenant_id, connectionId: result.connection_id };
+    vpnImport.assign.hidden = false;
+    vpnImportMessage('VPN profile saved. Assign it to a Site next. The VPN has not been connected.');
+    vpnImport.exportPassword.value = '';
+    vpnImport.username.value = '';
+    vpnImport.password.value = '';
+    vpnImport.fctFile.value = '';
+    vpnImport.fctData = null;
+    vpnImport.mfa.value = 'none';
+    vpnImport.replace.checked = false;
+    vpnImport.data = null;
+    vpnImport.file.value = '';
+    resetVPNImportPlan();
+  } catch (error) {
+    resetVPNImportPlan();
+    vpnImportMessage(vpnImportErrorMessage(error), true);
+  } finally { setVPNImportBusy(); }
+}
+
+vpnImport.open.addEventListener('click', openVPNImport);
+vpnImport.assign.addEventListener('click', () => {
+  if (!vpnImport.lastSaved || vpnImport.busy) return;
+  const saved = vpnImport.lastSaved;
+  vpnImport.dialog.close();
+  openVPNAssignment(saved);
+});
+vpnImport.close.addEventListener('click', () => { if (!vpnImport.busy) vpnImport.dialog.close(); });
+vpnImport.dialog.addEventListener('cancel', (event) => { if (vpnImport.busy) event.preventDefault(); });
+vpnImport.dialog.addEventListener('close', () => {
+  vpnImport.exportPassword.value = ''; vpnImport.username.value = ''; vpnImport.password.value = '';
+  vpnImport.fctFile.value = ''; vpnImport.fctData = null;
+  vpnImport.mfa.value = 'none';
+  vpnImport.replace.checked = false;
+  vpnImport.file.value = ''; vpnImport.data = null; resetVPNImportPlan();
+});
+vpnImport.file.addEventListener('change', () => { vpnImport.file.removeAttribute('aria-invalid'); inspectVPNImportFile(); });
+vpnImport.fctFile.addEventListener('change', async () => {
+  resetVPNImportPlan();
+  vpnImport.fctData = null;
+  vpnImport.fctFile.removeAttribute('aria-invalid');
+  const file = vpnImport.fctFile.files?.[0];
+  if (!file) return;
+  if (file.size === 0 || file.size > 64 * 1024) {
+    vpnImportFieldError(vpnImport.fctFile, 'The FCT payload must be between 1 byte and 64 KiB.');
+    return;
+  }
+  try {
+    vpnImport.fctData = await new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(String(reader.result).split(',')[1]);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+    vpnImportMessage('FCT payload loaded for secure storage with this connection.');
+  } catch (_error) {
+    vpnImportFieldError(vpnImport.fctFile, 'Could not read the FCT payload.');
+  }
+});
+function vpnImportFormatChanged() {
+  const openvpn = vpnImport.format.value === 'openvpn-config';
+  vpnImport.file.accept = openvpn ? '.ovpn' : '.conf,.xml,.plist';
+  vpnImport.exportPasswordGroup.hidden = openvpn;
+  vpnImport.fctGroup.hidden = openvpn;
+  if (openvpn) {
+    vpnImport.exportPassword.value = '';
+    vpnImport.fctFile.value = '';
+    vpnImport.fctData = null;
+  }
+  inspectVPNImportFile();
+}
+vpnImport.format.addEventListener('change', vpnImportFormatChanged);
+vpnImport.tenant.addEventListener('change', renderVPNImportVrfs);
+vpnImport.profile.addEventListener('change', suggestVPNConnectionDetails);
+for (const field of [vpnImport.profile, vpnImport.exportPassword, vpnImport.tenant, vpnImport.vrf,
+                     vpnImport.id, vpnImport.name, vpnImport.username, vpnImport.password,
+                     vpnImport.mfa, vpnImport.replace, vpnImport.fctFile]) {
+  const changed = () => { field.removeAttribute('aria-invalid'); resetVPNImportPlan(); };
+  field.addEventListener('input', changed);
+  field.addEventListener('change', changed);
+}
+vpnImport.planButton.addEventListener('click', planVPNImport);
+vpnImport.apply.addEventListener('click', applyVPNImport);
+
+elements.vpnAssignmentOpen.addEventListener("click", openVPNAssignment);
+elements.vpnAssignmentClose.addEventListener("click", () => {
+  resetVPNAssignmentPlan();
+  elements.vpnAssignmentDialog.close();
+});
+elements.vpnAssignmentTenant.addEventListener("change", loadVPNAssignmentOptions);
+elements.vpnAssignmentConnection.addEventListener("change", () => {
+  resetVPNAssignmentPlan();
+  updateVPNAssignmentControls();
+});
+elements.vpnAssignmentTargetType.addEventListener("change", () => {
+  state.vpnAssignmentSelectedIds.clear();
+  elements.vpnAssignmentFilter.value = "";
+  resetVPNAssignmentPlan();
+  renderVPNAssignmentTargets();
+});
+elements.vpnAssignmentFilter.addEventListener("input", renderVPNAssignmentTargets);
+elements.vpnAssignmentTargets.addEventListener("change", (event) => {
+  if (!(event.target instanceof HTMLInputElement) || event.target.type !== "checkbox") return;
+  const id = Number(event.target.value);
+  if (event.target.checked) state.vpnAssignmentSelectedIds.add(id);
+  else state.vpnAssignmentSelectedIds.delete(id);
+  resetVPNAssignmentPlan();
+  updateVPNAssignmentControls();
+});
+elements.vpnAssignmentSelectAll.addEventListener("click", () => {
+  const visible = filteredVPNAssignmentTargets();
+  const allSelected = visible.length > 0
+    && visible.every((target) => state.vpnAssignmentSelectedIds.has(target.id));
+  for (const target of visible) {
+    if (allSelected) state.vpnAssignmentSelectedIds.delete(target.id);
+    else state.vpnAssignmentSelectedIds.add(target.id);
+  }
+  resetVPNAssignmentPlan();
+  renderVPNAssignmentTargets();
+});
+elements.vpnAssignmentPlanButton.addEventListener("click", planVPNAssignment);
+elements.vpnAssignmentApply.addEventListener("click", applyVPNAssignment);
+elements.vpnAssignmentConfirm.addEventListener("change", () => {
+  elements.vpnAssignmentApply.disabled = state.vpnAssignmentBusy
+    || !state.vpnAssignmentPlan
+    || !elements.vpnAssignmentConfirm.checked;
+});
+
+function resetVPNTestResult() {
+  elements.vpnTestResult.hidden = true;
+  elements.vpnTestOTP.hidden = true;
+  elements.vpnTestOTPCode.value = "";
+  state.vpnTestOTPResolve = null;
+  elements.vpnTestStatus.className = "status-pill status-pill-neutral";
+  elements.vpnTestStatus.textContent = "Unknown";
+}
+
+function renderVPNConnectivityResult(result) {
+  elements.vpnTestResult.hidden = false;
+  elements.vpnTestStatus.textContent = result.status === "passed" ? "Passed" : "Failed";
+  elements.vpnTestStatus.className = `status-pill ${result.status === "passed" ? "status-pill-healthy" : "status-pill-unhealthy"}`;
+  elements.vpnTestResultTitle.textContent = result.status === "passed" ? "VPN is working" : "VPN test failed";
+  elements.vpnTestTunnel.textContent = result.tunnel_established ? "IKE and CHILD SA established" : "Not established";
+  elements.vpnTestTarget.textContent = result.target_reachable
+    ? `${result.target_ip}:${result.target_port} reachable`
+    : result.tunnel_established
+      ? `${result.target_ip}:${result.target_port} did not answer`
+      : "Not tested — tunnel was not established";
+  elements.vpnTestAddress.textContent = result.assigned_address || "Not assigned";
+  elements.vpnTestCleanup.textContent = result.disconnected ? "Disconnected and cleaned up" : "Cleanup not confirmed";
+  const reason = result.reason_code ? ` Reason: ${result.reason_code}.` : '';
+  elements.vpnTestDetail.textContent = `${result.message}${reason} Duration: ${(result.duration_ms / 1000).toFixed(1)} s.`;
+  elements.vpnTestMessage.textContent = result.disconnected
+    ? "Test finished. The temporary VPN connectivity is closed."
+    : "Test finished, but cleanup was not confirmed.";
+}
+
+function requestVPNOTP() {
+  elements.vpnTestOTP.hidden = false;
+  elements.vpnTestOTPCode.value = "";
+  elements.vpnTestOTPSubmit.disabled = false;
+  elements.vpnTestActivityTitle.textContent = "Authentication code required";
+  elements.vpnTestActivityDetail.textContent = "Check your e-mail, enter the one-time code below, then submit it.";
+  elements.vpnTestMessage.textContent = "The VPN gateway is waiting for the one-time authentication code.";
+  window.setTimeout(() => elements.vpnTestOTPCode.focus(), 0);
+  return new Promise((resolve, reject) => {
+    const timeout = window.setTimeout(() => {
+      state.vpnTestOTPResolve = null;
+      reject(new Error("The authentication-code entry timed out."));
+    }, 125000);
+    state.vpnTestOTPResolve = (code) => {
+      window.clearTimeout(timeout);
+      resolve(code);
+    };
+  });
+}
+
+function submitVPNOTPInput() {
+  if (!state.vpnTestOTPResolve) return;
+  const code = elements.vpnTestOTPCode.value.trim();
+  if (!/^[0-9]{4,16}$/.test(code)) {
+    elements.vpnTestMessage.textContent = "Enter the 4 to 16 digit authentication code.";
+    elements.vpnTestOTPCode.focus();
+    return;
+  }
+  const resolve = state.vpnTestOTPResolve;
+  state.vpnTestOTPResolve = null;
+  elements.vpnTestOTPSubmit.disabled = true;
+  elements.vpnTestOTPCode.value = "";
+  resolve(code);
+}
+
+async function runInteractiveMFATest(connectionId, requestBody) {
+  let stateResult = await apiRequest(
+    `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa`,
+    { method: "POST", headers: operatorHeaders(), body: requestBody },
+  );
+  const query = `device_id=${encodeURIComponent(requestBody.device_id)}&target_port=${encodeURIComponent(requestBody.target_port)}`;
+  const deadline = Date.now() + 180000;
+  let submitted = false;
+  while (stateResult.state !== "finished") {
+    if (Date.now() >= deadline) throw new Error("The MFA operation timed out.");
+    if (stateResult.state === "waiting_for_otp" && !submitted) {
+      const code = await requestVPNOTP();
+      stateResult = await apiRequest(
+        `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa/${encodeURIComponent(stateResult.operation_id)}/otp?${query}`,
+        { method: "POST", headers: operatorHeaders(), body: { code } },
+      );
+      submitted = true;
+      elements.vpnTestOTP.hidden = true;
+      elements.vpnTestActivityTitle.textContent = "Verifying authentication code";
+      elements.vpnTestActivityDetail.textContent = "The code was submitted. Atlas is waiting for the tunnel and will then test the selected device.";
+    }
+    if (stateResult.state === "waiting_for_push") {
+      elements.vpnTestActivityTitle.textContent = "Waiting for push approval";
+      elements.vpnTestActivityDetail.textContent = "Approve the VPN sign-in request. Atlas will continue automatically and will not request an OTP code.";
+      elements.vpnTestMessage.textContent = "The VPN gateway is waiting for push approval.";
+    }
+    if (stateResult.state === "finished") break;
+    await new Promise((resolve) => window.setTimeout(resolve, 500));
+    stateResult = await apiRequest(
+      `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test/mfa/${encodeURIComponent(stateResult.operation_id)}?${query}`,
+      { headers: operatorHeaders() },
+    );
+  }
+  if (!stateResult.result) throw new Error("The VPN worker returned no test result.");
+  return stateResult.result;
+}
+
+function updateVPNTestRun() {
+  const port = Number(elements.vpnTestPort.value);
+  elements.vpnTestRun.disabled = state.vpnTestBusy
+    || !elements.vpnTestConnection.value
+    || !elements.vpnTestDevice.value
+    || !Number.isInteger(port) || port < 1 || port > 65535;
+}
+
+function renderVPNTestConnections() {
+  const options = state.vpnTestOptions;
+  elements.vpnTestConnection.replaceChildren(
+    new Option("Select a VPN connection", ""),
+    ...(options?.connections || []).map((item) => new Option(item.name, item.connection_id)),
+  );
+  elements.vpnTestConnection.disabled = !(options?.connections || []).length;
+  renderVPNTestSites();
+}
+
+function renderVPNTestSites() {
+  const connectionId = elements.vpnTestConnection.value;
+  const sites = (state.vpnTestOptions?.sites || []).filter(
+    (site) => site.connection_id === connectionId,
+  );
+  elements.vpnTestSite.replaceChildren(
+    new Option(connectionId ? "Select an assigned Site" : "Select a VPN first", ""),
+    ...sites.map((site) => new Option(site.name, String(site.id))),
+  );
+  elements.vpnTestSite.disabled = !connectionId || sites.length === 0;
+  elements.vpnTestMessage.textContent = connectionId && sites.length === 0
+    ? "This VPN is not assigned to a Site yet. Assign it before testing."
+    : "Choose an assigned Site and one device whose management port should answer.";
+  renderVPNTestDevices();
+}
+
+function renderVPNTestDevices() {
+  const siteId = Number(elements.vpnTestSite.value);
+  const devices = (state.vpnTestOptions?.devices || []).filter(
+    (device) => siteId > 0 && device.site_id === siteId,
+  );
+  elements.vpnTestDevice.replaceChildren(
+    new Option(siteId ? "Select a proof device" : "Select a Site first", ""),
+    ...devices.map((device) => new Option(device.name, String(device.id))),
+  );
+  elements.vpnTestDevice.disabled = !siteId || devices.length === 0;
+  if (siteId && devices.length === 0) {
+    elements.vpnTestMessage.textContent = "The selected Site has no active device available for a connectivity test.";
+  }
+  resetVPNTestResult();
+  updateVPNTestRun();
+}
+
+async function openVPNTest() {
+  if (!requireOperatorToken()) return;
+  state.vpnTestOptions = null;
+  state.vpnTestBusy = false;
+  resetVPNTestResult();
+  elements.vpnTestDialog.showModal();
+  elements.vpnTestMessage.textContent = "Loading customers from NetBox…";
+  elements.vpnTestTenant.disabled = true;
+  try {
+    const options = await apiRequest("/api/v1/vpn/forticlient/options", { headers: operatorHeaders() });
+    elements.vpnTestTenant.replaceChildren(
+      new Option("Select a customer", ""),
+      ...options.tenants.map((tenant) => new Option(tenant.name, String(tenant.id))),
+    );
+    elements.vpnTestTenant.disabled = false;
+    elements.vpnTestMessage.textContent = "Choose a customer, VPN, assigned Site and proof device.";
+  } catch (error) {
+    elements.vpnTestMessage.textContent = error.safeMessage || "Could not load VPN test options.";
+  }
+}
+
+async function loadVPNTestOptions() {
+  const tenantId = Number(elements.vpnTestTenant.value);
+  state.vpnTestOptions = null;
+  elements.vpnTestConnection.replaceChildren(new Option("Loading VPN connections…", ""));
+  elements.vpnTestConnection.disabled = true;
+  renderVPNTestSites();
+  if (!tenantId) return;
+  elements.vpnTestMessage.textContent = "Loading assigned Sites and devices…";
+  try {
+    state.vpnTestOptions = await apiRequest(
+      `/api/v1/vpn/assignments/options?tenant_id=${encodeURIComponent(tenantId)}`,
+      { headers: operatorHeaders() },
+    );
+    renderVPNTestConnections();
+  } catch (error) {
+    elements.vpnTestMessage.textContent = error.safeMessage || "Could not load assigned VPN targets.";
+  }
+}
+
+async function runVPNTest() {
+  if (state.vpnTestBusy || elements.vpnTestRun.disabled) return;
+  state.vpnTestBusy = true;
+  resetVPNTestResult();
+  updateVPNTestRun();
+  elements.vpnTestActivity.hidden = false;
+  const selectedConnection = (state.vpnTestOptions?.connections || []).find(
+    (item) => item.connection_id === elements.vpnTestConnection.value,
+  );
+  const mfaMode = {
+    external_mfa: "auto",
+    external_mfa_push: "push",
+    external_mfa_otp: "otp",
+  }[selectedConnection?.auth_method] || "none";
+  const usesMfa = mfaMode !== "none";
+  elements.vpnTestActivityTitle.textContent = usesMfa
+    ? "Starting interactive MFA"
+    : "Waiting for the isolated VPN worker";
+  elements.vpnTestActivityDetail.textContent = usesMfa
+    ? (mfaMode === "push"
+      ? "Atlas is starting IKE authentication and will wait for push approval."
+      : "Atlas is authenticating with the stored username and password. It will display the OTP field only after the gateway requests a code.")
+    : "Atlas sent the request · 0 s elapsed. Tunnel negotiation and cleanup can take up to one minute.";
+  elements.vpnTestMessage.textContent = usesMfa
+    ? (mfaMode === "push"
+      ? "Approve the push notification when it arrives."
+      : "Wait for the gateway to send the authentication code. Atlas will then display the code field.")
+    : "The worker is connecting and will disconnect automatically after the check.";
+  const startedAt = Date.now();
+  const activityTimer = window.setInterval(() => {
+    const elapsed = Math.max(0, Math.floor((Date.now() - startedAt) / 1000));
+    if (!usesMfa) {
+      elements.vpnTestActivityDetail.textContent = `Atlas sent the request · ${elapsed} s elapsed. Waiting for the worker to return a result and confirm cleanup.`;
+    }
+  }, 1000);
+  const connectionId = elements.vpnTestConnection.value;
+  try {
+    const requestBody = {
+      device_id: Number(elements.vpnTestDevice.value),
+      target_port: Number(elements.vpnTestPort.value),
+    };
+    const result = usesMfa
+      ? await runInteractiveMFATest(connectionId, requestBody)
+      : await apiRequest(
+        `/api/v1/vpn/connections/${encodeURIComponent(connectionId)}/test`,
+        { method: "POST", headers: operatorHeaders(), body: requestBody },
+      );
+    renderVPNConnectivityResult(result);
+  } catch (error) {
+    const safeMessage = error.safeMessage || "The VPN test could not be started.";
+    const errorCode = error.code || "request_failed";
+    const requestReference = error.requestId ? ` Request ID: ${error.requestId}.` : "";
+    elements.vpnTestResult.hidden = false;
+    elements.vpnTestStatus.textContent = "Failed";
+    elements.vpnTestStatus.className = "status-pill status-pill-unhealthy";
+    elements.vpnTestResultTitle.textContent = "VPN test could not run";
+    elements.vpnTestTunnel.textContent = "Not evaluated";
+    elements.vpnTestTarget.textContent = "Not evaluated";
+    elements.vpnTestAddress.textContent = "Not available";
+    elements.vpnTestCleanup.textContent = "No tunnel state returned";
+    elements.vpnTestDetail.textContent = `${safeMessage}. Code: ${errorCode}.${requestReference} Check VPN worker logs for the matching request.`;
+    elements.vpnTestMessage.textContent = "The request failed before Atlas received a test result. No successful tunnel is being reported.";
+  } finally {
+    window.clearInterval(activityTimer);
+    state.vpnTestBusy = false;
+    state.vpnTestOTPResolve = null;
+    elements.vpnTestOTP.hidden = true;
+    elements.vpnTestActivity.hidden = true;
+    updateVPNTestRun();
+  }
+}
+
+elements.vpnTestOpen.addEventListener("click", openVPNTest);
+elements.vpnTestClose.addEventListener("click", () => { if (!state.vpnTestBusy) elements.vpnTestDialog.close(); });
+elements.vpnTestDialog.addEventListener("cancel", (event) => { if (state.vpnTestBusy) event.preventDefault(); });
+elements.vpnTestTenant.addEventListener("change", loadVPNTestOptions);
+elements.vpnTestConnection.addEventListener("change", renderVPNTestSites);
+elements.vpnTestSite.addEventListener("change", renderVPNTestDevices);
+elements.vpnTestDevice.addEventListener("change", updateVPNTestRun);
+elements.vpnTestPort.addEventListener("input", updateVPNTestRun);
+elements.vpnTestRun.addEventListener("click", runVPNTest);
+elements.vpnTestOTPSubmit.addEventListener("click", submitVPNOTPInput);
+elements.vpnTestOTPCode.addEventListener("keydown", (event) => {
+  if (event.key === "Enter") {
+    event.preventDefault();
+    submitVPNOTPInput();
+  }
+});
+
 for (const input of [
   elements.credentialProfile,
   elements.credentialProphylaxisEnabled,
@@ -1981,34 +3319,34 @@ for (const input of [
   elements.credentialSnmpCommunity,
   elements.credentialReplace,
 ]) input.addEventListener("input", resetCredentialPlan);
-elements.inventoryImportOpen.addEventListener("click", () => {
-  elements.inventoryImportDialog.showModal();
-  elements.inventoryTable.focus();
-});
+elements.inventoryImportOpen.addEventListener("click", openInventoryImport);
 elements.inventoryImportClose.addEventListener("click", () => {
   elements.inventoryImportDialog.close();
 });
 elements.inventoryExample.addEventListener("click", () => {
   elements.inventoryTable.value = [
-    "Hostname\tHardware model\tManagement IP\tTenant\tSite",
-    "BR-SW01\tC9500-48Y4C\t10.0.0.10\tacme-slovakia\tBratislava DC",
+    "Hostname\tHardware model\tManagement IP\tTenant\tSite\tPlatform",
+    "BR-SW01\tC9500-48Y4C\t10.0.0.10\tacme-slovakia\tBratislava DC\tcisco-ios-xe",
   ].join("\n");
+  state.inventoryPlatformOverrides = {};
   resetInventoryPlan();
   elements.inventoryTable.focus();
 });
 elements.inventoryClear.addEventListener("click", () => {
   elements.inventoryTable.value = "";
   elements.inventoryTenant.value = "";
-  elements.inventorySite.value = "";
+  resetInventorySiteOptions();
   elements.inventoryDeviceTypeYaml.value = "";
   setInventoryDeviceTypeError();
   elements.inventoryDeviceTypeReplace.checked = false;
+  state.inventoryPlatformOverrides = {};
   resetInventoryPlan();
   elements.inventoryTable.focus();
 });
 elements.inventoryPlanButton.addEventListener("click", planInventory);
 elements.inventoryRetry.addEventListener("click", planInventory);
 elements.inventoryDeviceTypeUpload.addEventListener("click", uploadInventoryDeviceType);
+elements.inventoryPlatformAssign.addEventListener("click", assignInventoryPlatform);
 elements.inventoryDeviceTypeModel.addEventListener("change", updateInventoryDeviceTypeFilename);
 elements.inventoryDeviceTypeYaml.addEventListener("input", () => setInventoryDeviceTypeError());
 elements.inventoryApplyConfirm.addEventListener("change", () => {
@@ -2017,8 +3355,19 @@ elements.inventoryApplyConfirm.addEventListener("change", () => {
     || !elements.inventoryApplyConfirm.checked;
 });
 elements.inventoryApply.addEventListener("click", applyInventory);
-for (const input of [elements.inventoryTable, elements.inventoryTenant, elements.inventorySite]) {
-  input.addEventListener("input", resetInventoryPlan);
-}
+elements.inventoryTable.addEventListener("input", () => {
+  state.inventoryPlatformOverrides = {};
+  resetInventoryPlan();
+});
+elements.inventoryTenant.addEventListener("change", async () => {
+  resetInventoryPlan();
+  try {
+    await loadInventoryImportSites();
+  } catch (error) {
+    resetInventorySiteOptions("Site list unavailable");
+    toast(error.safeMessage || "Site list is unavailable for this tenant.", "error");
+  }
+});
+elements.inventorySite.addEventListener("change", resetInventoryPlan);
 
 refreshAdminSession({ prompt: true }).finally(loadDashboard);

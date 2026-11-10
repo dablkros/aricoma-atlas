@@ -2,7 +2,7 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
-from unittest.mock import Mock, call
+from unittest.mock import Mock, call, patch
 
 import requests
 
@@ -61,6 +61,36 @@ class OpenBaoServiceTests(unittest.TestCase):
             Path("backend-identity.json")
         )
         client.lookup_self.assert_called_once_with("runtime-token")
+
+    def test_secret_existence_check_reads_only_kv_metadata(self):
+        client = Mock()
+        client.login_from_identity.return_value = "runtime-token"
+        client.kv_read_metadata.return_value = {
+            "current_version": 2,
+            "versions": {"2": {"destroyed": False, "deletion_time": ""}},
+        }
+        service = self.service(client)
+
+        metadata = service.read_secret_metadata("vpn/connections/customer-a")
+
+        self.assertEqual(metadata["current_version"], 2)
+        client.kv_read_metadata.assert_called_once_with(
+            "runtime-token", "vpn/connections/customer-a", mount="atlas"
+        )
+        client.kv_read.assert_not_called()
+
+    def test_openbao_client_uses_kv_v2_metadata_endpoint(self):
+        response = FakeResponse(data={"data": {"current_version": 3}})
+        with patch("atlas.openbao_client.requests.request", return_value=response) as request:
+            metadata = OpenBaoClient("https://bao.example.test").kv_read_metadata(
+                "sensitive-token", "vpn/connections/customer-a", mount="atlas"
+            )
+
+        self.assertEqual(metadata, {"current_version": 3})
+        self.assertEqual(
+            request.call_args.args[:2],
+            ("GET", "https://bao.example.test/v1/atlas/metadata/vpn/connections/customer-a"),
+        )
 
     def test_missing_and_invalid_identity_files_are_auth_failures(self):
         with tempfile.TemporaryDirectory() as directory:

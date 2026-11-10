@@ -28,7 +28,11 @@ class CredentialOnboardingRequest(BaseModel):
         min_length=1,
         max_length=100,
     )
-    platform: str = Field(pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    platform: str | None = Field(
+        default=None,
+        pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$",
+    )
+    preserve_device_platforms: bool = False
     credential_profile: str = Field(
         min_length=1,
         max_length=128,
@@ -50,6 +54,12 @@ class CredentialOnboardingRequest(BaseModel):
     def validate_selected_credentials(self):
         if len(set(self.device_ids)) != len(self.device_ids):
             raise ValueError("Device selection contains duplicates")
+        if self.preserve_device_platforms and self.platform is not None:
+            raise ValueError(
+                "Platform must be omitted when preserving device platforms"
+            )
+        if not self.preserve_device_platforms and self.platform is None:
+            raise ValueError("Platform is required")
         if not any((self.prophylaxis_enabled, self.oxidized_enabled, self.monitoring_enabled)):
             raise ValueError("Select at least one credential purpose")
         if self.prophylaxis_enabled:

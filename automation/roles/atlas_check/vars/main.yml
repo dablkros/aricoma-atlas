@@ -27,27 +27,39 @@ atlas_transport_files:
     cbs_resources:
       cisco-cbs: resources/cisco_cbs.yml
       cisco-cbs250-350: resources/cisco_cbs.yml
+      cisco-catalyst-1200: resources/cisco_cbs.yml
+      cisco-catalyst-1300: resources/cisco_cbs.yml
     cbs_interfaces:
       cisco-cbs: interfaces/cisco_cbs.yml
       cisco-cbs250-350: interfaces/cisco_cbs.yml
+      cisco-catalyst-1200: interfaces/cisco_cbs.yml
+      cisco-catalyst-1300: interfaces/cisco_cbs.yml
     cbs_compliance:
       cisco-cbs: compliance/cisco_cbs.yml
       cisco-cbs250-350: compliance/cisco_cbs.yml
+      cisco-catalyst-1200: compliance/cisco_cbs.yml
+      cisco-catalyst-1300: compliance/cisco_cbs.yml
     cbs_operations:
       cisco-cbs: operations/cisco_cbs.yml
       cisco-cbs250-350: operations/cisco_cbs.yml
+      cisco-catalyst-1200: operations/cisco_cbs.yml
+      cisco-catalyst-1300: operations/cisco_cbs.yml
     cpu_usage:
       fortios: cpu/fortios_ssh.yml
       cisco-ios: cpu/cisco_ios.yml
       cisco-ios-xe: cpu/cisco_ios.yml
       cisco-cbs: cpu/cisco_cbs.yml
       cisco-cbs250-350: cpu/cisco_cbs.yml
+      cisco-catalyst-1200: cpu/cisco_cbs.yml
+      cisco-catalyst-1300: cpu/cisco_cbs.yml
     device_facts:
       fortios: device_facts/fortios_ssh.yml
       cisco-ios: device_facts/cisco_ios.yml
       cisco-ios-xe: device_facts/cisco_ios.yml
       cisco-cbs: device_facts/cisco_cbs.yml
       cisco-cbs250-350: device_facts/cisco_cbs.yml
+      cisco-catalyst-1200: device_facts/cisco_cbs.yml
+      cisco-catalyst-1300: device_facts/cisco_cbs.yml
       cisco-nxos: device_facts/cisco_nxos.yml
       cisco-asa: device_facts/cisco_asa.yml
       aruba-aos-cx: device_facts/aruba_aoscx.yml
@@ -84,4 +96,6 @@ atlas_transport_files:
     snmp_system:
       cisco-cbs: snmp/cisco_cbs_system.yml
       cisco-cbs250-350: snmp/cisco_cbs_system.yml
+      cisco-catalyst-1200: snmp/cisco_cbs_system.yml
+      cisco-catalyst-1300: snmp/cisco_cbs_system.yml
       aruba-aos-cx: snmp/aruba_aoscx_system.yml

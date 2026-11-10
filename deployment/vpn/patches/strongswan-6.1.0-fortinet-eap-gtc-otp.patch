@@ -1,0 +1,119 @@
+--- a/src/libcharon/plugins/eap_gtc/eap_gtc.c
++++ b/src/libcharon/plugins/eap_gtc/eap_gtc.c
+@@ -19,4 +19,8 @@
+ #include <daemon.h>
+ #include <library.h>
+ 
++#include <errno.h>
++#include <fcntl.h>
++#include <unistd.h>
++
+ #define GTC_REQUEST_MSG "password"
+@@ -100,14 +104,85 @@
+ 	shared_key_t *shared;
+ 	chunk_t key;
+ 	size_t len;
++	char *request_file, *response_file;
++	chunk_t otp = chunk_empty;
++	int fd = -1, timeout, waited = 0;
++	ssize_t received;
+ 
+-	shared = lib->credmgr->get_shared(lib->credmgr, SHARED_EAP,
++	/* Atlas runs one isolated daemon per operation. For Fortinet's second
++	 * EAP round, signal the worker and wait for a short-lived OTP file. */
++	request_file = lib->settings->get_str(lib->settings,
++						"%s.atlas_fortinet_otp_request_file", NULL, lib->ns);
++	response_file = lib->settings->get_str(lib->settings,
++						"%s.atlas_fortinet_otp_response_file", NULL, lib->ns);
++	if (request_file && response_file)
++	{
++		fd = open(request_file, O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600);
++		if (fd >= 0)
++		{
++			close(fd);
++		}
++		else if (errno != EEXIST)
++		{
++			DBG1(DBG_IKE, "creating Atlas OTP request marker failed");
++			return FAILED;
++		}
++		timeout = lib->settings->get_int(lib->settings,
++						"%s.atlas_fortinet_otp_timeout", 120, lib->ns);
++		while (waited < timeout * 10)
++		{
++			fd = open(response_file, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
++			if (fd >= 0)
++			{
++				break;
++			}
++			if (errno != ENOENT)
++			{
++				DBG1(DBG_IKE, "opening Atlas OTP response failed");
++				return FAILED;
++			}
++			usleep(100000);
++			waited++;
++		}
++		if (fd < 0)
++		{
++			DBG1(DBG_IKE, "waiting for Atlas OTP timed out");
++			return FAILED;
++		}
++		otp = chunk_alloc(17);
++		received = read(fd, otp.ptr, otp.len);
++		close(fd);
++		unlink(response_file);
++		unlink(request_file);
++		if (received < 4 || received > 16)
++		{
++			chunk_clear(&otp);
++			DBG1(DBG_IKE, "Atlas OTP response has invalid length");
++			return FAILED;
++		}
++		otp.len = received;
++		for (len = 0; len < otp.len; len++)
++		{
++			if (otp.ptr[len] < '0' || otp.ptr[len] > '9')
++			{
++				chunk_clear(&otp);
++				DBG1(DBG_IKE, "Atlas OTP response has invalid format");
++				return FAILED;
++			}
++		}
++		key = otp;
++		shared = NULL;
++	}
++	else
++	{
++		shared = lib->credmgr->get_shared(lib->credmgr, SHARED_EAP,
+ 									  this->peer, this->server);
+-	if (shared == NULL)
+-	{
+-		DBG1(DBG_IKE, "no EAP key found for '%Y' - '%Y'",
+-			 this->peer, this->server);
+-		return FAILED;
++		if (shared == NULL)
++		{
++			DBG1(DBG_IKE, "no EAP key found for '%Y' - '%Y'",
++				 this->peer, this->server);
++			return FAILED;
++		}
++		key = shared->get_key(shared);
+ 	}
+-	key = shared->get_key(shared);
+ 	len = key.len;
+@@ -122,6 +197,13 @@
+ 	res->type = EAP_GTC;
+ 	memcpy(res->data, key.ptr, len);
+ 
+-	shared->destroy(shared);
++	if (shared)
++	{
++		shared->destroy(shared);
++	}
++	if (otp.ptr)
++	{
++		chunk_clear(&otp);
++	}
+ 
+ 	*out = eap_payload_create_data(chunk_create((void*)res,

@@ -1,0 +1,33 @@
+---
+- name: "Collect Cisco IOS command: {{ atlas_command_spec.command }}"
+  cisco.ios.ios_command:
+    commands:
+      - "{{ atlas_command_spec.command }}"
+  register: atlas_single_command
+  changed_when: false
+  vars:
+    atlas_command_error_text: >-
+      {{ (atlas_single_command.msg | default('') | string) ~ ' ' ~
+         (atlas_single_command.stdout | default([], true) | join(' ')) }}
+  failed_when:
+    - atlas_single_command.failed | default(false)
+    - >-
+      (atlas_command_error_text |
+       regex_search('(?i)(invalid input|invalid command|unrecognized command|unknown command|incomplete command|ambiguous command)'))
+      is none
+
+- name: "Buffer Cisco IOS command: {{ atlas_command_spec.command }}"
+  ansible.builtin.set_fact:
+    atlas_command_outputs: >-
+      {{ atlas_command_outputs |
+         combine({atlas_command_spec.key:
+           atlas_buffered_command_output}) }}
+  vars:
+    atlas_raw_command_output: >-
+      {{ atlas_single_command.stdout | default([], true) | first | default('') }}
+    atlas_buffered_command_output: >-
+      {{ atlas_raw_command_output
+         if atlas_command_spec.key == 'show_logging'
+         else (atlas_raw_command_output |
+           regex_replace('(?m)^.*%SNMP-W-SNMPAUTHFAIL:.*(?:\\r?\\n|$)', '')) }}
+

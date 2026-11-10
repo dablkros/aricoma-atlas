@@ -7,6 +7,7 @@ from typing import Any
 
 class ImportStatus(StrEnum):
     CREATE = "CREATE"
+    UPDATE = "UPDATE"
     UNCHANGED = "UNCHANGED"
     INVALID = "INVALID"
     CONFLICT = "CONFLICT"

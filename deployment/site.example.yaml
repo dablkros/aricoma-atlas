@@ -5,6 +5,7 @@ inventory:
   default_tenant:
     name: ACME Slovakia
     slug: acme-slovakia
+    group: customers
     provision: true
   management_interface: mgmt0
   default_ipv4_prefix_length: 32

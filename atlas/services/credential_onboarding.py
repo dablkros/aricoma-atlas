@@ -43,10 +43,22 @@ class CredentialOnboardingService:
             device_type = device.get("device_type") or {}
             manufacturer = device_type.get("manufacturer") or {}
             platform = device.get("platform") or {}
+            tenant = device.get("tenant") or {}
+            site = device.get("site") or {}
             fields = device.get("custom_fields") or {}
             result_devices.append({
                 "id": device.get("id"),
                 "name": device.get("name"),
+                "tenant": {
+                    "id": tenant.get("id"),
+                    "name": tenant.get("name"),
+                    "slug": tenant.get("slug"),
+                },
+                "site": {
+                    "id": site.get("id"),
+                    "name": site.get("name"),
+                    "slug": site.get("slug"),
+                },
                 "manufacturer": {
                     "name": manufacturer.get("name"),
                     "slug": manufacturer.get("slug"),
@@ -59,6 +71,20 @@ class CredentialOnboardingService:
                 "oxidized_enabled": fields.get("oxidized_enabled") is True,
                 "monitoring_enabled": fields.get("monitoring_enabled") is True,
             })
+        tenants = sorted(
+            {
+                (
+                    device["tenant"]["id"],
+                    device["tenant"]["name"],
+                    device["tenant"]["slug"],
+                )
+                for device in result_devices
+                if device["tenant"]["id"] is not None
+                and device["tenant"]["name"]
+                and device["tenant"]["slug"]
+            },
+            key=lambda item: str(item[1]).casefold(),
+        )
         platforms = []
         oxidized = self.platform_config.get("oxidized_platform_mapping", {})
         for slug, definition in sorted(self.platform_config["platforms"].items()):
@@ -76,9 +102,17 @@ class CredentialOnboardingService:
                 "prophylaxis_auth": sorted(set(auth)),
                 "oxidized_supported": slug in oxidized,
             })
-        return {"devices": result_devices, "platforms": platforms, "profiles": profiles}
+        return {
+            "devices": result_devices,
+            "tenants": [
+                {"id": tenant_id, "name": name, "slug": slug}
+                for tenant_id, name, slug in tenants
+            ],
+            "platforms": platforms,
+            "profiles": profiles,
+        }
 
-    def _devices(self, body: CredentialOnboardingRequest) -> tuple[list[dict], str]:
+    def _devices(self, body: CredentialOnboardingRequest) -> tuple[list[dict], str, dict]:
         devices = [
             self.netbox.get(f"/api/dcim/devices/{device_id}/")
             for device_id in body.device_ids
@@ -88,6 +122,20 @@ class CredentialOnboardingService:
             for device in devices
         ):
             raise CredentialOnboardingInvalid("Only active devices can be onboarded")
+        tenants = [device.get("tenant") or {} for device in devices]
+        if any(tenant.get("id") is None for tenant in tenants):
+            raise CredentialOnboardingInvalid(
+                "All selected devices must belong to a tenant"
+            )
+        tenant_pairs = {
+            (tenant.get("id"), tenant.get("slug"), tenant.get("name"))
+            for tenant in tenants
+        }
+        if len(tenant_pairs) != 1:
+            raise CredentialOnboardingInvalid(
+                "All selected devices must belong to the same tenant"
+            )
+        tenant_id, tenant_slug, tenant_name = tenant_pairs.pop()
         manufacturers = [
             ((device.get("device_type") or {}).get("manufacturer") or {})
             for device in devices
@@ -101,24 +149,68 @@ class CredentialOnboardingService:
                 "All selected devices must have the same manufacturer"
             )
         vendor, vendor_name = vendor_pairs.pop()
-        definition = self.platform_config["platforms"].get(body.platform)
-        if not vendor or not definition:
-            raise CredentialOnboardingInvalid("Device manufacturer or platform is missing")
-        if str(vendor_name).casefold() != str(definition["manufacturer"]).casefold():
-            raise CredentialOnboardingInvalid("Platform does not belong to the device manufacturer")
-        return devices, vendor
+        if not vendor:
+            raise CredentialOnboardingInvalid("Device manufacturer is missing")
+        platform_slugs = self._platform_slugs(body, devices)
+        for slug in platform_slugs:
+            definition = self.platform_config["platforms"].get(slug)
+            if not definition:
+                raise CredentialOnboardingInvalid(
+                    f"Platform {slug} is not registered in Atlas"
+                )
+            if str(vendor_name).casefold() != str(definition["manufacturer"]).casefold():
+                raise CredentialOnboardingInvalid(
+                    "Platform does not belong to the device manufacturer"
+                )
+        return devices, vendor, {
+            "id": tenant_id,
+            "slug": tenant_slug,
+            "name": tenant_name,
+        }
 
-    def _requested_secrets(self, body: CredentialOnboardingRequest) -> list[tuple[str, dict]]:
+    @staticmethod
+    def _platform_slugs(
+        body: CredentialOnboardingRequest,
+        devices: list[dict],
+    ) -> set[str]:
+        if not body.preserve_device_platforms:
+            return {body.platform} if body.platform else set()
+        slugs = {
+            (device.get("platform") or {}).get("slug")
+            for device in devices
+        }
+        if None in slugs or "" in slugs:
+            raise CredentialOnboardingInvalid(
+                "Every selected device must have a platform when preserving platforms"
+            )
+        return slugs
+
+    def _requested_secrets(
+        self,
+        body: CredentialOnboardingRequest,
+        devices: list[dict],
+    ) -> list[tuple[str, dict]]:
         try:
             values = []
+            platform_slugs = self._platform_slugs(body, devices)
             if body.prophylaxis_enabled:
-                if body.platform not in ANSIBLE_PLATFORMS:
-                    raise CredentialOnboardingInvalid("Platform is not supported by Prophylaxia")
-                allowed_auth = {ANSIBLE_PLATFORMS[body.platform].authentication}
-                if body.platform == "fortios":
-                    allowed_auth.add("ssh")
+                unsupported = platform_slugs - ANSIBLE_PLATFORMS.keys()
+                if unsupported:
+                    raise CredentialOnboardingInvalid(
+                        "Platform is not supported by Prophylaxia: "
+                        + ", ".join(sorted(unsupported))
+                    )
+                allowed_sets = []
+                for slug in platform_slugs:
+                    allowed = {ANSIBLE_PLATFORMS[slug].authentication}
+                    if slug == "fortios":
+                        allowed.add("ssh")
+                    allowed_sets.append(allowed)
+                allowed_auth = set.intersection(*allowed_sets) if allowed_sets else set()
                 if body.prophylaxis_auth not in allowed_auth:
-                    raise CredentialOnboardingInvalid("Authentication is not supported for this platform")
+                    raise CredentialOnboardingInvalid(
+                        "Authentication is not supported by every selected platform"
+                    )
                 raw = (
                     body.prophylaxis_api.model_dump()
                     if body.prophylaxis_auth == "api_token"
@@ -129,8 +221,13 @@ class CredentialOnboardingService:
                     validate_admin_secret(raw, authentication=body.prophylaxis_auth),
                 ))
             if body.oxidized_enabled:
-                if body.platform not in self.platform_config.get("oxidized_platform_mapping", {}):
-                    raise CredentialOnboardingInvalid("Platform is not supported by Oxidized")
+                oxidized = self.platform_config.get("oxidized_platform_mapping", {})
+                unsupported = platform_slugs - oxidized.keys()
+                if unsupported:
+                    raise CredentialOnboardingInvalid(
+                        "Platform is not supported by Oxidized: "
+                        + ", ".join(sorted(unsupported))
+                    )
                 values.append((
                     "oxidized",
                     validate_admin_secret(body.oxidized.model_dump(exclude_none=True)),
@@ -167,23 +264,32 @@ class CredentialOnboardingService:
                 "action": "UPDATE", "version": version, "blocked": False}
 
     def plan(self, body: CredentialOnboardingRequest) -> dict:
-        devices, vendor = self._devices(body)
-        secrets = self._requested_secrets(body)
+        devices, vendor, tenant = self._devices(body)
+        secrets = self._requested_secrets(body, devices)
         operations = [
             self._secret_operation(
                 vendor, body.credential_profile, purpose, value, body.replace_existing
             )
             for purpose, value in secrets
         ]
-        platforms = self.netbox.get_all(
-            "/api/dcim/platforms/", params={"slug": body.platform}
-        )
-        if len(platforms) != 1:
-            raise CredentialOnboardingInvalid("Selected platform is not provisioned uniquely in NetBox")
+        platforms = []
+        if not body.preserve_device_platforms:
+            platforms = self.netbox.get_all(
+                "/api/dcim/platforms/", params={"slug": body.platform}
+            )
+            if len(platforms) != 1:
+                raise CredentialOnboardingInvalid(
+                    "Selected platform is not provisioned uniquely in NetBox"
+                )
         for device in devices:
             device_ref = {"id": device.get("id"), "name": device.get("name")}
             services = self.netbox.get_device_services(device["id"], "fortios-api")
-            if body.platform == "fortios" and body.prophylaxis_enabled:
+            device_platform = (
+                (device.get("platform") or {}).get("slug")
+                if body.preserve_device_platforms
+                else body.platform
+            )
+            if device_platform == "fortios" and body.prophylaxis_enabled:
                 if body.prophylaxis_auth == "api_token":
                     port = body.fortios_api_port or 443
                     matching = [service for service in services if (
@@ -210,7 +316,11 @@ class CredentialOnboardingService:
                                        "reason": "fortios_api_service_selects_api_transport"})
             current_platform = device.get("platform") or {}
             current_slug = current_platform.get("slug")
-            if current_slug and current_slug != body.platform:
+            if (
+                not body.preserve_device_platforms
+                and current_slug
+                and current_slug != body.platform
+            ):
                 operations.append({"target": "netbox", "object": "device",
                                    "device": device_ref, "action": "CONFLICT",
                                    "blocked": True, "reason": "platform_mismatch"})
@@ -223,7 +333,9 @@ class CredentialOnboardingService:
                 "oxidized_enabled": body.oxidized_enabled,
                 "monitoring_enabled": body.monitoring_enabled,
             }
-            changed = current_platform.get("id") != platforms[0]["id"] or fields != desired_fields
+            changed = fields != desired_fields
+            if not body.preserve_device_platforms:
+                changed = changed or current_platform.get("id") != platforms[0]["id"]
             operations.append({"target": "netbox", "object": "device",
                                "device": device_ref,
                                "action": "UPDATE" if changed else "UNCHANGED",
@@ -234,7 +346,9 @@ class CredentialOnboardingService:
                 for device in devices
             ],
             "manufacturer": vendor,
+            "tenant": tenant,
             "platform": body.platform,
+            "preserve_device_platforms": body.preserve_device_platforms,
             "credential_profile": body.credential_profile,
             "apply_allowed": not any(item.get("blocked") for item in operations),
             "operations": operations,
@@ -244,8 +358,8 @@ class CredentialOnboardingService:
         preview = expected_plan
         if not preview["apply_allowed"]:
             raise CredentialOnboardingInvalid("Resolve credential conflicts before apply")
-        devices, vendor = self._devices(body)
-        secret_values = dict(self._requested_secrets(body))
+        devices, vendor, _tenant = self._devices(body)
+        secret_values = dict(self._requested_secrets(body, devices))
         secret_operations = {
             operation.get("purpose"): operation
             for operation in preview["operations"]
@@ -270,11 +384,18 @@ class CredentialOnboardingService:
                 self.secret_writer.write_secret(
                     operation["path"], value, cas=operation["version"]
                 )
-        platform = self.netbox.get_all(
-            "/api/dcim/platforms/", params={"slug": body.platform}
-        )[0]
+        platform = None
+        if not body.preserve_device_platforms:
+            platform = self.netbox.get_all(
+                "/api/dcim/platforms/", params={"slug": body.platform}
+            )[0]
         for device in devices:
-            if body.platform == "fortios" and body.prophylaxis_enabled:
+            device_platform = (
+                (device.get("platform") or {}).get("slug")
+                if body.preserve_device_platforms
+                else body.platform
+            )
+            if device_platform == "fortios" and body.prophylaxis_enabled:
                 services = self.netbox.get_device_services(device["id"], "fortios-api")
                 service_operation = next(
                     (
@@ -319,9 +440,10 @@ class CredentialOnboardingService:
                 "oxidized_enabled": body.oxidized_enabled,
                 "monitoring_enabled": body.monitoring_enabled,
             })
-            self.netbox.patch(f"/api/dcim/devices/{device['id']}/", {
-                "platform": platform["id"], "custom_fields": fields,
-            })
+            payload = {"custom_fields": fields}
+            if platform is not None:
+                payload["platform"] = platform["id"]
+            self.netbox.patch(f"/api/dcim/devices/{device['id']}/", payload)
         result = self.plan(body)
         result["status"] = "APPLIED"
         return result

@@ -1,15 +1,22 @@
 backend:
-  version: "0.4.3"
-  docker_image: "aricoma-atlas-backend:0.4.3"
+  version: "0.4.4"
+  docker_image: "aricoma-atlas-backend:0.4.4"
   python_base_image: "docker.io/library/python:3.13.16-slim-bookworm"
   dockerfile: "deployment/backend/Dockerfile"
   environment: "production"
   log_level: "INFO"
-  ansible_job_timeout: 120
+  ansible_job_timeout: 300
   fortios_validate_certs: false
   ssh_strict_host_keys: false
   prophylaxis_result_retention: 10000
   prophylaxis_concurrency: 4
+
+vpn_worker:
+  docker_image: "aricoma-atlas-vpn-worker:0.4.4"
+  dockerfile: "deployment/vpn/Dockerfile"
+  connect_timeout: 45
+  mfa_timeout: 120
+  target_timeout: 5
 
 runtime:
   directory: ".runtime/backend"

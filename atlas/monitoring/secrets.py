@@ -40,7 +40,10 @@ class MonitoringSecrets:
                 or not 1 <= data["community_id"] <= 4294967295
                 or not isinstance(data.get("vdom"), str)
             )
-        if device.platform in {"cisco-cbs", "cisco-cbs250-350"}:
+        if device.platform in {
+            "cisco-cbs", "cisco-cbs250-350",
+            "cisco-catalyst-1200", "cisco-catalyst-1300",
+        }:
             invalid = invalid or len(data.get("community", "")) > 20
         if invalid:
             raise MonitoringError("invalid_monitoring_secret")
@@ -81,7 +84,10 @@ class MonitoringSecrets:
                     return winner
                 raise
             return self._read_path(device, path, require_name=True)
-        length = 20 if device.platform in {"cisco-cbs", "cisco-cbs250-350"} else 32
+        length = 20 if device.platform in {
+            "cisco-cbs", "cisco-cbs250-350",
+            "cisco-catalyst-1200", "cisco-catalyst-1300",
+        } else 32
         data = {
             "version": "2c",
             "community": "".join(

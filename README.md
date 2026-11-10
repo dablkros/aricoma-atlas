@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - voliteľný **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - voliteľný **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.3** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.4.4** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
   pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -38,6 +38,9 @@ quorum-controlled OpenBao operáciu. Čitateľná recovery hodnota je vedomý
 bezpečnostný kompromis pre prípad zabudnutého hesla.
 Interaktívne zadaný zákazník/Tenant sa pri deploymente idempotentne vytvorí,
 ak chýba, alebo znovu použije, ak už v NetBoxe existuje s rovnakou identitou.
+Atlas spolu s ním vytvorí alebo znovu použije management VRF
+`<tenant-slug>-mgmt`. Importované management IP bez explicitnej VRF sa ukladajú
+do tejto tenant-owned VRF, nie do globálnej routing tabuľky.
 Pokročilý deklaratívny site YAML môže automatické vytvorenie explicitne zakázať
 pomocou `inventory.default_tenant.provision: false`.
 Na existujúcej inštalácii po upgrade použi:
@@ -64,6 +67,9 @@ sudo atlasctl zabbix sync
 sudo atlasctl zabbix credentials
 sudo atlasctl zabbix logs -f
 sudo atlasctl integrations cisco test
+sudo atlasctl vpn list
+sudo atlasctl vpn resolve --device-id 101
+sudo atlasctl vpn validate customer-a-primary
 sudo atlasctl inventory tenant add --name "ACME Slovakia"
 sudo atlasctl inventory site add --tenant acme-slovakia --name "Bratislava DC"
 sudo atlasctl inventory site set-default --tenant acme-slovakia --name "Bratislava DC"
@@ -85,9 +91,27 @@ diagnostiku.
 Tenant/Site model, CSV/XLSX formát, management IP/VRF pravidlá a bezpečný
 `--dry-run`/`--apply` postup sú popísané v
 [dokumentácii Inventory Importera](docs/inventory-import.md).
+Izolačné pravidlá Tenant/Site/VRF/IP sú popísané v
+[multi-tenant NetBox dokumentácii](docs/multi-tenant-netbox.md). Perzistentný
+register, NetBox mapovanie, resolver, OpenBao reference a P2 hranice opisuje
+[VPN Connection Registry](docs/vpn-connection-registry.md).
+Operations UI prijíma aj validovaný OpenVPN `.ovpn` profil s inline
+certifikátmi a kľúčom. Pri profylaxii Atlas zoskupí zariadenia podľa Site/Device
+VPN priradenia, otvorí jedno dočasné OpenVPN spojenie, spustí collectory cez
+neprivilegovaný runner v izolovanom network namespace a spojenie vždy ukončí.
+IPsec a openfortivpn zostávajú v tejto verzii iba v connectivity-test flowe.
+Fortinet IPsec test podporuje voliteľný per-connection FCT payload pre gateway,
+ktorý ho vyžaduje. Bez neho Atlas nenastaví `fortigate_fct_file` ani neodošle
+Notify 61696; nevytvára žiadnu náhradnú hodnotu. Ak je payload dodaný, uloží sa
+iba do OpenBao a worker ho sprístupní patched strongSwan iba v krátkodobom
+súbore `0600`. LAB A/B test z 10. 11. 2026 na HBM-Ext1 vytvoril IKE SA aj
+CHILD SA s Notify 61696 aj bez neho; výsledok nie je automaticky prenositeľný
+na iné FortiGate konfigurácie. Podrobnosti a integračné medzery sú v
+[návrhu izolovaného VPN workera](docs/forticlient-worker-design.md).
 Rovnaký flow je dostupný aj bez CLI cez **Operations UI → Operator tools →
 Import devices**: operátor vloží tabuľku, skontroluje dry-run, môže doplniť
-chýbajúci validný Device Type YAML, zopakuje plán a explicitne potvrdí Apply.
+chýbajúci validný Device Type YAML, pre typ bez predvolenej platformy vyberie
+platformu konkrétnemu zariadeniu, zopakuje plán a explicitne potvrdí Apply.
 UI počas prípravy plánu zobrazuje aktuálnu fázu a uplynutý čas. Apply je
 odomknuté iba pre presne skontrolovaný plán bez neplatných alebo konfliktných
 riadkov; zmena vstupu plán zneplatní.
@@ -106,13 +130,15 @@ bezpečný fallback `Network Device`; hostname sa na odhad role nepoužíva.
 
 # Aktuálny stav
 
-**Verzia tejto dokumentácie a backendu:** `v0.4.3`
+**Verzia tejto dokumentácie a backendu:** `v0.4.4`
 
-Zmeny oproti `v0.4.2` zahŕňajú riadený import zariadení z CSV/XLSX alebo
-vloženého obsahu tabuľky, automatický preflight Device Types, runtime YAML
-fallback, štandardné Device Roles, bezpečný dry-run/confirm/apply flow,
-rozšírenú FortiOS profylaxiu cez API aj SSH a Cisco Software Suggestion/EoX
-integráciu. Podrobný prehľad je v [CHANGELOG.md](CHANGELOG.md).
+Zmeny oproti `v0.4.3` zahŕňajú multi-tenant NetBox model s management VRF,
+UI onboarding credentials, perzistentný VPN register, import a priradenie VPN
+profilov, izolovaný VPN worker, OpenVPN profylaxiu, Fortinet IPsec/MFA beta
+integráciu a rozšírené Cisco platformy vrátane Catalyst 1200/1300. Podrobný
+prehľad a známe obmedzenia sú v [CHANGELOG.md](CHANGELOG.md).
+Aktuálne release gate, neoverené integračné body a podmienky vytvorenia tagu
+sú v [release readiness pre v0.4.4](docs/release-readiness-0.4.4.md).
 
 V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
 zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
@@ -122,7 +148,9 @@ niektorého plánu zablokuje hromadné vykonanie. Stav `COMPLETED` s verifikáci
 Pre CBS250/350 nastav na zariadení v NetBoxe platformu `cisco-cbs250-350`:
 tá používa vlastný template `Aricoma Atlas Cisco CBS250-350 by SNMP`.
 Platforma `cisco-cbs` zostáva generická pre CBS220/legacy CBS. Bootstrap nastavuje
-predvolenú platformu Device Types; existujúce Devices automaticky nemigruje.
+predvolenú platformu Device Types. Inventory importer môže po explicitnom
+dry-run výbere doplniť platformu existujúcemu Device, iba ak je aktuálne
+prázdna; neprázdnu platformu nikdy automaticky neprepíše.
 RAM CBS350 a systémové metriky testovanej Aruba CX OVA zostávajú bez overeného
 SNMP kontraktu; hranice sú uvedené v [dokumentácii systémových metrík](docs/prophylaxis-system-metrics.md).
 
@@ -160,7 +188,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.3`
+- Atlas backend image `aricoma-atlas-backend:0.4.4`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -170,27 +198,28 @@ Deklarovaná kombinácia pre tento deployment:
 
 | Výrobca | Device Types |
 |---|---:|
-| Cisco | 238 |
+| Cisco | 282 |
 | Fortinet | 162 |
 | Juniper | 290 |
 | Sophos | 21 |
 | HPE Aruba switches | 109 |
-| **Spolu** | **820** |
+| Check Point | 41 |
+| **Spolu** | **905** |
 
 ## Component templates
 
 | Typ komponentu | Počet |
 |---|---:|
-| Console ports | 1 111 |
+| Console ports | 1 295 |
 | Console server ports | 5 |
-| Power ports | 456 |
-| Interfaces | 27 545 |
+| Power ports | 540 |
+| Interfaces | 29 333 |
 | Rear ports | 2 |
 | Front ports | 0 |
-| Module bays | 1 962 |
+| Module bays | 2 039 |
 | Device bays | 2 |
 | Power outlets | 4 |
-| **Spolu** | **31 087** |
+| **Spolu** | **33 220** |
 
 ---
 
@@ -573,7 +602,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.3","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.4.4","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -629,7 +658,11 @@ POST /api/oxidized/sync
 
 Atlas načíta cez paginovaný NetBox API iba zariadenia so stavom `active` a s `oxidized_enabled=true`, striktne overí meno, primary IP, výrobcu, platform mapping a `credential_profile`, a cez AppRole `atlas-backend` načíta výhradne `oxidized` credentials z OpenBao. Zariadenie v inom stave (napríklad `offline`) sa do desired-state inventára nezaradí. IPv4 aj IPv6 prefix sa pred odovzdaním Oxidized odstráni. Neexistuje fallback platformy podľa výrobcu ani fallback z `oxidized` na `admin` credentials.
 
-Cisco platformy `cisco-cbs` a `cisco-cbs250-350` používajú explicitný Oxidized model `ciscosmb` a credential namespace `atlas/devices/credentials/cisco/<credential_profile>/oxidized`. Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických CBS220/250/350 zariadeniach; nepoužíva fallback na model `ios`.
+Cisco platformy `cisco-cbs`, `cisco-cbs250-350`, `cisco-catalyst-1200` a
+`cisco-catalyst-1300` používajú explicitný Oxidized model `ciscosmb` a credential
+namespace `atlas/devices/credentials/cisco/<credential_profile>/oxidized`.
+Mapovanie je experimentálne, kým neprejde backup a restore kontrolou na fyzických
+zariadeniach; nepoužíva fallback na model `ios`.
 
 Check Point platforma `checkpoint-gaia` používa model `gaiaos` z pripnutého Oxidized 0.37.0. `checkpoint-gaia-embedded` zostáva bez Oxidized mapovania, kým sa celý príkazový kontrakt neoverí na fyzickom Spark zariadení.
 
@@ -695,10 +728,12 @@ FastAPI servuje jednoduchú single-page Operations UI na `GET /`. Frontend je č
 - priebežný stav behu a súhrn `success`, `failure` a `skipped`,
 - riadený NetBox inventory import: vloženie Excel/CSV tabuľky, dry-run,
   viditeľný priebeh s uplynutým časom, riadkové chyby, validovaný runtime
-  Device Type YAML, retry a explicitný Apply,
+  Device Type YAML, explicitné doriešenie chýbajúcej platformy po zariadeniach,
+  retry a explicitný Apply,
 - riadený device credential onboarding: hromadný výber zariadení jedného
-  výrobcu, jedna explicitná platforma a spoločný profil, výber spotrebiteľov,
-  secret-free dry-run a explicitný OpenBao/NetBox Apply,
+  tenantu a výrobcu, voliteľný filter lokality, jedna explicitná platforma alebo
+  zachovanie existujúcich platforiem, spoločný profil naprieč podporovanými OS
+  rodinami, výber spotrebiteľov, secret-free dry-run a explicitný OpenBao/NetBox Apply,
 - pôvodný jednotkový CPU endpoint a lokálnu SQLite históriu pre kompatibilitu.
 
 Každé tlačidlo volá konkrétny Atlas API endpoint a následne shared Python service. UI nespúšťa shell, `sudo` ani `atlasctl`; backend nemá Docker socket a neposkytuje deploy, OpenBao admin helper ani raw log viewer.
@@ -717,9 +752,20 @@ deployi nikdy nepoužil starý JavaScript z browser cache.
 | `GET /api/oxidized/status` | Počty NetBox-enabled a runtime zariadení plus počet inventory issues. |
 | `GET /api/oxidized/devices` | Verejný pohľad `name`, `ip`, `model`; credentials sa nevracajú. |
 | `POST /api/inventory/import/plan` | Autorizovaný dry-run tabuľky bez NetBox zápisov; vracia riadkové výsledky a odtlačok plánu. |
+| `GET /api/inventory/tenants` | Autorizovaný zoznam Tenantov pre Operations UI. |
+| `GET /api/inventory/platforms` | Autorizovaný secret-free zoznam NetBox platforiem pre explicitné doriešenie importu. |
+| `POST /api/inventory/tenants/plan`, `/apply` | Idempotentný plan/apply Tenant operácie viazaný na presný odtlačok. |
+| `POST /api/inventory/sites/plan`, `/apply` | Idempotentný plan/apply tenant-owned Site operácie viazaný na presný odtlačok. |
+| `GET /api/inventory/devices/{id}/connection` | Kompatibilný resolver Device ID cez perzistentný VPN Connection Registry. |
+| `GET`, `POST /api/v1/vpn/connections` | Autorizovaný stránkovaný zoznam a vytvorenie secret-free VPN Connection metadát. |
+| `GET`, `PATCH`, `DELETE /api/v1/vpn/connections/{connection_id}` | Detail, validovaná aktualizácia a kontrolovaná deaktivácia spojenia. |
+| `POST /api/v1/vpn/connections/{connection_id}/validate` | Overí NetBox vlastníctvo a dostupnosť OpenBao referencie bez vrátenia secretu. |
+| `GET /api/v1/vpn/devices/{device_id}/resolve` | Tenant/VRF/prefix-safe resolver; fyzické VPN spojenie nevytvára. |
+| `GET /api/v1/vpn/assignments/options` | Tenant-scoped zoznam VPN spojení, Sites a aktívnych Devices pre Operations UI. |
+| `POST /api/v1/vpn/assignments/plan`, `/apply` | Dry-run a potvrdené priradenie Site profilu alebo Device override bez čítania secretu. |
 | `POST /api/inventory/device-types/upload` | Autorizovane validuje a atomicky uloží ručne dodaný Device Type YAML do persistentného runtime katalógu. |
 | `POST /api/inventory/import/apply` | Znovu overí potvrdený plán a zapisuje iba ak neobsahuje `INVALID`, `CONFLICT` ani `ERROR`. |
-| `GET /api/credentials/options` | Autorizovaný zoznam aktívnych zariadení a podporovaných platformových možností bez secretov. |
+| `GET /api/credentials/options` | Autorizovaný zoznam aktívnych zariadení s tenantom a podporovaných platformových možností bez secretov. |
 | `POST /api/credentials/plan` | Overí účelové credentials, existujúce OpenBao verzie a NetBox zmeny; odpoveď neobsahuje secret values. |
 | `POST /api/credentials/apply` | Aplikuje HMAC-viazaný potvrdený plán s KV v2 CAS ochranou a aktualizuje explicitné NetBox polia. |
 | `POST /api/oxidized/sync` | Reconciliation cez rovnakú `OxidizedSyncService` ako CLI cesta. |
@@ -1597,7 +1643,13 @@ entitlementy, nepokrytý PID alebo nedostupné Cisco API vracajú `UNKNOWN` a
 nemenia úspešný zber zariadenia na connection failure. CBS softvérový EoX
 posiela release bez OS typu, pretože Cisco EoX samostatný CBS typ neuvádza.
 
-Fresh OpenBao bootstrap tieto policies, AppRoles a machine identities vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile Atlas backend roles`. Operácia zosúladí `atlas-backend`, `atlas-monitoring-provisioner` a `atlas-credential-writer`; vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
+Fresh OpenBao bootstrap tieto policies, AppRoles a machine identities vytvorí alebo zosúladí automaticky. Na už existujúcej inštalácii spusti `sudo atlasctl openbao` a zvoľ `2. Reconcile Atlas backend roles`. Operácia zosúladí `atlas-backend`, `atlas-monitoring-provisioner`, `atlas-credential-writer` a `atlas-vpn-profile-writer`; vyžaduje quorum unseal shares, použije krátkodobý temporary root iba pre tento reconcile, token nevypíše a po operácii sa ho pokúsi vždy revokovať.
+
+## `atlas-vpn-profile-writer`
+
+Samostatná identita pre potvrdený import VPN profilov má prístup iba k secretom
+`atlas/data/vpn/connections/+`. Postup importu, obmedzenia a potrebná aktualizácia
+existujúcej inštalácie sú v [VPN Connection Registry](docs/vpn-connection-registry.md).
 
 ## `netbox-runtime`
 
@@ -2245,13 +2297,14 @@ Manifest obsahuje:
 Aktuálny katalóg:
 
 ```text
-Cisco       238
+Cisco       282
 Fortinet    162
 Juniper     290
 Sophos       21
 HPE         109
+Check Point  41
 ----------------
-Spolu       820
+Spolu       905
 ```
 
 ---
@@ -2369,7 +2422,7 @@ NetBox Community Device Type Library     catalog/device-types/
                                │
                                ▼
                       Atlas Device Catalog
-                         865 Device Types
+                         905 Device Types
                 │
          ┌──────┴──────┐
          │             │
@@ -2794,7 +2847,7 @@ Príklad katalógu:
 
 ```text
 Device Types
-Existing: 820
+Existing: 905
 Missing:  0
 ```
 
@@ -2802,8 +2855,8 @@ Component templates:
 
 ```text
 TOTAL COMPONENTS
-catalog=31087
-existing=31087
+catalog=33220
+existing=33220
 missing=0
 ```
 
@@ -2895,18 +2948,18 @@ Kontroluje napríklad:
 Aktuálne overený stav:
 
 ```text
-Device Types: 820
+Device Types: 905
 ```
 
 Component coverage:
 
 ```text
-console-ports         1111
+console-ports         1295
 console-server-ports     5
-power-ports            456
-interfaces           27545
+power-ports            540
+interfaces           29333
 rear-ports               2
-module-bays            1962
+module-bays            2039
 device-bays               2
 power-outlets             4
 ```
@@ -3060,7 +3113,7 @@ v0.1.0-beta
 Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.4.3
+v0.4.4
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -3093,8 +3146,8 @@ python3 -m unittest discover -s tests -v
 # Po merge PR a úspešnom CI na konkrétnom main commite:
 git switch main
 git pull --ff-only
-git tag -a v0.4.3 -m "Aricoma Atlas v0.4.3"
-git push origin v0.4.3
+git tag -a v0.4.4 -m "Aricoma Atlas v0.4.4"
+git push origin v0.4.4
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.

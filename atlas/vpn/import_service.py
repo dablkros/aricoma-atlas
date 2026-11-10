@@ -1,0 +1,290 @@
+"""Plan and import FortiClient VPN profiles with secret-safe CAS writes."""
+
+import base64
+import binascii
+from dataclasses import asdict
+import hashlib
+import plistlib
+
+from defusedxml import ElementTree as SafeET
+
+from atlas.services.errors import DependencyError
+from atlas.vpn.forticlient_profile import (
+    FortiClientProfile, FortiClientSSLProfile, FortiClientProfileError,
+    decode_macos_enc, decode_windows_encx, parse_forticlient_any_profile,
+)
+from atlas.vpn.import_models import ProfileImportRequest, ProfileInspectRequest
+from atlas.vpn.models import VPNConnectionCreate, VPNConnectionPatch
+from atlas.vpn.openvpn_profile import OpenVPNProfile, OpenVPNProfileError, parse_openvpn_profile
+from atlas.vpn.service import VPNRegistryError
+from atlas.vpn.strongswan_config import VPNSecrets, validate_profile
+
+MAX_PROFILE_BYTES = 2 * 1024 * 1024
+
+
+class VPNImportError(Exception):
+    def __init__(self, code: str, status_code: int = 422):
+        super().__init__(code)
+        self.code, self.status_code = code, status_code
+
+
+def profile_bytes(body: ProfileInspectRequest) -> bytes:
+    encoded = body.profile_base64.get_secret_value()
+    if len(encoded) > ((MAX_PROFILE_BYTES + 2) // 3) * 4:
+        raise VPNImportError('vpn_profile_too_large')
+    try:
+        data = base64.b64decode(encoded, validate=True)
+    except (ValueError, binascii.Error):
+        raise VPNImportError('vpn_profile_invalid_encoding') from None
+    if not data or len(data) > MAX_PROFILE_BYTES:
+        raise VPNImportError('vpn_profile_invalid_size')
+    return data
+
+
+def inspect_profile(body: ProfileInspectRequest) -> dict:
+    data = profile_bytes(body)
+    try:
+        if body.format == 'openvpn-config':
+            profile = parse_openvpn_profile(data, source_name=body.source_name)
+            return {'profiles': [profile.name]}
+        if body.format == 'macos-plist':
+            if not data.startswith(b'bplist00'):
+                SafeET.fromstring(data)
+            profiles = plistlib.loads(data).get('Profiles')
+            if not isinstance(profiles, dict):
+                raise ValueError()
+            names = list(profiles)
+        else:
+            root = SafeET.fromstring(data)
+            names = [(node.findtext('name') or '').strip() for node in root.iter('connection')]
+        if (not names or len(names) > 100 or len(set(names)) != len(names)
+                or any(not isinstance(name, str) or not name or len(name) > 200 for name in names)):
+            raise ValueError()
+        return {'profiles': sorted(names)}
+    except OpenVPNProfileError as exc:
+        raise VPNImportError(exc.args[0] if exc.args else 'vpn_profile_invalid') from None
+    except Exception:
+        raise VPNImportError('vpn_profile_invalid') from None
+
+
+class VPNProfileImportService:
+    def __init__(self, registry, writer):
+        self.registry = registry
+        self.writer = writer
+
+    @staticmethod
+    def _mfa_mode(body: ProfileImportRequest) -> str:
+        if body.mfa_mode != 'none':
+            return body.mfa_mode
+        return 'auto' if body.external_mfa else 'none'
+
+    @classmethod
+    def _auth_method(cls, body: ProfileImportRequest, default: str) -> str:
+        return {
+            'none': default,
+            'auto': 'external_mfa',
+            'push': 'external_mfa_push',
+            'otp': 'external_mfa_otp',
+        }[cls._mfa_mode(body)]
+
+    def options(self):
+        try:
+            tenants = self.registry.netbox.get_all('/api/tenancy/tenants/')
+            vrfs = self.registry.netbox.get_all('/api/ipam/vrfs/')
+        except DependencyError:
+            raise VPNImportError('netbox_unavailable', 503) from None
+        if not isinstance(tenants, list) or not isinstance(vrfs, list):
+            raise VPNImportError('netbox_unavailable', 503)
+        return {
+            'tenants': [{'id': x.get('id'), 'name': x.get('name')} for x in tenants
+                        if isinstance(x, dict) and isinstance(x.get('id'), int) and isinstance(x.get('name'), str)],
+            'vrfs': [{'id': x.get('id'), 'name': x.get('name'),
+                      'tenant_id': (x.get('tenant') or {}).get('id')}
+                     for x in vrfs if isinstance(x, dict) and isinstance(x.get('id'), int)
+                     and isinstance(x.get('name'), str) and isinstance(x.get('tenant'), dict)
+                     and isinstance(x['tenant'].get('id'), int)],
+        }
+
+    def _values(self, body: ProfileImportRequest):
+        try:
+            if body.format == 'openvpn-config':
+                if body.fct_payload_base64 is not None:
+                    raise VPNImportError('fct_payload_not_applicable')
+                p = parse_openvpn_profile(
+                    profile_bytes(body), source_name=body.source_name,
+                )
+                if body.profile_name != p.name:
+                    raise VPNImportError('vpn_profile_invalid')
+                username, password = (
+                    body.username.get_secret_value(), body.password.get_secret_value()
+                )
+                record = VPNConnectionCreate(
+                    connection_id=body.connection_id, name=body.name,
+                    tenant_id=body.tenant_id, vendor='generic', protocol='openvpn',
+                    driver='openvpn', gateway_host=p.gateway,
+                    gateway_port=p.gateway_port,
+                    auth_method=self._auth_method(body, 'username_password'),
+                    secret_ref=f'vpn/connections/{body.connection_id}',
+                    management_vrf_id=body.management_vrf_id,
+                    allowed_prefixes=body.allowed_prefixes,
+                    administrative_status='planned',
+                )
+                secret = {
+                    'schema_version': 1, 'profile_type': 'openvpn',
+                    'connection_id': record.connection_id,
+                    'tenant_id': record.tenant_id,
+                    'config': p.canonical_config,
+                    'username': username, 'password': password,
+                }
+                return record, secret, p
+            p = parse_forticlient_any_profile(profile_bytes(body), body.profile_name, format=body.format)
+            username, password = body.username.get_secret_value(), body.password.get_secret_value()
+            if isinstance(p, FortiClientSSLProfile):
+                if body.fct_payload_base64 is not None:
+                    raise VPNImportError('fct_payload_not_applicable')
+                if p.sso_enabled:
+                    raise VPNImportError('unsupported_ssl_sso')
+                record = VPNConnectionCreate(
+                    connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
+                    vendor='fortinet', protocol='ssl-vpn', driver='openfortivpn',
+                    gateway_host=p.gateway, gateway_port=p.gateway_port,
+                    auth_method=self._auth_method(body, 'username_password'),
+                    secret_ref=f'vpn/connections/{body.connection_id}',
+                    management_vrf_id=body.management_vrf_id,
+                    allowed_prefixes=body.allowed_prefixes, administrative_status='planned',
+                )
+                profile = asdict(p)
+                secret = {'schema_version': 1, 'profile_type': 'ssl-vpn',
+                          'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
+                          'profile': profile, 'username': username, 'password': password}
+                return record, secret, p
+            if not isinstance(p, FortiClientProfile):
+                raise VPNImportError('unsupported_profile_type')
+            if p.encrypted_auth_info.startswith('EncX '):
+                if body.export_password is None:
+                    raise VPNImportError('vpn_export_password_required')
+                psk = decode_windows_encx(p.encrypted_auth_info, body.export_password.get_secret_value())
+            elif p.encrypted_auth_info.startswith('Enc '):
+                psk = decode_macos_enc(p.encrypted_auth_info)
+            else:
+                raise VPNImportError('vpn_secret_format_unsupported')
+            record = VPNConnectionCreate(
+                connection_id=body.connection_id, name=body.name, tenant_id=body.tenant_id,
+                vendor='fortinet', protocol='ipsec-ikev2', driver='strongswan',
+                gateway_host=p.gateway, gateway_port=p.gateway_port,
+                auth_method=self._auth_method(body, 'psk'),
+                secret_ref=f'vpn/connections/{body.connection_id}',
+                management_vrf_id=body.management_vrf_id, allowed_prefixes=body.allowed_prefixes,
+                administrative_status='planned',
+            )
+            # Fail closed if the profile or credentials cannot be represented by the current renderer.
+            validate_profile(p, VPNSecrets(username, password, psk))
+            profile = asdict(p)
+            del profile['encrypted_auth_info']
+            profile['phase1_proposals'] = list(profile['phase1_proposals'])
+            profile['phase2_proposals'] = list(profile['phase2_proposals'])
+            secret = {'schema_version': 1, 'connection_id': record.connection_id,
+                      'tenant_id': record.tenant_id, 'profile': profile,
+                      'psk_base64': base64.b64encode(psk).decode('ascii'),
+                      'username': username, 'password': password}
+            if body.fct_payload_base64 is not None:
+                fct_payload = base64.b64decode(
+                    body.fct_payload_base64.get_secret_value(), validate=True,
+                )
+                secret['fct_payload_base64'] = base64.b64encode(fct_payload).decode('ascii')
+                secret['fct_payload_sha256'] = hashlib.sha256(fct_payload).hexdigest()
+            return record, secret, p
+        except (FortiClientProfileError, OpenVPNProfileError) as exc:
+            raise VPNImportError(exc.args[0] if exc.args else 'vpn_profile_invalid') from None
+        except VPNImportError:
+            raise
+        except Exception:
+            raise VPNImportError('vpn_profile_invalid') from None
+
+    def plan(self, body: ProfileImportRequest):
+        record, secret, profile = self._values(body)
+        self.registry._validate_references(record)
+        try:
+            existing = self.registry.get(record.connection_id)
+        except VPNRegistryError as exc:
+            if exc.code == 'tenant_not_found' and body.replace_existing:
+                existing = True
+            elif exc.code != 'connection_not_found':
+                raise
+            else:
+                existing = None
+        desired = record.model_dump(mode='json')
+        registry_action = 'create'
+        if existing is not None:
+            current = (existing.model_dump(include=set(desired), mode='json')
+                       if existing is not True else None)
+            if current != desired:
+                if body.replace_existing:
+                    registry_action = 'replace'
+                elif current is None:
+                    raise VPNImportError('vpn_connection_stale_tenant', 409)
+                else:
+                    changed = {key for key in desired if current.get(key) != desired.get(key)}
+                    if changed != {'auth_method'}:
+                        raise VPNImportError('vpn_connection_conflict', 409)
+                    registry_action = 'update'
+            else:
+                registry_action = 'unchanged'
+        try:
+            current_secret, metadata = self.writer.read_secret_with_metadata(record.secret_ref)
+        except DependencyError as exc:
+            if exc.reason != 'secret_not_found':
+                raise VPNImportError('vpn_secret_unavailable', 503) from None
+            current_secret, metadata = None, {'version': 0}
+        version = metadata.get('version')
+        if (isinstance(version, bool) or not isinstance(version, int)
+                or (current_secret is None and version != 0)
+                or (current_secret is not None and version < 1)):
+            raise VPNImportError('vpn_secret_unavailable', 503)
+        secret_action = 'unchanged' if current_secret is not None else 'create'
+        if current_secret is not None and current_secret != secret:
+            if not body.replace_existing:
+                raise VPNImportError('vpn_secret_conflict', 409)
+            secret_action = 'replace'
+        return {'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
+                'management_vrf_id': record.management_vrf_id, 'gateway': record.gateway_host,
+                'port': record.gateway_port,
+                'profile_type': record.protocol,
+                'network_id': getattr(profile, 'network_id', None),
+                'profile_name': profile.name, 'allowed_prefixes': record.allowed_prefixes,
+                'external_mfa': self._mfa_mode(body) != 'none',
+                'mfa_mode': self._mfa_mode(body),
+                'fct_payload_status': (
+                    'supplied' if body.fct_payload_base64 is not None else 'not_supplied'
+                ),
+                'fct_payload_size': (
+                    len(base64.b64decode(secret['fct_payload_base64']))
+                    if 'fct_payload_base64' in secret else None
+                ),
+                'fct_payload_sha256': secret.get('fct_payload_sha256'),
+                'replace_existing': body.replace_existing,
+                'registry_action': registry_action,
+                'secret_action': secret_action,
+                'secret_version': version, 'runtime_status': 'not_deployed', 'apply_allowed': True}
+
+    def apply(self, body: ProfileImportRequest, expected_plan: dict):
+        if self.plan(body) != expected_plan:
+            raise VPNImportError('vpn_import_plan_stale', 409)
+        record, secret, _ = self._values(body)
+        if expected_plan['registry_action'] == 'create':
+            self.registry.create(record)
+        elif expected_plan['registry_action'] == 'replace':
+            self.registry.replace(record)
+        elif expected_plan['registry_action'] == 'update':
+            self.registry.patch(
+                record.connection_id,
+                VPNConnectionPatch(auth_method=record.auth_method),
+            )
+        if expected_plan['secret_action'] in {'create', 'replace'}:
+            try:
+                self.writer.write_secret(record.secret_ref, secret, cas=expected_plan['secret_version'])
+            except DependencyError:
+                # The planned registry record may already exist; retry is explicitly supported.
+                raise VPNImportError('vpn_import_partial', 503) from None
+        return {'connection_id': record.connection_id, 'tenant_id': record.tenant_id,
+                'runtime_status': 'not_deployed', 'status': 'saved'}

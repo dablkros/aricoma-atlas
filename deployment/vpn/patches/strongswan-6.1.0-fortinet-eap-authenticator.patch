@@ -1,0 +1,100 @@
+--- a/src/libcharon/sa/ikev2/authenticators/eap_authenticator.c	2026-06-18 08:48:30.899479872 +0000
++++ b/src/libcharon/sa/ikev2/authenticators/eap_authenticator.c	2026-06-18 08:49:19.445467892 +0000
+@@ -109,6 +109,21 @@
+ 	 * EAP identity of peer
+ 	 */
+ 	identification_t *eap_identity;
++
++	/**
++	 * Raw bytes of the last EAP response we sent, cached so we can re-send it
++	 * when FortiGate signals an inter-method transition (see forti_continue).
++	 */
++	chunk_t last_response;
++
++	/**
++	 * Set once FortiGate signalled "factor done, continue with next method"
++	 * via an EAP-Success carrying a trailing EAP-type byte. While set, we
++	 * accept whatever EAP method the gateway requests next (e.g. EAP-GTC for
++	 * the token) instead of NAKing it, and we relax the EAP-only mutual check
++	 * because the mutual, MSK-deriving factor (EAP-MSCHAPv2) already passed.
++	 */
++	bool forti_continue;
+ };
+ 
+ /**
+@@ -414,7 +429,7 @@
+ 		auth = this->ike_sa->get_auth_cfg(this->ike_sa, TRUE);
+ 		conf_type = (uintptr_t)auth->get(auth, AUTH_RULE_EAP_TYPE);
+ 		conf_vendor = (uintptr_t)auth->get(auth, AUTH_RULE_EAP_VENDOR);
+-		if (conf_type != EAP_NAK &&
++		if (!this->forti_continue && conf_type != EAP_NAK &&
+ 		   (conf_type != type || conf_vendor != vendor))
+ 		{
+ 			if (conf_vendor)
+@@ -639,7 +654,8 @@
+ 		{
+ 			return FAILED;
+ 		}
+-		if (this->require_mutual && !this->method->is_mutual(this->method))
++		if (this->require_mutual && !this->forti_continue &&
++			!this->method->is_mutual(this->method))
+ 		{	/* we require mutual authentication due to EAP-only */
+ #if DEBUG_LEVEL >= 1
+ 			pen_t vendor;
+@@ -679,6 +695,38 @@
+ 						 eap_code_names, eap_payload->get_code(eap_payload));
+ 					return FAILED;
+ 				}
++				if (eap_payload->get_data(eap_payload).len > 4 &&
++					this->last_response.len)
++				{
++					/* FortiGate proprietary multi-factor extension: an
++					 * EAP-Success carrying a trailing EAP-type byte is NOT
++					 * terminal. It means "this factor passed, continue with the
++					 * indicated method". Capture the MSK from the just-completed
++					 * (mutual, MSK-deriving) method now, since the final clean
++					 * EAP-Success will arrive on a method that derives none
++					 * (EAP-GTC for the token). Then re-send our last response to
++					 * keep the EAP conversation alive and let the gateway start
++					 * the next method. */
++					switch (this->method->get_msk(this->method, &this->msk))
++					{
++						case SUCCESS:
++							this->msk = chunk_clone(this->msk);
++							break;
++						case NOT_SUPPORTED:
++							break;
++						case FAILED:
++						default:
++							break;
++					}
++					this->method->destroy(this->method);
++					this->method = NULL;
++					this->forti_continue = TRUE;
++					this->eap_payload =
++							eap_payload_create_data(this->last_response);
++					DBG1(DBG_IKE, "received EAP-Success with trailing data, "
++						 "continuing with the next EAP method (FortiGate 2FA)");
++					return NEED_MORE;
++				}
+ 				switch (this->method->get_msk(this->method, &this->msk))
+ 				{
+ 					case SUCCESS:
+@@ -730,6 +778,9 @@
+ {
+ 	if (this->eap_payload)
+ 	{
++		chunk_free(&this->last_response);
++		this->last_response = chunk_clone(
++								this->eap_payload->get_data(this->eap_payload));
+ 		message->add_payload(message, (payload_t*)this->eap_payload);
+ 		this->eap_payload = NULL;
+ 		return NEED_MORE;
+@@ -773,6 +824,7 @@
+ 	DESTROY_IF(this->method);
+ 	DESTROY_IF(this->eap_payload);
+ 	DESTROY_IF(this->eap_identity);
++	chunk_free(&this->last_response);
+ 	chunk_free(&this->msk);
+ 	free(this);
+ }

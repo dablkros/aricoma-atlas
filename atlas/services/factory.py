@@ -22,6 +22,11 @@ from atlas.services.oxidized_sync import FileInventoryStore, OxidizedSyncService
 from atlas.services.platform_status import PlatformStatusService
 from atlas.services.zabbix import ZabbixMonitoringService, ZabbixService
 from atlas.services.zabbix_sync import ZabbixSyncService
+from atlas.vpn.service import VPNRegistryService
+from atlas.vpn.store import SQLiteVPNConnectionStore
+from atlas.vpn.import_service import VPNProfileImportService
+from atlas.vpn.worker_client import VPNConnectivityTestService, VPNWorkerClient
+from atlas.vpn.prophylaxis_client import VPNAnsibleBackend, VPNSessionClient
 
 
 @dataclass(frozen=True)
@@ -37,9 +42,12 @@ class DependencyServices:
     zabbix: ZabbixService
     zabbix_sync: ZabbixSyncService
     zabbix_monitoring: ZabbixMonitoringService
+    vpn: VPNRegistryService
     monitoring: MonitoringService = None
     cisco_support: CiscoSupportService = None
     credentials: CredentialOnboardingService = None
+    vpn_import: VPNProfileImportService = None
+    vpn_test: VPNConnectivityTestService = None
 
 
 def build_dependency_services(settings: Settings) -> DependencyServices:
@@ -70,6 +78,13 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
     credential_writer = OpenBaoService(
         OpenBaoClient(str(settings.openbao_url), timeout=timeout),
         settings.credential_writer_identity_file,
+    )
+    vpn_writer = OpenBaoService(
+        OpenBaoClient(str(settings.openbao_url), timeout=timeout),
+        settings.vpn_profile_writer_identity_file,
+    )
+    vpn_registry = VPNRegistryService(
+        SQLiteVPNConnectionStore(settings.vpn_registry_file), netbox, openbao,
     )
     zabbix_sync = ZabbixSyncService(
         netbox,
@@ -105,6 +120,28 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             read_timeout=settings.http_read_timeout,
         ),
     )
+    vpn_test = None
+    vpn_session = None
+    vpn_ansible_backend = None
+    if settings.vpn_worker_url is not None:
+        worker_client = VPNWorkerClient(
+            str(settings.vpn_worker_url),
+            settings.vpn_worker_token_file,
+            timeout=settings.vpn_worker_timeout,
+        )
+        vpn_test = VPNConnectivityTestService(
+            vpn_registry,
+            worker_client,
+        )
+        vpn_session = VPNSessionClient(
+            str(settings.vpn_worker_url), settings.vpn_worker_token_file,
+            settings.vpn_worker_timeout,
+        )
+    if settings.vpn_collector_url is not None:
+        vpn_ansible_backend = VPNAnsibleBackend(
+            str(settings.vpn_collector_url), settings.vpn_worker_token_file,
+            settings.ansible_job_timeout + 30,
+        )
     return DependencyServices(
         monitoring=monitoring,
         cisco_support=cisco_support,
@@ -113,6 +150,9 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             credential_writer,
             credential_writer,
         ),
+        vpn=vpn_registry,
+        vpn_import=VPNProfileImportService(vpn_registry, vpn_writer),
+        vpn_test=vpn_test,
         openbao=openbao,
         netbox=netbox,
         oxidized=oxidized,
@@ -154,6 +194,9 @@ def build_dependency_services(settings: Settings) -> DependencyServices:
             zabbix_monitoring=(zabbix_monitoring if settings.zabbix_enabled else None),
             oxidized=(oxidized if settings.oxidized_enabled else None),
             cisco_support=cisco_support,
+            vpn_registry=vpn_registry,
+            vpn_session=vpn_session,
+            vpn_backend=vpn_ansible_backend,
         ),
         zabbix=zabbix,
         zabbix_sync=zabbix_sync,

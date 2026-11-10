@@ -1,17 +1,19 @@
 ---
-- name: Collect Cisco IOS local compliance commands
-  cisco.ios.ios_command:
-    commands:
-      - show license summary
-      - show license all
-      - show crypto pki certificates
-  register: atlas_ios_compliance
-  changed_when: false
+- name: Initialize Cisco IOS compliance command buffer
+  ansible.builtin.set_fact:
+    atlas_command_outputs: {}
+
+- name: Collect Cisco IOS local compliance commands independently
+  ansible.builtin.include_tasks: "{{ role_path }}/tasks/common/run_cisco_ios_command.yml"
+  loop:
+    - {key: show_license_summary, command: show license summary}
+    - {key: show_license_all, command: show license all}
+    - {key: show_crypto_pki_certificates, command: show crypto pki certificates}
+  loop_control:
+    loop_var: atlas_command_spec
+    label: "{{ atlas_command_spec.command }}"
 
 - name: Prepare Cisco IOS compliance outputs for Atlas normalization
   ansible.builtin.set_fact:
     atlas_transport_result:
-      data:
-        show_license_summary: "{{ atlas_ios_compliance.stdout[0] }}"
-        show_license_all: "{{ atlas_ios_compliance.stdout[1] }}"
-        show_crypto_pki_certificates: "{{ atlas_ios_compliance.stdout[2] }}"
+      data: "{{ atlas_command_outputs }}"

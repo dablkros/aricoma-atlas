@@ -121,6 +121,16 @@ class OpenBaoService:
             )
         )
 
+    def read_secret_metadata(self, path: str) -> dict:
+        """Check one KV v2 key without loading its secret data."""
+        return self._authenticated(
+            lambda token: self.client.kv_read_metadata(
+                token,
+                path,
+                mount="atlas",
+            )
+        )
+
     def write_secret(self, path: str, data: dict, *, cas: int) -> None:
         """Write one KV v2 value using an explicit compare-and-set version."""
         if isinstance(cas, bool) or not isinstance(cas, int) or cas < 0:

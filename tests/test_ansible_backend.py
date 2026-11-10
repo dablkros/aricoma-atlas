@@ -108,6 +108,38 @@ class AnsibleBackendTests(unittest.TestCase):
         self.assertTrue(call["suppress_env_files"])
         self.assertFalse(Path(call["private_data_dir"]).exists())
 
+    def test_catalyst_1200_answers_post_ssh_login_without_inventory_secrets(self):
+        runner = CapturingRunner(
+            {
+                "schema_version": 1,
+                "collector": "device_facts",
+                "platform": "cisco-catalyst-1200",
+                "status": "ok",
+                "data": {"hostname": "ACMTSW7"},
+                "raw_output": None,
+                "error_code": None,
+            }
+        )
+        profile = AnsiblePlatformRegistry().resolve("cisco-catalyst-1200")
+
+        self.backend(runner).execute(
+            host="192.0.2.120",
+            port=22,
+            profile=profile,
+            collector_id=CollectorId.DEVICE_FACTS,
+            check_id=CheckId.DEVICE_FACTS,
+            credentials={"username": "admin", "password": "secret"},
+        )
+
+        call = runner.calls[0]
+        host = call["inventory"]["all"]["hosts"]["atlas_target"]
+        self.assertEqual(
+            host["ansible_terminal_initial_answer"],
+            ["{{ ansible_user }}", "{{ ansible_password }}"],
+        )
+        self.assertTrue(host["ansible_terminal_initial_prompt_checkall"])
+        self.assertNotIn("secret", repr(call["inventory"]))
+
     def test_fortios_uses_httpapi_and_token_environment(self):
         runner = CapturingRunner(
             {

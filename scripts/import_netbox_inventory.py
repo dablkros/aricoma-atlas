@@ -79,6 +79,7 @@ def parse_args() -> argparse.Namespace:
     tenant_commands = tenant.add_subparsers(dest="tenant_command", required=True)
     tenant_add = tenant_commands.add_parser("add", help="Create or reuse a tenant")
     tenant_add.add_argument("--name", required=True)
+    tenant_add.add_argument("--group")
     mode_arguments(tenant_add, default_apply=True)
 
     site = commands.add_parser("site", help="Manage customer sites")
@@ -94,6 +95,17 @@ def parse_args() -> argparse.Namespace:
     site_default.add_argument("--tenant", required=True)
     site_default.add_argument("--name", required=True)
     mode_arguments(site_default, default_apply=True)
+
+    vrf = commands.add_parser("vrf", help="Manage tenant-owned management VRFs")
+    vrf_commands = vrf.add_subparsers(dest="vrf_command", required=True)
+    vrf_add = vrf_commands.add_parser("add", help="Create or reuse a tenant VRF")
+    vrf_add.add_argument("--tenant", required=True)
+    vrf_add.add_argument("--name", required=True)
+    vrf_add.add_argument(
+        "--allow-overlap-within-vrf", action="store_true",
+        help="Disable NetBox enforce_unique for this VRF",
+    )
+    mode_arguments(vrf_add, default_apply=False)
 
     inventory_import = commands.add_parser("import", help="Import CSV or XLSX devices")
     inventory_import.add_argument("file")
@@ -148,13 +160,27 @@ def provision_defaults(importer: InventoryImporter, config: dict, *, apply: bool
         print("[INFO] Default tenant was not configured; tenant provisioning skipped")
         return 0
     if tenant.get("provision") is True:
-        resolved, operation = importer.ensure_tenant(
-            tenant["name"], apply=apply, slug=tenant["slug"]
+        resolved, operation, resolved_vrf, vrf_operation = (
+            importer.ensure_tenant_with_management_vrf(
+                tenant["name"],
+                apply=apply,
+                slug=tenant["slug"],
+                group=tenant.get("group"),
+            )
         )
     else:
         resolved = importer.resolve_tenant(tenant["slug"])
         operation = "UNCHANGED"
+        resolved_vrf = importer.resolve_vrf(
+            importer.management_vrf_name(resolved), resolved,
+        )
+        vrf_operation = "UNCHANGED"
     print(f"[{operation}] Tenant {tenant['name']} ({tenant['slug']})")
+    vrf_name = importer.management_vrf_name(
+        resolved or {"slug": tenant["slug"]}
+    )
+    vrf_identifier = resolved_vrf.get("id") if resolved_vrf else "planned"
+    print(f"[{vrf_operation}] VRF {vrf_name} ({vrf_identifier})")
     site = config.get("default_site")
     if site and site.get("provision") is True:
         resolved_tenant = resolved or {
@@ -596,9 +622,18 @@ def main() -> int:
 
     if args.command == "tenant":
         importer = InventoryImporter(client, config)
-        tenant, operation = importer.ensure_tenant(args.name, apply=apply)
+        tenant, operation, vrf, vrf_operation = (
+            importer.ensure_tenant_with_management_vrf(
+                args.name, apply=apply, group=args.group,
+            )
+        )
         slug = tenant.get("slug") if tenant else "planned"
         print(f"[{operation}] Tenant {args.name} ({slug})")
+        vrf_name = importer.management_vrf_name(
+            tenant or {"slug": slugify(args.name)}
+        )
+        vrf_identifier = vrf.get("id") if vrf else "planned"
+        print(f"[{vrf_operation}] VRF {vrf_name} ({vrf_identifier})")
         return 0
 
     if args.command == "site":
@@ -624,6 +659,22 @@ def main() -> int:
                 print(f"[OK] Default inventory Site saved: {slug}")
             else:
                 print(f"[PLAN] Default inventory Site: {slug}")
+        return 0
+
+    if args.command == "vrf":
+        importer = InventoryImporter(client, config)
+        tenant = importer.resolve_tenant(args.tenant)
+        vrf, operation = importer.ensure_vrf(
+            tenant,
+            args.name,
+            apply=apply,
+            enforce_unique=not args.allow_overlap_within_vrf,
+        )
+        identifier = vrf.get("id") if vrf else "planned"
+        print(
+            f"[{operation}] VRF {args.name} ({identifier}); "
+            f"tenant={tenant['slug']}"
+        )
         return 0
 
     if args.command == "provision-defaults":

@@ -4,6 +4,78 @@ All notable changes to Aricoma Atlas are documented here. A release section is
 final only after its commit passes the complete release workflow and receives
 the corresponding Git tag.
 
+## [Unreleased]
+
+## [0.4.4] - 2026-11-10
+
+### Added
+
+- Multi-tenant NetBox inventory model with Tenant, Site and tenant-owned
+  management VRF provisioning, UI administration and tenant-scoped inventory
+  filters.
+- Credential onboarding plan/apply workflow for multiple devices, with
+  Tenant, manufacturer and platform filtering and purpose-separated
+  prophylaxis, Oxidized and SNMP secrets in OpenBao.
+- Persistent, secret-free VPN Connection Registry with SQLite schema migration,
+  Tenant/VRF validation, Site defaults, Device overrides and controlled
+  deactivation.
+- Operations UI workflows for VPN profile import, Site/Device assignment and
+  isolated connectivity testing with explicit result and cleanup reporting.
+- OpenVPN, FortiClient SSL-VPN and Fortinet IKEv2 profile import contracts,
+  including explicit `none`, `push` and `otp` MFA modes.
+- Isolated VPN worker and unprivileged collector runtime. OpenVPN prophylaxis
+  groups devices by assigned VPN, opens one temporary tunnel, runs the selected
+  collectors and always tears the tunnel down.
+- Patched strongSwan 6.1.0 integration for Fortinet EAP-MSCHAPv2/EAP-GTC,
+  Network ID and optional per-connection FCT compatibility input stored in
+  OpenBao.
+- Cisco IOS XR, ACI, FTD, FXOS, Catalyst 1200/1300, AireOS and Viptela platform
+  identities. Catalyst 1200/1300 reuse the reviewed Cisco SMB execution and
+  backup contracts.
+- Local Atlas administrator authentication with Argon2id password hashes,
+  one-hour sessions, CSRF protection, explicit logout and a separately
+  controlled recovery secret.
+
+### Changed
+
+- Inventory import no longer silently creates a platformless Device when the
+  Device Type has no reviewed default. The dry-run requires an explicit
+  platform, may fill only an existing empty platform and never overwrites a
+  non-empty platform.
+- Replaced the temporary `inventory.connection_profiles` YAML resolver with one
+  persistent VPN registry source of truth. Legacy YAML profiles are rejected
+  explicitly and are never migrated silently.
+- Cisco IOS and Cisco SMB collectors execute long CLI collections command by
+  command with paging, prompt, timeout and logout handling.
+- Expanded the reviewed Device Type Catalog to 905 types: 282 Cisco, 162
+  Fortinet, 290 Juniper, 21 Sophos, 109 HPE Aruba and 41 Check Point.
+- Align package, deployment images, README and example environment versions to
+  0.4.4.
+
+### Security
+
+- Added purpose-scoped OpenBao identities and policies for the credential
+  writer, VPN profile writer and VPN worker.
+- VPN registry/API records remain secret-free. Temporary client material is
+  written only for the isolated worker with restrictive permissions and is
+  removed during cleanup.
+- Inventory, credential and VPN assignment writes retain reviewed plan/apply,
+  tenant ownership and stale-plan protections.
+
+### Known limitations
+
+- LAB A/B testing on the HBM-Ext1 gateway established IKE SA and CHILD SA both
+  with and without FCT Notify 61696. This confirms that FCT is optional for
+  that gateway only; other FortiGate configurations may still require an
+  approved per-connection payload.
+- Automated prophylaxis sessions currently use OpenVPN. IPsec and
+  openfortivpn are available in the isolated connectivity-test flow but are not
+  yet part of the longer-lived prophylaxis session contract.
+- Catalyst 1200/1300 Cisco SMB compatibility remains subject to acceptance on
+  every intended physical device and firmware family.
+- Newly declared Cisco platforms are identity-only until an explicit consumer
+  mapping enables prophylaxis, Oxidized or monitoring behavior.
+
 ## [0.4.3] - 2026-10-26
 
 ### Added
