@@ -8,7 +8,7 @@ Aktuálna beta baseline nasadzuje a pripravuje:
 - **NetBox 4.7.1** cez pripnutý `netbox-docker` runtime,
 - voliteľný **Oxidized 0.37.0** s persistentnou Git históriou konfigurácií,
 - voliteľný **Zabbix 7.0.31 LTS** ako monitoring backend s oddeleným PostgreSQL,
-- **Atlas FastAPI backend 0.4.4** zostavený a spustený v samostatnom kontajneri,
+- **Atlas FastAPI backend 0.5.0-beta** zostavený a spustený v samostatnom kontajneri,
 - plánovaný a potvrdený [Ansible monitoring provisioning](docs/monitoring-provisioning.md)
   pre FortiOS, Cisco IOS/IOS-XE, Cisco CBS a Aruba AOS-CX/AOS-Switch,
 - bezpečný počiatočný stav Oxidized **WAITING_FOR_INVENTORY**,
@@ -130,7 +130,7 @@ bezpečný fallback `Network Device`; hostname sa na odhad role nepoužíva.
 
 # Aktuálny stav
 
-**Verzia tejto dokumentácie a backendu:** `v0.4.4`
+**Verzia tejto dokumentácie a backendu:** `v0.5.0-beta`
 
 Zmeny oproti `v0.4.3` zahŕňajú multi-tenant NetBox model s management VRF,
 UI onboarding credentials, perzistentný VPN register, import a priradenie VPN
@@ -138,7 +138,7 @@ profilov, izolovaný VPN worker, OpenVPN profylaxiu, Fortinet IPsec/MFA beta
 integráciu a rozšírené Cisco platformy vrátane Catalyst 1200/1300. Podrobný
 prehľad a známe obmedzenia sú v [CHANGELOG.md](CHANGELOG.md).
 Aktuálne release gate, neoverené integračné body a podmienky vytvorenia tagu
-sú v [release readiness pre v0.4.4](docs/release-readiness-0.4.4.md).
+sú v [release readiness pre v0.5.0-beta](docs/release-readiness-0.5.0-beta.md).
 
 V monitoring UI tlačidlo **Plan all** pripraví prehľad plánovaných zmien po
 zariadeniach. Zápisy sa spustia až po samostatnom potvrdení; chyba pri príprave
@@ -188,7 +188,7 @@ Deklarovaná kombinácia pre tento deployment:
 - Oxidized image `docker.io/oxidized/oxidized:0.37.0`
 - Zabbix server/web `alpine-7.0.31`
 - Zabbix PostgreSQL `16.15-alpine3.24`
-- Atlas backend image `aricoma-atlas-backend:0.4.4`
+- Atlas backend image `aricoma-atlas-backend:0.5.0-beta`
 - Atlas backend base image `docker.io/library/python:3.13.16-slim-bookworm`
 - Nginx image `docker.io/library/nginx:1.30.5`
 - Docker Compose plugin
@@ -602,7 +602,7 @@ curl -i http://127.0.0.1:8081/api/health
 Očakávané telo odpovede:
 
 ```json
-{"status":"ok","service":"Aricoma Atlas","version":"0.4.4","environment":"development"}
+{"status":"ok","service":"Aricoma Atlas","version":"0.5.0-beta","environment":"development"}
 ```
 
 Konfigurácia používa environment premenné s prefixom `ATLAS_`. Bezpečné lokálne hodnoty sú zdokumentované v `.env.example`; reálny `.env` zostáva mimo Git. Premenné Milestone 1 sú `ATLAS_APP_NAME`, `ATLAS_APP_VERSION`, `ATLAS_ENVIRONMENT`, `ATLAS_API_PREFIX` a `ATLAS_LOG_LEVEL`.
@@ -3113,7 +3113,7 @@ v0.1.0-beta
 Release tag pre túto verziu (publikovaný až po úspešnom CI na `main`):
 
 ```text
-v0.4.4
+v0.5.0-beta
 ```
 
 Tag sa vytvára až po úspešnom clean-install a release-gate teste. Release reprezentuje konkrétnu kombináciu:
@@ -3146,8 +3146,8 @@ python3 -m unittest discover -s tests -v
 # Po merge PR a úspešnom CI na konkrétnom main commite:
 git switch main
 git pull --ff-only
-git tag -a v0.4.4 -m "Aricoma Atlas v0.4.4"
-git push origin v0.4.4
+git tag -a v0.5.0-beta -m "Aricoma Atlas v0.5.0-beta"
+git push origin v0.5.0-beta
 ```
 
 Tag nevytváraj, ak working tree nie je čistý alebo ak reálny Oxidized backup/Git persistence test ešte neprešiel.

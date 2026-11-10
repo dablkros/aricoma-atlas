@@ -6,7 +6,7 @@ the corresponding Git tag.
 
 ## [Unreleased]
 
-## [0.4.4] - 2026-11-10
+## [0.5.0-beta] - 2026-11-10
 
 ### Added
 
@@ -50,7 +50,7 @@ the corresponding Git tag.
 - Expanded the reviewed Device Type Catalog to 905 types: 282 Cisco, 162
   Fortinet, 290 Juniper, 21 Sophos, 109 HPE Aruba and 41 Check Point.
 - Align package, deployment images, README and example environment versions to
-  0.4.4.
+  0.5.0-beta.
 
 ### Security
 
