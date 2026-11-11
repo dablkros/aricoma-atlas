@@ -938,7 +938,10 @@ async function planCredentials() {
     );
   } catch (error) {
     resetCredentialPlan();
-    toast(error.safeMessage || "Credential planning failed.", "error");
+    const message = error.code === "credential_onboarding_dependency_authentication_failed"
+      ? "Atlas could not verify the OpenBao profile. Reconcile the credential-writer role, then retry."
+      : error.safeMessage || "Credential planning failed.";
+    toast(message, "error");
   } finally {
     setCredentialBusy(false);
   }
@@ -965,7 +968,10 @@ async function applyCredentials() {
     );
   } catch (error) {
     if (error.code === "credential_onboarding_plan_stale") resetCredentialPlan();
-    toast(error.safeMessage || "Credential onboarding apply failed.", "error");
+    const message = error.code === "credential_onboarding_dependency_authentication_failed"
+      ? "Atlas could not access the credential profile. Reconcile the credential-writer role, then retry."
+      : error.safeMessage || "Credential onboarding apply failed.";
+    toast(message, "error");
   } finally {
     setCredentialBusy(false);
   }
