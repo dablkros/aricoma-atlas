@@ -21,6 +21,63 @@ If that service is absent, Atlas selects SSH/22 and reads `username` and
 falls back to SSH. Both transports map to the same thematic collectors and
 stable check IDs.
 
+## SSH raw collection modes
+
+The `identity` selection executes `get system status`, `get system performance
+status` and `get system interface`. The `full_collection` selection executes
+the reviewed read-only command catalog for system, hardware, HA, routing,
+FortiGuard, certificates, VPN, bounded event logs, NTP, sessions, crash logs,
+SD-WAN and FortiAnalyzer settings. If both selections are present,
+`full_collection` takes precedence.
+
+The fixed `full_collection` catalog is:
+
+```text
+get system status
+get system performance status
+get system interface
+get system interface physical
+diagnose hardware sysinfo memory
+diagnose hardware deviceinfo disk
+diagnose hardware deviceinfo tpm
+diagnose hardware deviceinfo psu
+get system ha status
+get router info routing-table all
+get router info bgp network
+get system fortiguard-service status
+get vpn certificate local details
+get vpn certificate ca details
+diagnose vpn tunnel list
+execute log filter category event
+execute log filter view-lines 50
+execute log display
+diagnose sys ha checksum cluster
+diagnose sys ha history read
+get router info bgp summary
+get router info ospf neighbor
+diagnose sys ntp status
+diagnose sys session stat
+diagnose debug crashlog read
+diagnose hardware sysinfo conserve
+get system arp
+get sys interface transceiver
+diagnose sys sdwan health-check
+get log fortianalyzer setting
+```
+
+Full collection first runs `get system interface physical`. Atlas accepts only
+strictly validated physical interface names and executes at most 64 dynamic
+`diagnose hardware deviceinfo nic <interface>` commands. Invalid names are
+discarded and an unavailable discovery command never causes guessed interface
+names to be used.
+
+Every command records timestamps, duration and one of `success`, `unsupported`,
+`empty`, `permission_denied`, `timeout`, `error` or `truncated`. A single
+unsupported hardware command does not invalidate other captured output.
+Reports are written atomically as `0600` vendor-neutral Tenant/Site JSON
+documents below `/run/atlas/prophylaxis/runs/<run_id>/sites/`. The ordinary UI
+and run API expose only safe counts and the artifact name.
+
 ## Device-native discovery
 
 NetBox selects the Profylaxia areas, but it does not contain a manually curated
@@ -42,7 +99,8 @@ reported by FortiOS: `warning`, `error`, `critical`, `alert` and `emergency`
 produce a `WARNING` review result, while the report retains the timestamp,
 `logdesc` and `msg` as bounded evidence.
 
-For SSH, physical interface names are discovered from `get system interface`.
+For SSH, physical interface names are discovered from
+`get system interface physical`.
 Only names matching the module's restricted interface-name grammar are used to
 build `diagnose hardware deviceinfo nic <interface>` commands. Device-provided
 text is never passed to a general shell.

@@ -19,7 +19,7 @@ from atlas.prophylaxis.models import (
 )
 from atlas.prophylaxis.run_models import ProphylaxisRawReport, ProphylaxisRun
 from atlas.prophylaxis.cisco_raw import (
-    CISCO_RAW_SCHEMA_VERSION,
+    RAW_SCHEMA_VERSION,
     safe_slug,
     site_artifact_name,
 )
@@ -192,9 +192,18 @@ class FileRunStore:
             os.chmod(sites, 0o700)
             for (tenant_slug, site_slug, tenant_name, site_name), devices in sorted(grouped.items()):
                 name = site_artifact_name(tenant_slug, site_slug, started_at)
+                contains_fortios = any(
+                    isinstance(device.get("device"), dict)
+                    and device["device"].get("platform") == "fortios"
+                    for device in devices
+                )
                 payload = {
-                    "schema_version": CISCO_RAW_SCHEMA_VERSION,
-                    "document_type": "atlas_cisco_site_collection",
+                    "schema_version": RAW_SCHEMA_VERSION,
+                    "document_type": (
+                        "atlas_network_site_collection"
+                        if contains_fortios
+                        else "atlas_cisco_site_collection"
+                    ),
                     "run_id": str(run_id),
                     "tenant": {"name": tenant_name, "slug": tenant_slug},
                     "site": {"name": site_name, "slug": site_slug},

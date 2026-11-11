@@ -2095,6 +2095,13 @@ za Tenant/Site pod
 autoritatívny; NTC/TextFSM 9.3.0 pridá `structured_data` iba tam, kde existuje
 kompatibilná šablóna. Parser failure nezmení úspešný CLI výsledok. UI a bežné
 API zobrazujú iba bezpečné počty a názov artefaktu, nie citlivý obsah.
+
+FortiOS podporuje rovnaké režimy cez SSH. `identity` vykoná tri základné
+príkazy; `full_collection` vykoná fixný allow-list 30 príkazov a najviac 64
+dynamicky objavených `diagnose hardware deviceinfo nic <interface>` príkazov.
+Atlas používa existujúci Paramiko modul, jednu interaktívnu session, OpenBao
+credentials a nakonfigurovanú host-key politiku. Raw výsledok prechádza cez
+chránený dočasný súbor s režimom `0600`, nie cez bežné Runner eventy.
 Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná

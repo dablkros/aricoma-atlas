@@ -1,3 +1,4 @@
+import json
 import tempfile
 import unittest
 from datetime import datetime, timezone
@@ -107,7 +108,7 @@ class CiscoRawContractTests(unittest.TestCase):
 
     def test_non_cisco_platform_does_not_enter_raw_mode(self):
         device = {
-            "platform": {"slug": "fortios"},
+            "platform": {"slug": "aruba-aos-cx"},
             "custom_fields": {"profylaxia_checks": ["full_collection"]},
         }
         self.assertIsNone(DeviceFactsRunService._selected_raw_mode(device))
@@ -148,6 +149,17 @@ class CiscoRawContractTests(unittest.TestCase):
             self.assertEqual(1, artifacts[0].device_count)
             self.assertTrue(
                 (Path(temporary) / str(run.run_id) / "sites" / artifacts[0].artifact).is_file()
+            )
+            payload = json.loads(
+                (
+                    Path(temporary)
+                    / str(run.run_id)
+                    / "sites"
+                    / artifacts[0].artifact
+                ).read_text(encoding="utf-8")
+            )
+            self.assertEqual(
+                "atlas_cisco_site_collection", payload["document_type"]
             )
 
 

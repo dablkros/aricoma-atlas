@@ -9,7 +9,8 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-CISCO_RAW_SCHEMA_VERSION = "1.0"
+RAW_SCHEMA_VERSION = "1.0"
+CISCO_RAW_SCHEMA_VERSION = RAW_SCHEMA_VERSION
 CISCO_RAW_PLATFORMS = frozenset({
     "cisco-ios", "cisco-ios-xe", "cisco-nxos", "cisco-asa", "cisco-cbs",
     "cisco-cbs250-350", "cisco-catalyst-1200", "cisco-catalyst-1300",
@@ -51,6 +52,14 @@ _PERMISSION = re.compile(
     r"privilege|privilege level)"
 )
 _TIMEOUT = re.compile(r"(?i)(timed? out|command timeout|timeout waiting)")
+_FORTIOS_UNSUPPORTED = re.compile(
+    r"(?i)(command parse error before|invalid command|unknown command|"
+    r"not a valid command|unrecognized parameter|syntax error)"
+)
+_FORTIOS_PERMISSION = re.compile(
+    r"(?i)(permission denied|access denied|not authorized|insufficient privilege|"
+    r"requires [a-z0-9_-]+ privilege)"
+)
 _PROMPT_ONLY = re.compile(r"(?m)^\s*[A-Za-z0-9_.()/-]+[>#]\s*$")
 _SECRET_LINES = (
     re.compile(
@@ -66,6 +75,15 @@ _SECRET_LINES = (
     re.compile(r"(?i)^(\s*(?:authentication-key|shared-secret)\s+).*$"),
     re.compile(r"(?i)^(\s*key\s+\d+\s+).*$"),
     re.compile(r"(?i)^(\s*(?:pre-shared-key|key-string)\s+).*$"),
+    re.compile(
+        r"(?i)^(\s*set\s+(?:password|passwd|secret|psksecret|private-key|"
+        r"community)\s+).*$"
+    ),
+)
+
+_PRIVATE_KEY_BLOCK = re.compile(
+    r"(?ms)-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----.*?"
+    r"-----END (?:[A-Z0-9 ]+ )?PRIVATE KEY-----"
 )
 
 
@@ -138,15 +156,15 @@ class CiscoRawConnection(BaseModel):
 class CiscoRawCollectionSummary(BaseModel):
     model_config = ConfigDict(extra="forbid", frozen=True)
     status: Literal["completed", "completed_with_errors", "failed"]
-    total_commands: int = Field(ge=1, le=49)
-    attempted: int = Field(default=0, ge=0, le=49)
-    successful: int = Field(default=0, ge=0, le=49)
-    unsupported: int = Field(default=0, ge=0, le=49)
-    empty: int = Field(default=0, ge=0, le=49)
-    permission_denied: int = Field(default=0, ge=0, le=49)
-    timeout: int = Field(default=0, ge=0, le=49)
-    error: int = Field(default=0, ge=0, le=49)
-    truncated: int = Field(default=0, ge=0, le=49)
+    total_commands: int = Field(ge=1, le=128)
+    attempted: int = Field(default=0, ge=0, le=128)
+    successful: int = Field(default=0, ge=0, le=128)
+    unsupported: int = Field(default=0, ge=0, le=128)
+    empty: int = Field(default=0, ge=0, le=128)
+    permission_denied: int = Field(default=0, ge=0, le=128)
+    timeout: int = Field(default=0, ge=0, le=128)
+    error: int = Field(default=0, ge=0, le=128)
+    truncated: int = Field(default=0, ge=0, le=128)
     reason_code: str | None = Field(default=None, max_length=128)
 
 
@@ -162,6 +180,10 @@ class CiscoRawDeviceReport(BaseModel):
     collection: CiscoRawCollectionSummary
     outputs: dict[str, CiscoRawCommandResult] = Field(default_factory=dict)
     ignored_commands: tuple[CiscoRawIgnoredCommand, ...] = ()
+    discovered_physical_interfaces: tuple[str, ...] = ()
+    interface_discovery_status: Literal[
+        "not_requested", "success", "empty", "failed", "limited"
+    ] = "not_requested"
     started_at: datetime
     finished_at: datetime
 
@@ -177,6 +199,7 @@ def _timestamp(value: object) -> datetime:
 
 
 def _redact(text: str) -> str:
+    text = _PRIVATE_KEY_BLOCK.sub("<redacted-private-key>", text)
     lines = []
     for line in text.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
         redacted = line
@@ -190,7 +213,7 @@ def _redact(text: str) -> str:
 
 
 def classify_command_record(
-    record: dict[str, Any], *, max_output_bytes: int,
+    record: dict[str, Any], *, max_output_bytes: int, platform: str | None = None,
 ) -> CiscoRawCommandResult:
     command = str(record.get("command") or "")[:256]
     started = _timestamp(record.get("started_at"))
@@ -203,11 +226,13 @@ def classify_command_record(
     evidence = f"{message}\n{stdout}".strip()
     common = dict(command=command, duration_ms=duration_ms,
                   started_at=started, finished_at=finished)
-    if _PERMISSION.search(evidence):
+    permission_pattern = _FORTIOS_PERMISSION if platform == "fortios" else _PERMISSION
+    unsupported_pattern = _FORTIOS_UNSUPPORTED if platform == "fortios" else _UNSUPPORTED
+    if permission_pattern.search(evidence):
         return CiscoRawCommandResult(**common, status="permission_denied", reason_code="permission_denied")
     if _TIMEOUT.search(evidence):
         return CiscoRawCommandResult(**common, status="timeout", reason_code="command_timeout")
-    if _UNSUPPORTED.search(evidence):
+    if unsupported_pattern.search(evidence):
         return CiscoRawCommandResult(**common, status="unsupported", reason_code="unsupported_command")
     if record.get("failed") is True or message:
         return CiscoRawCommandResult(**common, status="error", reason_code="command_execution_error")
@@ -285,4 +310,5 @@ __all__ = [
     "CiscoRawDeviceReport", "CiscoRawIgnoredCommand",
     "classify_command_record", "parse_command_output", "safe_slug",
     "site_artifact_name",
+    "RAW_SCHEMA_VERSION",
 ]

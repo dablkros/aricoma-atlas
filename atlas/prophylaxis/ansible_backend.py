@@ -1,5 +1,6 @@
 """Thin, secret-conscious Ansible Runner execution boundary."""
 
+import json
 import logging
 import os
 from pathlib import Path
@@ -21,6 +22,10 @@ from atlas.prophylaxis.errors import (
 from atlas.prophylaxis.models import CheckId, CollectorId, RawCollectorResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
 from atlas.prophylaxis.cisco_raw import CISCO_FULL_COMMANDS, CISCO_IDENTITY_COMMANDS
+from atlas.prophylaxis.fortios_raw import (
+    FORTIOS_FULL_COMMANDS,
+    FORTIOS_IDENTITY_COMMANDS,
+)
 
 
 RESULT_TASK_SUFFIX = "ATLAS_RESULT"
@@ -334,6 +339,11 @@ class AnsibleBackend:
             and raw_mode not in {"identity", "full_collection"}
         ):
             raise AnsibleExecutionError()
+        if (
+            collector_id == CollectorId.FORTIOS_RAW
+            and raw_mode not in {"identity", "full_collection"}
+        ):
+            raise AnsibleExecutionError()
         if not profile.supports_collector(collector_id):
             return RawCollectorResult(
                 collector=collector_id,
@@ -372,6 +382,7 @@ class AnsibleBackend:
             home = self._prepare_home(private_dir)
             local_tmp = private_dir / "local-tmp"
             local_tmp.mkdir(mode=0o700)
+            raw_result_file = private_dir / "fortios-raw-result.json"
             ssh_config_file = None
             if profile.legacy_ciphers or profile.legacy_macs:
                 ssh_config_file = home / ".ssh" / "config"
@@ -442,6 +453,16 @@ class AnsibleBackend:
                                 if raw_mode == "full_collection"
                                 else CISCO_IDENTITY_COMMANDS
                             ) if collector_id == CollectorId.CISCO_RAW else [],
+                            "atlas_fortios_raw_commands": list(
+                                FORTIOS_FULL_COMMANDS
+                                if raw_mode == "full_collection"
+                                else FORTIOS_IDENTITY_COMMANDS
+                            ) if collector_id == CollectorId.FORTIOS_RAW else [],
+                            "atlas_fortios_collect_interface_diagnostics": (
+                                collector_id == CollectorId.FORTIOS_RAW
+                                and raw_mode == "full_collection"
+                            ),
+                            "atlas_raw_result_path": str(raw_result_file),
                         },
                         envvars=environment,
                         suppress_env_files=True,
@@ -450,7 +471,7 @@ class AnsibleBackend:
                         rotate_artifacts=0,
                         timeout=(
                             max(self.job_timeout, 900)
-                            if collector_id == CollectorId.CISCO_RAW
+                            if collector_id in {CollectorId.CISCO_RAW, CollectorId.FORTIOS_RAW}
                             else self.job_timeout
                         ),
                     )
@@ -548,6 +569,23 @@ class AnsibleBackend:
                     raise failure
             if captured_result is None:
                 raise AnsibleExecutionError()
+            if collector_id == CollectorId.FORTIOS_RAW:
+                try:
+                    if raw_result_file.is_symlink() or not raw_result_file.is_file():
+                        raise AnsibleExecutionError()
+                    if raw_result_file.stat().st_mode & 0o077:
+                        raise AnsibleExecutionError()
+                    protected_data = json.loads(
+                        raw_result_file.read_text(encoding="utf-8")
+                    )
+                    if not isinstance(protected_data, dict):
+                        raise AnsibleExecutionError()
+                    captured_result = {
+                        **captured_result,
+                        "data": protected_data,
+                    }
+                except (OSError, ValueError, json.JSONDecodeError):
+                    raise AnsibleExecutionError() from None
             if "collector" not in captured_result and "check" in captured_result:
                 captured_result = {
                     **captured_result,

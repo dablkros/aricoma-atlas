@@ -174,6 +174,7 @@ class CollectorId(StrEnum):
     # Compatibility collector IDs used by other platform profiles and the
     # synchronous check endpoint. New cisco-ios plans prefer the ios_* IDs.
     DEVICE_FACTS = "device_facts"
+    FORTIOS_RAW = "fortios_raw"
     CPU_USAGE = "cpu_usage"
     SNMP_SYSTEM = "snmp_system"
 

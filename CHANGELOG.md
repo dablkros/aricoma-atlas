@@ -14,12 +14,18 @@ the corresponding Git tag.
   Tenant/Site.
 - Best-effort NTC/TextFSM structured data alongside authoritative raw CLI
   output, with explicit parser status and no impact on collection success.
+- FortiOS SSH `identity` and `full_collection` raw modes using the existing
+  Paramiko transport, bounded dynamic physical-NIC discovery and vendor-neutral
+  Tenant/Site artifacts.
 
 ### Security
 
 - Atomic `0600` Cisco Site reports under `0700` run directories, per-command
   output limits and redaction of common CLI secret forms. Raw stdout is not
   returned by the normal run API or application logs.
+- FortiOS raw output is transferred through a protected temporary file rather
+  than Ansible Runner events; FortiOS secrets and private-key PEM blocks are
+  redacted before persistence.
 
 ## [0.5.0-beta] - 2026-11-10
 

@@ -40,6 +40,7 @@ CPU_AND_FACTS = frozenset({CollectorId.CPU_USAGE, CollectorId.DEVICE_FACTS})
 FORTIOS_COLLECTORS = frozenset({
     CollectorId.CPU_USAGE,
     CollectorId.DEVICE_FACTS,
+    CollectorId.FORTIOS_RAW,
     CollectorId.FORTIOS_RESOURCES,
     CollectorId.FORTIOS_INTERFACES,
     CollectorId.FORTIOS_COMPLIANCE,
