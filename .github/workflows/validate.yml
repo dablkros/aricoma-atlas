@@ -1000,6 +1000,8 @@ jobs:
                   "status": "active",
                   "custom_fields": {
                       "monitoring_enabled": True,
+                      # Deliberately use the pre-upgrade thematic value. The
+                      # current baseline must migrate it to full_collection.
                       "profylaxia_checks": [
                           "identity",
                           "resources",
@@ -1260,7 +1262,7 @@ jobs:
               if isinstance(choice, dict)
           ] if isinstance(checks, list) else []
 
-          if check_values != ["identity", "resources"]:
+          if check_values != ["identity", "full_collection"]:
               raise SystemExit(
                   "[ERROR] Prophylaxis selections were not migrated "
                   "to the expected groups during upgrade: "
