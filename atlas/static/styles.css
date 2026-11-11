@@ -403,6 +403,22 @@ h2 {
   align-items: start;
 }
 
+.credential-mode-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .5rem 1rem;
+  margin-top: .7rem;
+  padding: 0;
+  border: 0;
+}
+
+.credential-mode-options legend {
+  margin-bottom: .35rem;
+  color: var(--ink-soft);
+  font-size: .72rem;
+  font-weight: 700;
+}
+
 .credential-secret-fields {
   display: grid;
   gap: .65rem;

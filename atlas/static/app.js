@@ -152,6 +152,7 @@ const elements = {
   credentialOpen: document.querySelector("#credential-onboarding-open"),
   credentialDialog: document.querySelector("#credential-onboarding-dialog"),
   credentialClose: document.querySelector("#credential-onboarding-close"),
+  credentialMode: document.querySelector("#credential-mode"),
   credentialTenant: document.querySelector("#credential-tenant"),
   credentialSite: document.querySelector("#credential-site"),
   credentialManufacturer: document.querySelector("#credential-manufacturer"),
@@ -164,6 +165,9 @@ const elements = {
   credentialProfileOptions: document.querySelector("#credential-profile-options"),
   credentialAuth: document.querySelector("#credential-fortios-auth"),
   credentialProphylaxisEnabled: document.querySelector("#credential-prophylaxis-enabled"),
+  credentialProphylaxisModes: document.querySelector("#credential-prophylaxis-modes"),
+  credentialCheckIdentity: document.querySelector("#credential-check-identity"),
+  credentialCheckFull: document.querySelector("#credential-check-full"),
   credentialProphylaxisSshFields: document.querySelector("#credential-prophylaxis-ssh-fields"),
   credentialProphylaxisApiFields: document.querySelector("#credential-prophylaxis-api-fields"),
   credentialProphylaxisUsername: document.querySelector("#credential-prophylaxis-username"),
@@ -172,11 +176,14 @@ const elements = {
   credentialProphylaxisApiToken: document.querySelector("#credential-prophylaxis-api-token"),
   credentialFortiosApiPort: document.querySelector("#credential-fortios-api-port"),
   credentialOxidizedEnabled: document.querySelector("#credential-oxidized-enabled"),
+  credentialOxidizedFields: document.querySelector("#credential-oxidized-fields"),
   credentialOxidizedUsername: document.querySelector("#credential-oxidized-username"),
   credentialOxidizedPassword: document.querySelector("#credential-oxidized-password"),
   credentialMonitoringEnabled: document.querySelector("#credential-monitoring-enabled"),
+  credentialSnmpFields: document.querySelector("#credential-snmp-fields"),
   credentialSnmpCommunity: document.querySelector("#credential-snmp-community"),
   credentialReplace: document.querySelector("#credential-replace"),
+  credentialReplaceRow: document.querySelector("#credential-replace-row"),
   credentialClear: document.querySelector("#credential-clear"),
   credentialPlanButton: document.querySelector("#credential-plan"),
   credentialActivity: document.querySelector("#credential-activity"),
@@ -667,6 +674,18 @@ function renderCredentialPlatformOptions() {
     && devices.every((device) => device.oxidized_enabled === true);
   elements.credentialMonitoringEnabled.checked = devices.length > 0
     && devices.every((device) => device.monitoring_enabled === true);
+  const checkSelections = devices.map((device) => (device.profylaxia_checks || [])
+    .map((item) => (typeof item === "string" ? item : item?.value))
+    .filter(Boolean)
+    .sort()
+    .join(","));
+  const sharedChecks = checkSelections.length > 0
+    && checkSelections.every((value) => value === checkSelections[0])
+    ? new Set(checkSelections[0].split(",").filter(Boolean))
+    : new Set(["identity"]);
+  elements.credentialCheckIdentity.checked = sharedChecks.has("identity")
+    || sharedChecks.size === 0;
+  elements.credentialCheckFull.checked = sharedChecks.has("full_collection");
   renderCredentialAuthOptions();
 }
 
@@ -741,9 +760,23 @@ function renderCredentialAuthOptions() {
 }
 
 function renderCredentialAuthFields() {
+  const reuse = elements.credentialMode.value === "reuse";
   const api = elements.credentialAuth.value === "api_token";
-  elements.credentialProphylaxisSshFields.hidden = api;
+  elements.credentialProphylaxisSshFields.hidden = reuse || api;
   elements.credentialProphylaxisApiFields.hidden = !api;
+  elements.credentialProphylaxisApiToken.hidden = reuse;
+  elements.credentialOxidizedFields.hidden = reuse;
+  elements.credentialSnmpFields.hidden = reuse;
+  elements.credentialReplaceRow.hidden = reuse;
+  elements.credentialProphylaxisModes.disabled = !elements.credentialProphylaxisEnabled.checked;
+  if (reuse) elements.credentialReplace.checked = false;
+}
+
+function selectedProfylaxiaChecks() {
+  return [
+    [elements.credentialCheckIdentity, "identity"],
+    [elements.credentialCheckFull, "full_collection"],
+  ].filter(([input]) => input.checked).map(([, value]) => value);
 }
 
 async function openCredentialOnboarding() {
@@ -788,14 +821,20 @@ function credentialPayload() {
       : elements.credentialPlatform.value,
     preserve_device_platforms: elements.credentialPreservePlatforms.checked,
     credential_profile: elements.credentialProfile.value.trim(),
+    credential_mode: elements.credentialMode.value,
     prophylaxis_enabled: prophylaxis,
+    ...(prophylaxis ? { profylaxia_checks: selectedProfylaxiaChecks() } : {}),
     oxidized_enabled: oxidized,
     monitoring_enabled: monitoring,
     replace_existing: elements.credentialReplace.checked,
   };
   if (prophylaxis) {
     payload.prophylaxis_auth = auth;
-    if (auth === "api_token") {
+    if (elements.credentialMode.value === "reuse") {
+      if (auth === "api_token") {
+        payload.fortios_api_port = Number(elements.credentialFortiosApiPort.value);
+      }
+    } else if (auth === "api_token") {
       payload.prophylaxis_api = { api_token: elements.credentialProphylaxisApiToken.value };
       payload.fortios_api_port = Number(elements.credentialFortiosApiPort.value);
     } else {
@@ -806,11 +845,13 @@ function credentialPayload() {
       };
     }
   }
-  if (oxidized) payload.oxidized = {
+  if (oxidized && elements.credentialMode.value !== "reuse") payload.oxidized = {
     username: elements.credentialOxidizedUsername.value,
     password: elements.credentialOxidizedPassword.value,
   };
-  if (monitoring) payload.snmp = { community: elements.credentialSnmpCommunity.value };
+  if (monitoring && elements.credentialMode.value !== "reuse") {
+    payload.snmp = { community: elements.credentialSnmpCommunity.value };
+  }
   return payload;
 }
 
@@ -868,13 +909,33 @@ async function planCredentials() {
     toast("Enter a shared credential profile.", "warning");
     return;
   }
+  if (![
+    elements.credentialProphylaxisEnabled,
+    elements.credentialOxidizedEnabled,
+    elements.credentialMonitoringEnabled,
+  ].some((input) => input.checked)) {
+    toast("Select at least one credential purpose to verify or store.", "warning");
+    return;
+  }
+  if (
+    elements.credentialProphylaxisEnabled.checked
+    && !selectedProfylaxiaChecks().length
+  ) {
+    toast("Select Identity & inventory, Full collection, or both.", "warning");
+    return;
+  }
   setCredentialBusy(true);
   try {
     const result = await apiRequest("/api/credentials/plan", {
       method: "POST", headers: operatorHeaders(), body: credentialPayload(),
     });
     renderCredentialPlan(result);
-    toast("Credential onboarding plan is ready for review.", result.apply_allowed ? "success" : "warning");
+    toast(
+      result.credential_mode === "reuse"
+        ? "Existing profile assignment plan is ready for review."
+        : "Credential onboarding plan is ready for review.",
+      result.apply_allowed ? "success" : "warning",
+    );
   } catch (error) {
     resetCredentialPlan();
     toast(error.safeMessage || "Credential planning failed.", "error");
@@ -896,7 +957,12 @@ async function applyCredentials() {
     clearCredentialSecrets();
     elements.credentialPlanResult.hidden = false;
     setPill(elements.credentialPlanStatus, "healthy", "Applied");
-    toast("Credentials and NetBox selections were applied.", "success");
+    toast(
+      result.credential_mode === "reuse"
+        ? "The existing OpenBao profile was assigned in NetBox."
+        : "Credentials and NetBox selections were applied.",
+      "success",
+    );
   } catch (error) {
     if (error.code === "credential_onboarding_plan_stale") resetCredentialPlan();
     toast(error.safeMessage || "Credential onboarding apply failed.", "error");
@@ -2620,6 +2686,14 @@ elements.credentialAuth.addEventListener("change", () => {
   renderCredentialAuthFields();
   resetCredentialPlan();
 });
+elements.credentialMode.addEventListener("change", () => {
+  renderCredentialAuthFields();
+  resetCredentialPlan();
+});
+elements.credentialProphylaxisEnabled.addEventListener("change", () => {
+  renderCredentialAuthFields();
+  resetCredentialPlan();
+});
 elements.credentialClear.addEventListener("click", clearCredentialSecrets);
 elements.credentialPlanButton.addEventListener("click", planCredentials);
 elements.credentialApply.addEventListener("click", applyCredentials);
@@ -3306,8 +3380,11 @@ elements.vpnTestOTPCode.addEventListener("keydown", (event) => {
 });
 
 for (const input of [
+  elements.credentialMode,
   elements.credentialProfile,
   elements.credentialProphylaxisEnabled,
+  elements.credentialCheckIdentity,
+  elements.credentialCheckFull,
   elements.credentialProphylaxisUsername,
   elements.credentialProphylaxisPassword,
   elements.credentialProphylaxisEnable,

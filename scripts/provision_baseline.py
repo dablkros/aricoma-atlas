@@ -611,13 +611,18 @@ STABLE_ID_PROPHYLAXIS_CHOICES = [
     *LEGACY_PROPHYLAXIS_CHOICES[2:7],
 ]
 
-GROUPED_PROPHYLAXIS_CHOICES = [
+LEGACY_GROUPED_PROPHYLAXIS_CHOICES = [
     ["identity", "Identity & inventory"],
     ["full_collection", "Full collection"],
     ["resources", "Resources & environment"],
     ["interfaces", "Interfaces"],
     ["compliance", "Compliance"],
     ["operations", "Operations"],
+]
+
+GROUPED_PROPHYLAXIS_CHOICES = [
+    ["identity", "Identity & inventory"],
+    ["full_collection", "Full collection"],
 ]
 
 PROPHYLAXIS_GROUP_ORDER = tuple(
@@ -628,18 +633,22 @@ PROPHYLAXIS_GROUP_BY_LEGACY_VALUE = {
     "device_facts": "identity",
     "os_version": "identity",
     "uptime": "identity",
-    "CPU utilization": "resources",
-    "cpu_utilization": "resources",
-    "Memory utilization": "resources",
-    "memory_utilization": "resources",
-    "Temperature": "resources",
-    "cpu_temperature": "resources",
-    "fan_health": "resources",
-    "Interface utilization": "interfaces",
-    "interface errors": "interfaces",
-    "Routing table": "operations",
-    "Routing protocol neighbors": "operations",
-    "HA status": "operations",
+    "CPU utilization": "full_collection",
+    "cpu_utilization": "full_collection",
+    "Memory utilization": "full_collection",
+    "memory_utilization": "full_collection",
+    "Temperature": "full_collection",
+    "cpu_temperature": "full_collection",
+    "fan_health": "full_collection",
+    "Interface utilization": "full_collection",
+    "interface errors": "full_collection",
+    "Routing table": "full_collection",
+    "Routing protocol neighbors": "full_collection",
+    "HA status": "full_collection",
+    "resources": "full_collection",
+    "interfaces": "full_collection",
+    "compliance": "full_collection",
+    "operations": "full_collection",
 }
 
 PROPHYLAXIS_CHOICE_MIGRATION_SOURCES = (
@@ -648,6 +657,7 @@ PROPHYLAXIS_CHOICE_MIGRATION_SOURCES = (
     DEVICE_FACTS_V1_PROPHYLAXIS_CHOICES,
     STABLE_ID_PROPHYLAXIS_CHOICES_V1,
     STABLE_ID_PROPHYLAXIS_CHOICES,
+    LEGACY_GROUPED_PROPHYLAXIS_CHOICES,
     [
         ["identity", "Identity & inventory"],
         ["resources", "Resources & environment"],
@@ -670,10 +680,23 @@ def transitional_prophylaxis_choices(source_choices):
     ]
 
 
+def legacy_transitional_prophylaxis_choices(source_choices):
+    existing_values = {choice[0] for choice in source_choices}
+    return [
+        *source_choices,
+        *(
+            choice
+            for choice in LEGACY_GROUPED_PROPHYLAXIS_CHOICES
+            if choice[0] not in existing_values
+        ),
+    ]
+
+
 def is_prophylaxis_migration_source(extra_choices):
     return any(
         extra_choices == source
         or extra_choices == transitional_prophylaxis_choices(source)
+        or extra_choices == legacy_transitional_prophylaxis_choices(source)
         for source in PROPHYLAXIS_CHOICE_MIGRATION_SOURCES
     )
 

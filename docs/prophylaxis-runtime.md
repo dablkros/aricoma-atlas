@@ -91,14 +91,12 @@ NetBox používateľ vyberá skupiny:
 ```text
 identity
 full_collection
-resources
-interfaces
-compliance
-operations
 ```
 
 Pre osem explicitných Cisco platformových slugov má `identity` a
-`full_collection` osobitný raw-collection kontrakt. `full_collection` má pri
+`full_collection` osobitný raw-collection kontrakt. Staršie tematické hodnoty
+sa pri baseline migrácii premapujú na `full_collection`, ale backend ich počas
+prechodu stále rozpozná. `full_collection` má pri
 súčasnom výbere prednosť, takže nevznikne druhá SSH session. `identity` vykoná
 `show version`, `show inventory` a `show hostname`; `full_collection` vykoná
 všetkých 49 verzovaných read-only príkazov bez platformového predfiltrovania.

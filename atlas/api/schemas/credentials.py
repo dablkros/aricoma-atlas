@@ -38,7 +38,12 @@ class CredentialOnboardingRequest(BaseModel):
         max_length=128,
         pattern=r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$",
     )
+    credential_mode: Literal["store", "reuse"] = "store"
     prophylaxis_enabled: bool = False
+    profylaxia_checks: list[Literal["identity", "full_collection"]] | None = Field(
+        default=None,
+        max_length=2,
+    )
     prophylaxis_auth: Literal["ssh", "api_token"] | None = None
     prophylaxis_ssh: SSHSecretInput | None = Field(default=None, repr=False)
     prophylaxis_api: APITokenInput | None = Field(default=None, repr=False)
@@ -62,10 +67,25 @@ class CredentialOnboardingRequest(BaseModel):
             raise ValueError("Platform is required")
         if not any((self.prophylaxis_enabled, self.oxidized_enabled, self.monitoring_enabled)):
             raise ValueError("Select at least one credential purpose")
+        if self.profylaxia_checks is not None:
+            if len(set(self.profylaxia_checks)) != len(self.profylaxia_checks):
+                raise ValueError("Profylaxia selection contains duplicates")
+            if self.prophylaxis_enabled and not self.profylaxia_checks:
+                raise ValueError("Select at least one Profylaxia mode")
+            if not self.prophylaxis_enabled and self.profylaxia_checks:
+                raise ValueError("Profylaxia modes require the Prophylaxia purpose")
         if self.prophylaxis_enabled:
-            if self.prophylaxis_auth == "ssh" and self.prophylaxis_ssh is None:
+            if (
+                self.credential_mode == "store"
+                and self.prophylaxis_auth == "ssh"
+                and self.prophylaxis_ssh is None
+            ):
                 raise ValueError("SSH credentials are required for Prophylaxia")
-            if self.prophylaxis_auth == "api_token" and self.prophylaxis_api is None:
+            if (
+                self.credential_mode == "store"
+                and self.prophylaxis_auth == "api_token"
+                and self.prophylaxis_api is None
+            ):
                 raise ValueError("API token is required for Prophylaxia")
             if self.prophylaxis_auth is None:
                 raise ValueError("Prophylaxia authentication is required")
@@ -82,14 +102,30 @@ class CredentialOnboardingRequest(BaseModel):
             self.fortios_api_port is not None,
         )):
             raise ValueError("Prophylaxia fields require the Prophylaxia purpose")
-        if self.oxidized_enabled and self.oxidized is None:
+        if (
+            self.credential_mode == "store"
+            and self.oxidized_enabled
+            and self.oxidized is None
+        ):
             raise ValueError("SSH credentials are required for Oxidized")
         if not self.oxidized_enabled and self.oxidized is not None:
             raise ValueError("Oxidized credentials require the Oxidized purpose")
         if self.monitoring_enabled and self.snmp is None:
-            raise ValueError("SNMP credentials are required for monitoring")
+            if self.credential_mode == "store":
+                raise ValueError("SNMP credentials are required for monitoring")
         if not self.monitoring_enabled and self.snmp is not None:
             raise ValueError("SNMP credentials require the monitoring purpose")
+        supplied_secrets = any((
+            self.prophylaxis_ssh is not None,
+            self.prophylaxis_api is not None,
+            self.oxidized is not None,
+            self.snmp is not None,
+        ))
+        if self.credential_mode == "reuse":
+            if supplied_secrets:
+                raise ValueError("Secret values are not allowed when reusing a profile")
+            if self.replace_existing:
+                raise ValueError("Replace is not allowed when reusing a profile")
         return self
 
 

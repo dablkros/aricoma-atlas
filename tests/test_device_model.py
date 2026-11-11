@@ -548,7 +548,7 @@ class PlatformTests(unittest.TestCase):
             client.tables["/api/dcim/devices/"][0]["custom_fields"][
                 "profylaxia_checks"
             ],
-            ["identity", "resources", "interfaces", "operations"],
+            ["identity", "full_collection"],
         )
         self.assertEqual(
             writes[0],
@@ -574,9 +574,7 @@ class PlatformTests(unittest.TestCase):
                     "custom_fields": {
                         "profylaxia_checks": [
                             "identity",
-                            "resources",
-                            "interfaces",
-                            "operations",
+                            "full_collection",
                         ],
                     },
                 },
@@ -623,14 +621,14 @@ class PlatformTests(unittest.TestCase):
             client.tables["/api/dcim/devices/"][0]["custom_fields"][
                 "profylaxia_checks"
             ],
-            ["resources"],
+            ["full_collection"],
         )
         self.assertEqual(
             client.writes[0],
             (
                 "PATCH",
                 f"/api/dcim/devices/{device['id']}/",
-                {"custom_fields": {"profylaxia_checks": ["resources"]}},
+                {"custom_fields": {"profylaxia_checks": ["full_collection"]}},
             ),
         )
         self.assertEqual(
@@ -673,7 +671,7 @@ class PlatformTests(unittest.TestCase):
             client.tables["/api/dcim/devices/"][0]["custom_fields"][
                 "profylaxia_checks"
             ],
-            ["identity", "resources"],
+            ["identity", "full_collection"],
         )
 
     def test_stale_mapping_invalidates_cached_build(self):

@@ -416,6 +416,14 @@
 
         <div class="inventory-fields">
           <div class="field-group">
+            <label for="credential-mode">Credential action</label>
+            <select id="credential-mode">
+              <option value="store">Store or update credentials in OpenBao</option>
+              <option value="reuse">Reuse an existing OpenBao profile</option>
+            </select>
+            <p class="field-help">Reuse verifies the selected purpose paths and applies only the reviewed NetBox settings; secret values are not read or written.</p>
+          </div>
+          <div class="field-group">
             <label for="credential-tenant">Tenant</label>
             <select id="credential-tenant"><option value="">Select a tenant</option></select>
           </div>
@@ -462,6 +470,11 @@
             <div>
               <label class="confirmation-row"><input id="credential-prophylaxis-enabled" type="checkbox"> Prophylaxia</label>
               <p>Read-only device collection using the selected platform transport.</p>
+              <fieldset id="credential-prophylaxis-modes" class="credential-mode-options">
+                <legend>Collection mode</legend>
+                <label class="confirmation-row"><input id="credential-check-identity" type="checkbox" value="identity" checked> Identity &amp; inventory</label>
+                <label class="confirmation-row"><input id="credential-check-full" type="checkbox" value="full_collection"> Full collection</label>
+              </fieldset>
             </div>
             <div id="credential-prophylaxis-ssh-fields" class="credential-secret-fields">
               <input id="credential-prophylaxis-username" type="text" autocomplete="off" placeholder="Username" aria-label="Prophylaxia username">
@@ -479,7 +492,7 @@
               <label class="confirmation-row"><input id="credential-oxidized-enabled" type="checkbox"> Oxidized</label>
               <p>Dedicated SSH credentials for configuration backups.</p>
             </div>
-            <div class="credential-secret-fields">
+            <div id="credential-oxidized-fields" class="credential-secret-fields">
               <input id="credential-oxidized-username" type="text" autocomplete="off" placeholder="Username" aria-label="Oxidized username">
               <input id="credential-oxidized-password" type="password" autocomplete="new-password" placeholder="Password" aria-label="Oxidized password">
             </div>
@@ -490,13 +503,13 @@
               <label class="confirmation-row"><input id="credential-monitoring-enabled" type="checkbox"> SNMP monitoring</label>
               <p>SNMPv2c community for the monitoring flow.</p>
             </div>
-            <div class="credential-secret-fields">
+            <div id="credential-snmp-fields" class="credential-secret-fields">
               <input id="credential-snmp-community" type="password" autocomplete="new-password" placeholder="SNMP community" aria-label="SNMP community">
             </div>
           </section>
         </div>
 
-        <label class="confirmation-row">
+        <label id="credential-replace-row" class="confirmation-row">
           <input id="credential-replace" type="checkbox">
           Replace an existing credential only when the current value differs
         </label>
