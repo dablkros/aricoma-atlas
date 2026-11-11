@@ -1001,8 +1001,8 @@ jobs:
                   "custom_fields": {
                       "monitoring_enabled": True,
                       "profylaxia_checks": [
-                          "cpu_utilization",
-                          "os_version",
+                          "identity",
+                          "resources",
                       ],
                   },
               },
