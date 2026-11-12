@@ -283,10 +283,15 @@ class AnsibleBackend:
                 variables["ansible_libssh_key_exchange_algorithms"] = (
                     "+" + ",".join(profile.legacy_kex_algorithms)
                 )
-            if profile.legacy_hostkey_algorithms:
-                variables["ansible_libssh_hostkeys"] = ",".join(
-                    profile.legacy_hostkey_algorithms
-                )
+            # Globally allow legacy RSA host keys.
+            # Keep modern algorithms preferred.
+            hostkey_algorithms = list(dict.fromkeys(
+                ["ssh-rsa", *profile.legacy_hostkey_algorithms]
+            ))
+
+            variables["ansible_libssh_hostkeys"] = (
+                    "+" + ",".join(hostkey_algorithms)
+            )
         if transport == "https":
             variables.update(
                 {
