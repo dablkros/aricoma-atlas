@@ -21,7 +21,7 @@ from atlas.prophylaxis.errors import (
 )
 from atlas.prophylaxis.models import CheckId, CollectorId, RawCollectorResult
 from atlas.prophylaxis.platforms import AnsiblePlatformProfile
-from atlas.prophylaxis.cisco_raw import CISCO_FULL_COMMANDS, CISCO_IDENTITY_COMMANDS
+from atlas.prophylaxis.cisco_raw import cisco_raw_commands
 from atlas.prophylaxis.fortios_raw import (
     FORTIOS_FULL_COMMANDS,
     FORTIOS_IDENTITY_COMMANDS,
@@ -449,9 +449,7 @@ class AnsibleBackend:
                             "atlas_transport": transport,
                             "atlas_device_model": device_model or "",
                             "atlas_cisco_raw_commands": list(
-                                CISCO_FULL_COMMANDS
-                                if raw_mode == "full_collection"
-                                else CISCO_IDENTITY_COMMANDS
+                                cisco_raw_commands(profile.slug, raw_mode or "identity")
                             ) if collector_id == CollectorId.CISCO_RAW else [],
                             "atlas_fortios_raw_commands": list(
                                 FORTIOS_FULL_COMMANDS

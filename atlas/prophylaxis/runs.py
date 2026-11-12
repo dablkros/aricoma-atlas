@@ -39,11 +39,10 @@ from atlas.prophylaxis.models import (
 )
 from atlas.prophylaxis.charts import render_metric_svg
 from atlas.prophylaxis.cisco_raw import (
-    CISCO_FULL_COMMANDS,
-    CISCO_IDENTITY_COMMANDS,
     CISCO_RAW_PLATFORMS,
     CISCO_RAW_SCHEMA_VERSION,
     CiscoRawDeviceReport,
+    cisco_raw_commands,
     classify_command_record,
     parse_command_output,
     site_artifact_name,
@@ -572,10 +571,10 @@ class DeviceFactsRunService:
         fortios = platform in FORTIOS_RAW_PLATFORMS
         collector_id = CollectorId.FORTIOS_RAW if fortios else CollectorId.CISCO_RAW
         commands = (
-            FORTIOS_FULL_COMMANDS if fortios else CISCO_FULL_COMMANDS
-        ) if mode == CheckId.FULL_COLLECTION.value else (
-            FORTIOS_IDENTITY_COMMANDS if fortios else CISCO_IDENTITY_COMMANDS
-        )
+            FORTIOS_FULL_COMMANDS
+            if mode == CheckId.FULL_COLLECTION.value
+            else FORTIOS_IDENTITY_COMMANDS
+        ) if fortios else cisco_raw_commands(platform, mode)
         identity = self._raw_identity(device)
         report = {
             "schema_version": CISCO_RAW_SCHEMA_VERSION,

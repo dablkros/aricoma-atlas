@@ -39,6 +39,26 @@ CISCO_FULL_COMMANDS = (
     "show version", "show vlan", "show vpc",
 )
 
+_SHOW_HOSTNAME_UNSUPPORTED = frozenset({
+    "cisco-ios",
+    "cisco-ios-xe",
+    "cisco-cbs",
+    "cisco-cbs250-350",
+    "cisco-catalyst-1200",
+    "cisco-catalyst-1300",
+})
+
+
+def cisco_raw_commands(platform: str, mode: str) -> tuple[str, ...]:
+    """Return the reviewed command set without known platform noise."""
+    commands = (
+        CISCO_FULL_COMMANDS if mode == "full_collection"
+        else CISCO_IDENTITY_COMMANDS
+    )
+    if platform in _SHOW_HOSTNAME_UNSUPPORTED:
+        return tuple(command for command in commands if command != "show hostname")
+    return commands
+
 CommandStatus = Literal[
     "success", "unsupported", "empty", "permission_denied", "timeout",
     "error", "truncated",
@@ -75,11 +95,60 @@ _SECRET_LINES = (
     re.compile(r"(?i)^(\s*(?:authentication-key|shared-secret)\s+).*$"),
     re.compile(r"(?i)^(\s*key\s+\d+\s+).*$"),
     re.compile(r"(?i)^(\s*(?:pre-shared-key|key-string)\s+).*$"),
+    re.compile(r"(?i)^(\s*encrypted\s+cbd\s+key\b.*?\bsecret\s+).*$"),
     re.compile(
         r"(?i)^(\s*set\s+(?:password|passwd|secret|psksecret|private-key|"
         r"community)\s+).*$"
     ),
 )
+
+_CISCO_SMB_PLATFORMS = frozenset({
+    "cisco-cbs",
+    "cisco-cbs250-350",
+    "cisco-catalyst-1200",
+    "cisco-catalyst-1300",
+})
+_SMB_CONFIG_VERSION = re.compile(r"(?m)^v(?P<version>\d+(?:\.\d+)+)\s+/\s+")
+_SMB_HOSTNAME = re.compile(r"(?m)^hostname\s+(?P<hostname>\S+)\s*$")
+_SMB_VLAN_DATABASE = re.compile(r"(?m)^vlan\s+(?P<definition>[0-9,-]+)\s*$")
+_SMB_VLAN_INTERFACE = re.compile(r"(?m)^interface\s+vlan\s+(?P<vlan_id>\d+)\s*$")
+_SMB_USERNAME = re.compile(r"(?m)^username\s+\S+\s+")
+
+
+def _configured(text: str, statement: str) -> bool | None:
+    """Return true/false for an explicit statement, otherwise unknown."""
+    state: bool | None = None
+    positive = re.compile(rf"^{re.escape(statement)}(?:\s|$)")
+    negative = re.compile(rf"^no\s+{re.escape(statement)}(?:\s|$)")
+    for line in text.splitlines():
+        candidate = line.strip()
+        if positive.match(candidate):
+            state = True
+        elif negative.match(candidate):
+            state = False
+    return state
+
+
+def _parse_cisco_smb_running_config(text: str) -> dict[str, Any] | None:
+    """Extract a small, non-secret summary from reviewed Cisco SMB syntax."""
+    hostname = _SMB_HOSTNAME.search(text)
+    version = _SMB_CONFIG_VERSION.search(text)
+    vlan_definitions = _SMB_VLAN_DATABASE.findall(text)
+    vlan_interfaces = tuple(dict.fromkeys(_SMB_VLAN_INTERFACE.findall(text)))
+    if not any((hostname, version, vlan_definitions, vlan_interfaces)):
+        return None
+    return {
+        "hostname": hostname.group("hostname") if hostname else None,
+        "config_version": version.group("version") if version else None,
+        "ip_routing_enabled": _configured(text, "ip routing"),
+        "ssh_server_enabled": _configured(text, "ip ssh server"),
+        "snmp_agent_enabled": _configured(text, "snmp-server server"),
+        "sntp_client_enabled": _configured(text, "sntp unicast client enable"),
+        "configured_user_count": len(_SMB_USERNAME.findall(text)),
+        "vlan_definitions": vlan_definitions,
+        "vlan_interface_ids": list(vlan_interfaces),
+    }
+
 
 _PRIVATE_KEY_BLOCK = re.compile(
     r"(?ms)-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----.*?"
@@ -253,18 +322,28 @@ _NTC_PLATFORM = {
     "cisco-asa": "cisco_asa",
     "cisco-cbs": "cisco_s300",
     "cisco-cbs250-350": "cisco_s300",
-    # Catalyst 1200/1300 share the reviewed Cisco SMB transport, but a matching
-    # NTC platform/template contract has not been verified from device output.
-    # Keep their raw data without silently parsing it as another platform.
+    # Device captures from Catalyst 1200 use the same show-version layout as
+    # the reviewed CBS/S300 family. Unsupported commands remain raw-only.
+    "cisco-catalyst-1200": "cisco_s300",
+    "cisco-catalyst-1300": "cisco_s300",
 }
 
 
 def parse_command_output(
     result: CiscoRawCommandResult, *, platform: str,
 ) -> CiscoRawCommandResult:
-    """Add best-effort NTC/TextFSM data without changing raw collection state."""
+    """Add reviewed structured data without changing raw collection state."""
     if result.status not in {"success", "truncated"} or not result.stdout:
         return result
+    if result.command == "show running-config" and platform in _CISCO_SMB_PLATFORMS:
+        summary = _parse_cisco_smb_running_config(result.stdout)
+        if summary is None:
+            return result.model_copy(update={"parser_status": "failed"})
+        return result.model_copy(update={
+            "parser_status": "parsed",
+            "parser_template": "atlas:cisco-smb-running-config-summary/1.0",
+            "structured_data": [summary],
+        })
     ntc_platform = _NTC_PLATFORM.get(platform)
     if ntc_platform is None:
         return result.model_copy(update={"parser_status": "template_missing"})
@@ -300,15 +379,20 @@ def safe_slug(value: object, fallback: str) -> str:
 
 
 def site_artifact_name(tenant: str, site: str, started_at: datetime) -> str:
+    tenant_slug = safe_slug(tenant, "no-tenant")
+    site_slug = safe_slug(site, "no-site")
+    tenant_prefix = f"{tenant_slug}-"
+    if site_slug.startswith(tenant_prefix):
+        site_slug = site_slug.removeprefix(tenant_prefix) or "no-site"
     stamp = started_at.astimezone(timezone.utc).strftime("%Y%m%d-%H%M%SZ")
-    return f"{safe_slug(tenant, 'no-tenant')}-{safe_slug(site, 'no-site')}-{stamp}.json"
+    return f"{tenant_slug}-{site_slug}-{stamp}.json"
 
 
 __all__ = [
     "CISCO_FULL_COMMANDS", "CISCO_IDENTITY_COMMANDS", "CISCO_RAW_PLATFORMS",
     "CISCO_RAW_SCHEMA_VERSION", "CiscoRawCommandResult",
     "CiscoRawDeviceReport", "CiscoRawIgnoredCommand",
-    "classify_command_record", "parse_command_output", "safe_slug",
+    "cisco_raw_commands", "classify_command_record", "parse_command_output", "safe_slug",
     "site_artifact_name",
     "RAW_SCHEMA_VERSION",
 ]

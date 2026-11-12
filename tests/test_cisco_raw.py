@@ -10,6 +10,7 @@ from atlas.prophylaxis.cisco_raw import (
     CISCO_IDENTITY_COMMANDS,
     CISCO_RAW_PLATFORMS,
     CiscoRawDeviceReport,
+    cisco_raw_commands,
     classify_command_record,
     parse_command_output,
     site_artifact_name,
@@ -46,6 +47,19 @@ class CiscoRawContractTests(unittest.TestCase):
             "cisco-catalyst-1300",
         }, set(CISCO_RAW_PLATFORMS))
 
+    def test_known_unsupported_hostname_command_is_not_scheduled(self):
+        for platform in (
+            "cisco-ios", "cisco-ios-xe", "cisco-cbs250-350",
+            "cisco-catalyst-1200", "cisco-catalyst-1300",
+        ):
+            with self.subTest(platform=platform):
+                self.assertNotIn(
+                    "show hostname", cisco_raw_commands(platform, "identity")
+                )
+        self.assertIn(
+            "show hostname", cisco_raw_commands("cisco-nxos", "identity")
+        )
+
     def test_command_statuses_are_distinct(self):
         unsupported = classify_command_record(
             self.record(stdout="% Invalid input detected"), max_output_bytes=4096,
@@ -73,6 +87,59 @@ class CiscoRawContractTests(unittest.TestCase):
         self.assertNotIn("cleartext", result.stdout)
         self.assertLessEqual(len(result.stdout.encode()), 4096)
 
+    def test_cisco_smb_running_config_secrets_are_redacted(self):
+        result = classify_command_record(
+            self.record(
+                command="show running-config",
+                stdout=(
+                    "hostname SW01\n"
+                    "username operator password encrypted USER-HASH privilege 15\n"
+                    "snmp-server community PRIVATE-COMMUNITY ro\n"
+                    "encrypted cbd key id 123 secret CBD-SECRET\n"
+                ),
+            ),
+            max_output_bytes=4096,
+        )
+        self.assertEqual("success", result.status)
+        self.assertNotIn("USER-HASH", result.stdout)
+        self.assertNotIn("PRIVATE-COMMUNITY", result.stdout)
+        self.assertNotIn("CBD-SECRET", result.stdout)
+        self.assertEqual(3, result.stdout.count("<redacted>"))
+
+    def test_cisco_smb_running_config_has_safe_structured_summary(self):
+        raw = classify_command_record(
+            self.record(
+                command="show running-config",
+                stdout=(
+                    "config-file-header\nSW01\nv3.3.0.16 / RCBS3.3_950\n"
+                    "hostname SW01\nno ip routing\nip ssh server\n"
+                    "snmp-server server\nno sntp unicast client enable\n"
+                    "username operator password encrypted USER-HASH privilege 15\n"
+                    "vlan database\nvlan 5,30,100-116\nvlan 801-803,888\nexit\n"
+                    "interface vlan 5\n name management\ninterface vlan 30\n"
+                ),
+            ),
+            max_output_bytes=4096,
+        )
+        parsed = parse_command_output(raw, platform="cisco-catalyst-1200")
+        self.assertEqual("parsed", parsed.parser_status)
+        self.assertEqual(
+            "atlas:cisco-smb-running-config-summary/1.0",
+            parsed.parser_template,
+        )
+        self.assertEqual([{
+            "hostname": "SW01",
+            "config_version": "3.3.0.16",
+            "ip_routing_enabled": False,
+            "ssh_server_enabled": True,
+            "snmp_agent_enabled": True,
+            "sntp_client_enabled": False,
+            "configured_user_count": 1,
+            "vlan_definitions": ["5,30,100-116", "801-803,888"],
+            "vlan_interface_ids": ["5", "30"],
+        }], parsed.structured_data)
+        self.assertNotIn("USER-HASH", parsed.stdout)
+
     @patch("ntc_templates.parse.parse_output", return_value=[{"version": "17.9"}])
     def test_textfsm_is_additive_and_preserves_raw_output(self, _parse):
         raw = classify_command_record(self.record(), max_output_bytes=4096)
@@ -81,18 +148,29 @@ class CiscoRawContractTests(unittest.TestCase):
         self.assertEqual(raw.stdout, parsed.stdout)
         self.assertEqual([{"version": "17.9"}], parsed.structured_data)
 
-    def test_unverified_catalyst_textfsm_mapping_stays_raw_only(self):
+    @patch("ntc_templates.parse.parse_output", return_value=[{"sw_version": "4.1.3.36"}])
+    def test_catalyst_1200_uses_reviewed_cisco_smb_textfsm_family(self, parse):
         raw = classify_command_record(self.record(), max_output_bytes=4096)
         parsed = parse_command_output(raw, platform="cisco-catalyst-1200")
-        self.assertEqual("template_missing", parsed.parser_status)
+        self.assertEqual("parsed", parsed.parser_status)
         self.assertEqual(raw.stdout, parsed.stdout)
-        self.assertIsNone(parsed.structured_data)
+        self.assertEqual([{"sw_version": "4.1.3.36"}], parsed.structured_data)
+        parse.assert_called_once_with(
+            platform="cisco_s300", command="show version", data=raw.stdout,
+        )
 
     def test_site_filename_is_stable_and_utc(self):
         name = site_artifact_name(
             "Customer A", "DC Martin", datetime(2026, 11, 10, tzinfo=timezone.utc),
         )
         self.assertEqual("customer-a-dc-martin-20261110-000000Z.json", name)
+
+    def test_site_filename_does_not_repeat_tenant_prefixed_site_slug(self):
+        name = site_artifact_name(
+            "aricoma-systems", "aricoma-systems-dcmartin",
+            datetime(2026, 11, 11, 14, 30, 23, tzinfo=timezone.utc),
+        )
+        self.assertEqual("aricoma-systems-dcmartin-20261111-143023Z.json", name)
 
     def test_full_collection_takes_precedence_over_identity(self):
         device = {
