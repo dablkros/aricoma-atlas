@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import re
+import shutil
 import threading
+from datetime import datetime, timezone
 from uuid import UUID, uuid4
 
 from atlas.prophylaxis.formatting import format_uptime_seconds
@@ -15,7 +17,12 @@ from atlas.prophylaxis.models import (
     EvaluationOutcome,
     FirmwareRecommendationValues,
 )
-from atlas.prophylaxis.run_models import ProphylaxisRun
+from atlas.prophylaxis.run_models import ProphylaxisRawReport, ProphylaxisRun
+from atlas.prophylaxis.cisco_raw import (
+    RAW_SCHEMA_VERSION,
+    safe_slug,
+    site_artifact_name,
+)
 
 
 class RunStoreError(RuntimeError):
@@ -28,9 +35,12 @@ class RunNotFoundError(RuntimeError):
 
 class FileRunStore:
     ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,126}\.svg")
+    REPORT_ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{0,239}Z?\.json")
+    MAX_REPORT_BYTES = 64 * 1024 * 1024
 
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, max_runs: int = 100) -> None:
         self.root = Path(root)
+        self.max_runs = max_runs
         self._lock = threading.Lock()
 
     def _prepare_root(self) -> None:
@@ -76,7 +86,40 @@ class FileRunStore:
             report_path=str(report_path),
         )
         self.save(run)
+        self._prune_terminal_runs(exclude=run_id)
         return run
+
+    def _prune_terminal_runs(self, *, exclude: UUID) -> None:
+        """Retain the newest terminal run directories without following links."""
+        with self._lock:
+            candidates = []
+            try:
+                entries = tuple(self.root.iterdir())
+            except OSError:
+                raise RunStoreError() from None
+            for directory in entries:
+                if directory.is_symlink() or not directory.is_dir():
+                    continue
+                try:
+                    run_id = UUID(directory.name)
+                except ValueError:
+                    continue
+                if run_id == exclude:
+                    continue
+                result = directory / "result.json"
+                try:
+                    payload = json.loads(result.read_text(encoding="utf-8"))
+                    if payload.get("status") not in {"COMPLETED", "PARTIAL", "FAILED"}:
+                        continue
+                    candidates.append((result.stat().st_mtime, directory))
+                except (OSError, ValueError, json.JSONDecodeError):
+                    continue
+            candidates.sort(reverse=True)
+            for _mtime, directory in candidates[max(0, self.max_runs - 1):]:
+                try:
+                    shutil.rmtree(directory)
+                except OSError:
+                    raise RunStoreError() from None
 
     def save(self, run: ProphylaxisRun) -> None:
         with self._lock:
@@ -115,6 +158,80 @@ class FileRunStore:
             os.chmod(charts, 0o700)
             self._atomic_write(charts / name, content)
 
+    def write_site_reports(
+        self,
+        run_id: UUID,
+        reports: tuple[dict, ...],
+        *,
+        started_at: datetime,
+    ) -> tuple[ProphylaxisRawReport, ...]:
+        """Atomically persist one protected JSON artifact per Tenant/Site."""
+        grouped: dict[tuple[str, str, str, str], list[dict]] = {}
+        for report in reports:
+            device = report.get("device") if isinstance(report, dict) else None
+            if not isinstance(device, dict):
+                raise RunStoreError()
+            tenant = device.get("tenant") or {}
+            site = device.get("site") or {}
+            tenant_name = str(tenant.get("name") or "No tenant")
+            site_name = str(site.get("name") or "No site")
+            tenant_slug = safe_slug(tenant.get("slug") or tenant_name, "no-tenant")
+            site_slug = safe_slug(site.get("slug") or site_name, "no-site")
+            grouped.setdefault(
+                (tenant_slug, site_slug, tenant_name, site_name), []
+            ).append(report)
+
+        artifacts = []
+        with self._lock:
+            self._prepare_root()
+            directory = self._directory(run_id)
+            if directory.is_symlink() or not directory.is_dir():
+                raise RunStoreError()
+            sites = directory / "sites"
+            if sites.is_symlink():
+                raise RunStoreError()
+            sites.mkdir(mode=0o700, exist_ok=True)
+            os.chmod(sites, 0o700)
+            for (tenant_slug, site_slug, tenant_name, site_name), devices in sorted(grouped.items()):
+                name = site_artifact_name(tenant_slug, site_slug, started_at)
+                contains_fortios = any(
+                    isinstance(device.get("device"), dict)
+                    and device["device"].get("platform") == "fortios"
+                    for device in devices
+                )
+                payload = {
+                    "schema_version": RAW_SCHEMA_VERSION,
+                    "document_type": (
+                        "atlas_network_site_collection"
+                        if contains_fortios
+                        else "atlas_cisco_site_collection"
+                    ),
+                    "run_id": str(run_id),
+                    "tenant": {"name": tenant_name, "slug": tenant_slug},
+                    "site": {"name": site_name, "slug": site_slug},
+                    "started_at": started_at.astimezone(timezone.utc).isoformat(),
+                    "generated_at": datetime.now(timezone.utc).isoformat(),
+                    "devices": sorted(
+                        devices,
+                        key=lambda item: (
+                            item["device"].get("netbox_id") is None,
+                            item["device"].get("netbox_id") or 0,
+                            item["device"].get("hostname") or "",
+                        ),
+                    ),
+                }
+                self._atomic_write(
+                    sites / name,
+                    json.dumps(payload, indent=2, ensure_ascii=False) + "\n",
+                )
+                artifacts.append(ProphylaxisRawReport(
+                    tenant=tenant_slug,
+                    site=site_slug,
+                    artifact=name,
+                    device_count=len(devices),
+                ))
+        return tuple(artifacts)
+
     def chart_path(self, run_id: UUID, name: str) -> Path:
         if not self.ARTIFACT_NAME.fullmatch(name):
             raise RunNotFoundError()
@@ -138,6 +255,67 @@ class FileRunStore:
                 raise
             except (OSError, ValueError, json.JSONDecodeError):
                 raise RunStoreError() from None
+
+    def list_runs(self, *, limit: int = 20) -> tuple[ProphylaxisRun, ...]:
+        """Return newest readable runs without following filesystem links."""
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        with self._lock:
+            self._prepare_root()
+            candidates: list[tuple[float, UUID]] = []
+            try:
+                for directory in self.root.iterdir():
+                    if directory.is_symlink() or not directory.is_dir():
+                        continue
+                    try:
+                        run_id = UUID(directory.name)
+                    except ValueError:
+                        continue
+                    result = directory / "result.json"
+                    if result.is_symlink() or not result.is_file():
+                        continue
+                    candidates.append((result.stat().st_mtime, run_id))
+            except OSError:
+                raise RunStoreError() from None
+        runs = []
+        for _mtime, run_id in sorted(candidates, reverse=True)[:limit]:
+            runs.append(self.get(run_id))
+        return tuple(runs)
+
+    def site_report_path(self, run_id: UUID, artifact: str) -> Path:
+        if not self.REPORT_ARTIFACT_NAME.fullmatch(artifact):
+            raise RunNotFoundError()
+        run = self.get(run_id)
+        if artifact not in {item.artifact for item in run.raw_reports}:
+            raise RunNotFoundError()
+        with self._lock:
+            path = self._directory(run_id) / "sites" / artifact
+            try:
+                if path.is_symlink() or not path.is_file():
+                    raise RunNotFoundError()
+                if path.stat().st_size > self.MAX_REPORT_BYTES:
+                    raise RunStoreError()
+            except OSError:
+                raise RunStoreError() from None
+            return path
+
+    def read_site_report(self, run_id: UUID, artifact: str) -> dict:
+        path = self.site_report_path(run_id, artifact)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise RunStoreError() from None
+        if not isinstance(payload, dict) or not isinstance(payload.get("devices"), list):
+            raise RunStoreError()
+        return payload
+
+    def text_report_path(self, run_id: UUID) -> Path:
+        self.get(run_id)
+        with self._lock:
+            path = self._directory(run_id) / "report.txt"
+            if path.is_symlink() or not path.is_file():
+                raise RunNotFoundError()
+            return path
 
     @staticmethod
     def _report_data(run: ProphylaxisRun) -> dict:
@@ -228,6 +406,10 @@ class FileRunStore:
                     run.finished_at.isoformat() if run.finished_at else None
                 ),
                 "summary": run.summary.model_dump(mode="json"),
+                "raw_reports": [
+                    report.model_dump(mode="json")
+                    for report in run.raw_reports
+                ],
             },
             "devices": devices,
         })
@@ -343,6 +525,13 @@ class FileRunStore:
         ]
         if run.error:
             lines.extend(("", f"Run error: {run.error}"))
+        if run.raw_reports:
+            lines.extend(("", "Cisco raw collection artifacts:"))
+            for report in run.raw_reports:
+                lines.append(
+                    f"- {report.tenant}/{report.site}: {report.artifact} "
+                    f"({report.device_count} devices)"
+                )
         devices: dict[tuple, list] = {}
         for result in run.results:
             key = (

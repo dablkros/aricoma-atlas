@@ -12,6 +12,7 @@ from atlas.prophylaxis.collectors import (
     CollectionPlan,
     CollectorRegistry,
     CollectorTask,
+    DEVICE_FACTS_COLLECTOR,
 )
 from atlas.prophylaxis.errors import (
     DeviceResolutionError,
@@ -31,12 +32,34 @@ from atlas.prophylaxis.models import (
     EvaluationOutcome,
     FirmwareRecommendationValues,
     OSVersionValues,
+    RawCollectorResult,
     SystemMetricValues,
     UptimeValues,
     expand_check_selection,
 )
 from atlas.prophylaxis.charts import render_metric_svg
-from atlas.prophylaxis.platforms import AnsiblePlatformRegistry
+from atlas.prophylaxis.cisco_raw import (
+    CISCO_RAW_PLATFORMS,
+    CISCO_RAW_SCHEMA_VERSION,
+    CiscoRawDeviceReport,
+    cisco_raw_commands,
+    classify_command_record,
+    parse_command_output,
+    site_artifact_name,
+)
+from atlas.prophylaxis.cisco_logs import enrich_cisco_log_results
+from atlas.prophylaxis.fortios_raw import (
+    FORTIOS_FULL_COMMANDS,
+    FORTIOS_IDENTITY_COMMANDS,
+    FORTIOS_INTERFACE_NAME,
+    FORTIOS_MAX_DISCOVERED_INTERFACES,
+    FORTIOS_RAW_PLATFORMS,
+    is_allowed_fortios_result_command,
+)
+from atlas.prophylaxis.platforms import (
+    AnsiblePlatformRegistry,
+    FORTIOS_SSH_PROFILE,
+)
 from atlas.prophylaxis.run_models import (
     ModelInventoryValues,
     ProphylaxisChart,
@@ -106,6 +129,7 @@ class DeviceFactsRunService:
         vpn_registry=None,
         vpn_session=None,
         vpn_backend=None,
+        raw_command_max_bytes: int = 1_048_576,
     ) -> None:
         self.netbox = netbox
         self.openbao = openbao
@@ -122,16 +146,24 @@ class DeviceFactsRunService:
         self.vpn_registry = vpn_registry
         self.vpn_session = vpn_session
         self.vpn_backend = vpn_backend
+        self.raw_command_max_bytes = raw_command_max_bytes
         self._slots = threading.BoundedSemaphore(concurrency)
         self._run_lock = threading.Lock()
         self._oxidized_nodes: dict[str, tuple[dict, ...]] = {}
         self._oxidized_error: str | None = None
+        self._raw_report_lock = threading.Lock()
+        self._raw_device_reports: list[dict] = []
+        self._active_run_id = None
+        self._active_run_started_at: datetime | None = None
 
     def submit(self) -> ProphylaxisRun:
         return self.store.create()
 
     def get(self, run_id) -> ProphylaxisRun:
         return self.store.get(run_id)
+
+    def list_runs(self, limit: int = 20) -> tuple[ProphylaxisRun, ...]:
+        return self.store.list_runs(limit=limit)
 
     def run(self, run_id) -> None:
         # The Oxidized snapshot belongs to one run and is shared by that run's
@@ -146,6 +178,10 @@ class DeviceFactsRunService:
             update={"status": "RUNNING", "started_at": utc_now()}
         )
         self.store.save(running)
+        with self._raw_report_lock:
+            self._raw_device_reports = []
+            self._active_run_id = run_id
+            self._active_run_started_at = running.started_at
         try:
             devices = self.netbox.get_prophylaxis_devices()
             self._prepare_oxidized_backup_state(devices)
@@ -154,6 +190,13 @@ class DeviceFactsRunService:
                 result for device_results in per_device for result in device_results
             )
             summary = self._summary(results)
+            with self._raw_report_lock:
+                raw_device_reports = tuple(self._raw_device_reports)
+            raw_reports = self.store.write_site_reports(
+                run_id,
+                raw_device_reports,
+                started_at=running.started_at,
+            ) if raw_device_reports else ()
             if (
                 summary.failure
                 and not summary.success
@@ -177,6 +220,7 @@ class DeviceFactsRunService:
                     "summary": summary,
                     "results": results,
                     "charts": self._generate_charts_guarded(run_id, results),
+                    "raw_reports": raw_reports,
                 }
             )
             self.store.save(completed)
@@ -203,13 +247,22 @@ class DeviceFactsRunService:
                 },
             )
             self._fail_run(running, "execution_failed")
+        finally:
+            with self._raw_report_lock:
+                self._active_run_id = None
+                self._active_run_started_at = None
+                self._raw_device_reports = []
 
     def _device_failure_results(
         self, device: dict, code: str,
     ) -> tuple[ProphylaxisCheckResult, ...]:
         device_id, name, management_ip, platform = self._identity(device)
-        known, unknown = self._selected_checks(device)
-        checks = tuple(check.value for check in known) + unknown
+        raw_mode = self._selected_raw_mode(device)
+        if raw_mode is not None:
+            checks = (raw_mode,)
+        else:
+            known, unknown = self._selected_checks(device)
+            checks = tuple(check.value for check in known) + unknown
         return tuple(
             self._check_error(
                 device_id, name, management_ip, platform, check,
@@ -452,6 +505,422 @@ class DeviceFactsRunService:
         platform = platform_value if isinstance(platform_value, str) else None
         return expand_check_selection(raw_values, platform=platform)
 
+    @staticmethod
+    def _selected_raw_mode(device: dict) -> str | None:
+        fields = device.get("custom_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        selected = selected_check_values(fields.get("profylaxia_checks"))
+        platform_data = device.get("platform")
+        platform = platform_data.get("slug") if isinstance(platform_data, dict) else None
+        if platform not in CISCO_RAW_PLATFORMS | FORTIOS_RAW_PLATFORMS:
+            return None
+        if CheckId.FULL_COLLECTION.value in selected:
+            return CheckId.FULL_COLLECTION.value
+        if "identity" in selected:
+            return "identity"
+        return None
+
+    @staticmethod
+    def _raw_identity(device: dict, target=None) -> dict:
+        device_type = device.get("device_type")
+        device_type = device_type if isinstance(device_type, dict) else {}
+        manufacturer = device_type.get("manufacturer")
+        manufacturer = manufacturer if isinstance(manufacturer, dict) else {}
+        tenant = device.get("tenant")
+        tenant = tenant if isinstance(tenant, dict) else {}
+        site = device.get("site")
+        site = site if isinstance(site, dict) else {}
+        fields = device.get("custom_fields")
+        fields = fields if isinstance(fields, dict) else {}
+        device_id, name, management_ip, platform = DeviceFactsRunService._identity(device)
+        return {
+            "netbox_id": target.id if target is not None else device_id,
+            "hostname": target.name if target is not None else name,
+            "platform": target.platform if target is not None else platform,
+            "manufacturer": manufacturer.get("name") or manufacturer.get("slug"),
+            "device_type": device_type.get("model"),
+            "management_ip": target.host if target is not None else management_ip,
+            "tenant": {
+                "id": tenant.get("id"),
+                "name": tenant.get("name") or "No tenant",
+                "slug": tenant.get("slug") or "no-tenant",
+            },
+            "site": {
+                "id": site.get("id"),
+                "name": site.get("name") or "No site",
+                "slug": site.get("slug") or "no-site",
+            },
+            "credential_profile": (
+                target.credential_profile if target is not None
+                else fields.get("credential_profile")
+            ),
+        }
+
+    def _append_raw_device_report(self, report: dict) -> None:
+        validated = CiscoRawDeviceReport.model_validate(report).model_dump(
+            mode="json", exclude_none=True,
+        )
+        with self._raw_report_lock:
+            self._raw_device_reports.append(validated)
+
+    def _collect_raw(
+        self,
+        device: dict,
+        mode: str,
+        *,
+        backend=None,
+    ) -> tuple[ProphylaxisCheckResult, ...]:
+        started_at = utc_now()
+        device_id, name, management_ip, platform = self._identity(device)
+        fortios = platform in FORTIOS_RAW_PLATFORMS
+        collector_id = CollectorId.FORTIOS_RAW if fortios else CollectorId.CISCO_RAW
+        commands = (
+            FORTIOS_FULL_COMMANDS
+            if mode == CheckId.FULL_COLLECTION.value
+            else FORTIOS_IDENTITY_COMMANDS
+        ) if fortios else cisco_raw_commands(platform, mode)
+        identity = self._raw_identity(device)
+        report = {
+            "schema_version": CISCO_RAW_SCHEMA_VERSION,
+            "run_id": str(self._active_run_id),
+            "mode": mode,
+            "device": identity,
+            "connection": {"transport": "ssh", "status": "failed"},
+            "collection": {
+                "status": "failed",
+                "total_commands": len(commands),
+                "attempted": 0,
+                "successful": 0,
+                "unsupported": 0,
+                "empty": 0,
+                "permission_denied": 0,
+                "timeout": 0,
+                "error": 0,
+                "truncated": 0,
+            },
+            "outputs": {},
+            "ignored_commands": [],
+            "started_at": started_at.isoformat(),
+        }
+        try:
+            target = device_target(device)
+            identity = self._raw_identity(device, target)
+            report["device"] = identity
+            device_id, name, management_ip, platform = (
+                target.id, target.name, target.host, target.platform,
+            )
+            base_profile = self.registry.resolve(target.platform)
+            if fortios:
+                # Raw FortiOS collection is intentionally SSH-only. The
+                # presence of a fortios-api NetBox service continues to select
+                # HTTPS for thematic collectors, but must not redirect this
+                # collector or make it depend on an API token.
+                profile = FORTIOS_SSH_PROFILE
+                resolved_port = FORTIOS_SSH_PROFILE.default_port
+            else:
+                profile, resolved_port = resolve_execution_profile(
+                    self.netbox, target, base_profile,
+                )
+            if not profile.supports_collector(collector_id):
+                raise UnsupportedPlatformError()
+            telnet_services = (
+                self.netbox.get_device_services(
+                    target.id, profile.telnet_fallback_service_name,
+                )
+                if not fortios and profile.telnet_fallback_service_name else []
+            )
+            telnet_fallback_port = (
+                resolve_service_port(
+                    telnet_services, profile.telnet_fallback_default_port,
+                ) if telnet_services else None
+            )
+            credentials = self.openbao.get_device_credentials(
+                target.vendor,
+                target.credential_profile,
+                authentication=profile.authentication,
+                purpose="prophylaxis",
+            )
+            raw = (backend or self.backend).execute(
+                host=target.host,
+                port=resolved_port,
+                profile=profile,
+                collector_id=collector_id,
+                check_id=(
+                    CheckId.FULL_COLLECTION
+                    if mode == CheckId.FULL_COLLECTION.value
+                    else CheckId.DEVICE_FACTS
+                ),
+                credentials=credentials,
+                telnet_fallback_port=telnet_fallback_port,
+                device_model=target.model,
+                raw_mode=mode,
+            )
+            if raw.status != "ok" or not isinstance(raw.data, dict):
+                raise ProphylaxisExecutionError()
+            raw_commands = raw.data.get("commands")
+            if not isinstance(raw_commands, list):
+                raise ProphylaxisExecutionError()
+
+            discovered_interfaces: list[str] = []
+            interface_discovery_status = "not_requested"
+            if fortios and mode == CheckId.FULL_COLLECTION.value:
+                raw_interfaces = raw.data.get("discovered_physical_interfaces")
+                raw_discovery_status = raw.data.get("interface_discovery_status")
+                if (
+                    not isinstance(raw_interfaces, list)
+                    or len(raw_interfaces) > FORTIOS_MAX_DISCOVERED_INTERFACES
+                    or any(
+                        not isinstance(interface, str)
+                        or FORTIOS_INTERFACE_NAME.fullmatch(interface) is None
+                        for interface in raw_interfaces
+                    )
+                    or raw_discovery_status
+                    not in {"success", "empty", "failed", "limited"}
+                ):
+                    raise ProphylaxisExecutionError()
+                discovered_interfaces = list(dict.fromkeys(raw_interfaces))
+                interface_discovery_status = raw_discovery_status
+
+            command_results = []
+            candidates_by_command = {
+                candidate.get("command"): candidate
+                for candidate in raw_commands
+                if isinstance(candidate, dict)
+                and isinstance(candidate.get("command"), str)
+                and (
+                    not fortios
+                    or is_allowed_fortios_result_command(candidate.get("command"))
+                )
+            }
+            for command in commands:
+                candidate = candidates_by_command.get(command, {})
+                if not candidate:
+                    candidate = {
+                        "command": command,
+                        "started_at": utc_now().isoformat(),
+                        "finished_at": utc_now().isoformat(),
+                        "message": "collector did not return a command result",
+                        "failed": True,
+                    }
+                classified = classify_command_record(
+                    candidate,
+                    max_output_bytes=self.raw_command_max_bytes,
+                    platform=target.platform,
+                )
+                command_results.append(parse_command_output(
+                    classified, platform=target.platform,
+                ))
+            if fortios:
+                base_commands = set(commands)
+                for candidate in raw_commands:
+                    if not isinstance(candidate, dict):
+                        continue
+                    command = candidate.get("command")
+                    if (
+                        command in base_commands
+                        or not is_allowed_fortios_result_command(command)
+                    ):
+                        continue
+                    classified = classify_command_record(
+                        candidate,
+                        max_output_bytes=self.raw_command_max_bytes,
+                        platform=target.platform,
+                    )
+                    command_results.append(parse_command_output(
+                        classified, platform=target.platform,
+                    ))
+            elif target.platform in {"cisco-ios", "cisco-ios-xe"}:
+                command_results = list(enrich_cisco_log_results(command_results))
+
+            counts = {
+                status: sum(result.status == status for result in command_results)
+                for status in (
+                    "success", "unsupported", "empty", "permission_denied",
+                    "timeout", "error", "truncated",
+                )
+            }
+            outputs = {
+                result.command: result.model_dump(
+                    mode="json", exclude_none=True,
+                )
+                for result in command_results
+                if result.status in {"success", "truncated"}
+            }
+            ignored = [
+                {
+                    "command": result.command,
+                    "status": result.status,
+                    "reason_code": result.reason_code,
+                    "duration_ms": result.duration_ms,
+                    "started_at": result.started_at.isoformat(),
+                    "finished_at": result.finished_at.isoformat(),
+                }
+                for result in command_results
+                if result.status not in {"success", "truncated"}
+            ]
+            real_failures = counts["permission_denied"] + counts["timeout"] + counts["error"]
+            finished_at = utc_now()
+            report.update({
+                "connection": {
+                    "transport": raw.context.get("transport", profile.transport),
+                    "port": raw.context.get("port", resolved_port),
+                    "status": "connected",
+                },
+                "collection": {
+                    "status": "completed_with_errors" if real_failures else "completed",
+                    "total_commands": len(command_results),
+                    "attempted": len(command_results),
+                    "successful": counts["success"] + counts["truncated"],
+                    "unsupported": counts["unsupported"],
+                    "empty": counts["empty"],
+                    "permission_denied": counts["permission_denied"],
+                    "timeout": counts["timeout"],
+                    "error": counts["error"],
+                    "truncated": counts["truncated"],
+                },
+                "outputs": outputs,
+                "ignored_commands": ignored,
+                "discovered_physical_interfaces": discovered_interfaces,
+                "interface_discovery_status": interface_discovery_status,
+                "finished_at": finished_at.isoformat(),
+            })
+            self._append_raw_device_report(report)
+            started = self._active_run_started_at or started_at
+            artifact = site_artifact_name(
+                identity["tenant"]["slug"], identity["site"]["slug"], started,
+            )
+            outcome = EvaluationOutcome.WARNING if real_failures else EvaluationOutcome.PASS
+            values = DiagnosticValues(
+                outcome=outcome,
+                reason_code=("command_errors_present" if real_failures else None),
+                summary=(
+                    f"{'FortiOS' if fortios else 'Cisco'} raw collection completed with command-level errors"
+                    if real_failures
+                    else f"{'FortiOS' if fortios else 'Cisco'} raw collection completed"
+                ),
+                metrics={
+                    "mode": mode,
+                    "connection_status": "connected",
+                    "total_commands": len(command_results),
+                    "successful": counts["success"] + counts["truncated"],
+                    "unsupported": counts["unsupported"],
+                    "failed": real_failures,
+                    "report_artifact": artifact,
+                    "discovered_interfaces": len(discovered_interfaces),
+                },
+            )
+            result = ProphylaxisCheckResult(
+                check=mode,
+                device_id=device_id,
+                device_name=name,
+                management_ip=management_ip,
+                platform=platform,
+                status="success",
+                collection_status=CollectionStatus.COLLECTED,
+                evaluation=outcome,
+                values=values,
+            )
+            additional_results: list[ProphylaxisCheckResult] = []
+            if fortios and mode == "identity":
+                try:
+                    status_record = candidates_by_command.get(
+                        "get system status", {}
+                    )
+                    performance_record = candidates_by_command.get(
+                        "get system performance status", {}
+                    )
+                    identity_raw = RawCollectorResult(
+                        collector=CollectorId.DEVICE_FACTS,
+                        platform=target.platform,
+                        status="ok",
+                        data={
+                            "source_transport": "ssh",
+                            "show_system_status": status_record.get("stdout"),
+                            "show_performance_status": performance_record.get(
+                                "stdout"
+                            ),
+                        },
+                        context={
+                            "transport": "ssh",
+                            "port": resolved_port,
+                            "vdom": "root",
+                        },
+                    )
+                    facts = DEVICE_FACTS_COLLECTOR.normalize(
+                        CheckId.DEVICE_FACTS, identity_raw,
+                    )
+                    additional_results.extend(self._reconcile_inventory(
+                        device_id,
+                        name,
+                        management_ip,
+                        platform,
+                        facts,
+                    ))
+                    for check in (
+                        CheckId.DEVICE_FACTS,
+                        CheckId.OS_VERSION,
+                        CheckId.UPTIME,
+                    ):
+                        normalized = DEVICE_FACTS_COLLECTOR.normalize(
+                            check, identity_raw,
+                        )
+                        additional_results.append(self._success_result(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            check,
+                            normalized,
+                        ))
+                except Exception as exc:
+                    normalized_status, normalized_code = self._classify_exception(
+                        exc
+                    )
+                    additional_results.extend(self._inventory_errors(
+                        device_id,
+                        name,
+                        management_ip,
+                        platform,
+                        normalized_status,
+                        normalized_code,
+                    ))
+                    additional_results.extend(
+                        self._check_error(
+                            device_id,
+                            name,
+                            management_ip,
+                            platform,
+                            check.value,
+                            normalized_status,
+                            normalized_code,
+                        )
+                        for check in (
+                            CheckId.DEVICE_FACTS,
+                            CheckId.OS_VERSION,
+                            CheckId.UPTIME,
+                        )
+                    )
+            return (result, *additional_results)
+        except Exception as exc:
+            finished_at = utc_now()
+            candidate_code = getattr(exc, "code", None)
+            reason_code = (
+                candidate_code
+                if isinstance(candidate_code, str)
+                and re.fullmatch(r"[a-z0-9_]{1,100}", candidate_code)
+                else "raw_collection_failed"
+            )
+            report["connection"]["reason_code"] = reason_code
+            report["collection"]["reason_code"] = reason_code
+            report["finished_at"] = finished_at.isoformat()
+            self._append_raw_device_report(report)
+            return (
+                self._check_error(
+                    device_id, name, management_ip, platform, mode,
+                    "failed", reason_code,
+                ),
+            )
+
     def _prepare_oxidized_backup_state(self, devices: list[dict]) -> None:
         self._oxidized_nodes = {}
         self._oxidized_error = None
@@ -629,6 +1098,9 @@ class DeviceFactsRunService:
     def _collect(
         self, device: dict, *, backend=None,
     ) -> tuple[ProphylaxisCheckResult, ...]:
+        raw_mode = self._selected_raw_mode(device)
+        if raw_mode is not None:
+            return self._collect_raw(device, raw_mode, backend=backend)
         device_id, name, management_ip, platform = self._identity(device)
         selected_checks, unknown_checks = self._selected_checks(device)
         backup_selected = CheckId.CONFIGURATION_BACKUP in selected_checks

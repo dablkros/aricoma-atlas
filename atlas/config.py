@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     prophylaxis_runs_directory: Path = Path("/run/atlas/prophylaxis/runs")
     vpn_registry_file: Path = Path("/run/atlas/vpn/connections.sqlite3")
     prophylaxis_concurrency: int = Field(default=4, ge=1, le=32)
+    prophylaxis_raw_command_max_bytes: int = Field(
+        default=1_048_576,
+        ge=4_096,
+        le=10_485_760,
+    )
+    prophylaxis_run_retention: int = Field(default=100, ge=1, le=10_000)
     prophylaxis_result_retention: int = Field(
         default=10_000,
         ge=100,

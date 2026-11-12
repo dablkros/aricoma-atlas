@@ -79,7 +79,8 @@ class VPNSessionClient(_Client):
 
 class VPNAnsibleBackend(_Client):
     def execute(self, *, host, port, profile, collector_id=None, check_id,
-                credentials, telnet_fallback_port=None, device_model=None):
+                credentials, telnet_fallback_port=None, device_model=None,
+                raw_mode=None):
         data = self._request("POST", "/v1/execute", json={
             "host": host, "port": port, "platform": profile.slug,
             "transport": profile.transport,
@@ -88,6 +89,7 @@ class VPNAnsibleBackend(_Client):
             "credentials": credentials,
             "telnet_fallback_port": telnet_fallback_port,
             "device_model": device_model,
+            "raw_mode": raw_mode,
         })
         return RawCollectorResult.model_validate(data)
 

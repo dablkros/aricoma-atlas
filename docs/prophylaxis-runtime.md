@@ -5,7 +5,7 @@ zdokumentované v [prophylaxis-cisco-ios.md](prophylaxis-cisco-ios.md).
 FortiOS transporty, očakávania a kontrolná matica sú v
 [prophylaxis-fortios.md](prophylaxis-fortios.md).
 
-Stav dokumentácie: 2026-10-20. Implementácia zachováva Atlas ako orchestrátor;
+Stav dokumentácie: 2026-11-10. Implementácia zachováva Atlas ako orchestrátor;
 Ansible je iba execution vrstva pre komunikáciu so zariadeniami.
 
 ## Flow
@@ -90,11 +90,43 @@ NetBox používateľ vyberá skupiny:
 
 ```text
 identity
-resources
-interfaces
-compliance
-operations
+full_collection
 ```
+
+Pre osem explicitných Cisco platformových slugov má `identity` a
+`full_collection` osobitný raw-collection kontrakt. Staršie tematické hodnoty
+sa pri baseline migrácii premapujú na `full_collection`, ale backend ich počas
+prechodu stále rozpozná. `full_collection` má pri
+súčasnom výbere prednosť, takže nevznikne druhá SSH session. `identity` vykoná
+`show version`, `show inventory` a `show hostname`; `full_collection` vykoná
+všetkých 49 verzovaných read-only príkazov bez platformového predfiltrovania.
+Ostatné platformy naďalej používajú tematické skupiny nižšie.
+
+Raw stdout je autoritatívny. Atlas sa nad úspešným výstupom best-effort pokúsi
+o TextFSM cez pripnuté `ntc-templates==9.3.0`; výsledok uloží do
+`structured_data`. Chýbajúca šablóna alebo parser error nemení úspešný stav
+CLI zberu a raw výstup zostáva zachovaný. IOS-XE používa NTC platformu
+`cisco_ios`; CBS používa explicitnú NTC platformu `cisco_s300`. Catalyst
+1200/1300 zostáva raw-only, kým nebude jeho TextFSM kompatibilita potvrdená
+anonymizovanými výstupmi; samotné zdieľanie Ansible `ciscosmb` transportu nie
+je dôkazom kompatibility parsera.
+
+Citlivé Cisco výstupy sa nevracajú bežným API. Ukladajú sa atomicky s režimom
+`0600` do jedného súboru za Tenant/Site a run:
+
+```text
+runs/<run_id>/sites/<tenant>-<site>-<YYYYMMDD-HHMMSSZ>.json
+```
+
+Adresáre majú režim `0700`; UI a summary obsahujú iba identifikátor artefaktu
+a bezpečné počty. Zariadenia bez priradenia sa oddelia do `no-tenant` alebo
+`no-site` artefaktu.
+
+Počet lokálne uchovaných behov riadi `prophylaxis_run_retention` (predvolene
+100). Atlas pri vytvorení nového behu odstráni iba najstaršie ukončené run
+adresáre nad týmto limitom; rozpracované alebo nečitateľné behy automaticky
+nevymazáva. Veľkosť jedného uloženého výstupu príkazu riadi
+`prophylaxis_raw_command_max_bytes` (predvolene 1 MiB).
 
 Atlas ich rozbalí na interné výsledky. Implementované alebo explicitne
 plánované výsledky zahŕňajú:

@@ -41,12 +41,33 @@ def _plan_hash(
     ).hexdigest()
 
 
-def _translate(operation):
+def _translate(operation, *, operation_name: str):
     try:
         return operation()
     except CredentialOnboardingInvalid as exc:
         raise AtlasError(422, "credential_onboarding_invalid", str(exc)) from None
-    except DependencyError:
+    except DependencyError as exc:
+        logger.warning(
+            "credential_onboarding.dependency_failed",
+            extra={
+                "event": "credential_onboarding.dependency_failed",
+                "operation": operation_name,
+                "reason_code": exc.reason,
+            },
+        )
+        if exc.reason == "authentication_failed":
+            raise AtlasError(
+                503,
+                "credential_onboarding_dependency_authentication_failed",
+                "Atlas could not verify the credential profile because "
+                "dependency access was denied",
+            ) from None
+        if exc.reason == "invalid_response":
+            raise AtlasError(
+                502,
+                "credential_onboarding_dependency_invalid_response",
+                "The credential dependency returned invalid metadata",
+            ) from None
         raise AtlasError(
             503,
             "credential_onboarding_dependency_unavailable",
@@ -57,7 +78,10 @@ def _translate(operation):
 @router.get("/options")
 def options(request: Request) -> dict:
     _authorize(request)
-    return _translate(request.app.state.dependencies.credentials.options)
+    return _translate(
+        request.app.state.dependencies.credentials.options,
+        operation_name="options",
+    )
 
 
 @router.post("/plan")
@@ -68,7 +92,10 @@ def plan(body: CredentialOnboardingRequest, request: Request) -> dict:
         extra={"event": "credential_onboarding.operation_started", "operation": "plan",
                "device_ids": body.device_ids, "device_count": len(body.device_ids)},
     )
-    result = _translate(lambda: request.app.state.dependencies.credentials.plan(body))
+    result = _translate(
+        lambda: request.app.state.dependencies.credentials.plan(body),
+        operation_name="plan",
+    )
     result["plan_hash"] = _plan_hash(body, result, token)
     logger.info(
         "credential_onboarding.operation_completed",
@@ -82,7 +109,10 @@ def plan(body: CredentialOnboardingRequest, request: Request) -> dict:
 @router.post("/apply")
 def apply(body: CredentialOnboardingRequest, request: Request) -> dict:
     token = _authorize(request)
-    preview = _translate(lambda: request.app.state.dependencies.credentials.plan(body))
+    preview = _translate(
+        lambda: request.app.state.dependencies.credentials.plan(body),
+        operation_name="apply_preflight",
+    )
     expected = _plan_hash(body, preview, token)
     if body.plan_hash is None or not hmac.compare_digest(body.plan_hash, expected):
         raise AtlasError(
@@ -105,7 +135,8 @@ def apply(body: CredentialOnboardingRequest, request: Request) -> dict:
         lambda: request.app.state.dependencies.credentials.apply(
             body,
             expected_plan=preview,
-        )
+        ),
+        operation_name="apply",
     )
     logger.info(
         "credential_onboarding.operation_completed",

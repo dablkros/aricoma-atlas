@@ -73,6 +73,8 @@ class SettingsTests(unittest.TestCase):
                 "ATLAS_PROPHYLAXIS_RESULTS_FILE": "/run/atlas/prophylaxis/results.sqlite3",
                 "ATLAS_VPN_REGISTRY_FILE": "/run/atlas/vpn/connections.sqlite3",
                 "ATLAS_PROPHYLAXIS_RESULT_RETENTION": "5000",
+                "ATLAS_PROPHYLAXIS_RAW_COMMAND_MAX_BYTES": "2097152",
+                "ATLAS_PROPHYLAXIS_RUN_RETENTION": "50",
                 "ATLAS_ANSIBLE_PROJECT_DIR": "/app/automation",
                 "ATLAS_ANSIBLE_JOB_TIMEOUT": "90",
                 "ATLAS_SSH_KNOWN_HOSTS_FILE": "/run/atlas/ssh/known_hosts",
@@ -119,6 +121,8 @@ class SettingsTests(unittest.TestCase):
             Path("/run/atlas/vpn/connections.sqlite3"),
         )
         self.assertEqual(settings.prophylaxis_result_retention, 5000)
+        self.assertEqual(settings.prophylaxis_raw_command_max_bytes, 2097152)
+        self.assertEqual(settings.prophylaxis_run_retention, 50)
         self.assertEqual(settings.ansible_project_dir, Path("/app/automation"))
         self.assertEqual(settings.ansible_job_timeout, 90)
         self.assertEqual(
@@ -149,6 +153,8 @@ class SettingsTests(unittest.TestCase):
             {"prophylaxis_results_file": "../results.sqlite3"},
             {"vpn_registry_file": "../connections.sqlite3"},
             {"prophylaxis_result_retention": 99},
+            {"prophylaxis_raw_command_max_bytes": 4095},
+            {"prophylaxis_run_retention": 0},
             {"ansible_project_dir": "../automation"},
             {"ansible_job_timeout": 0},
             {"ssh_known_hosts_file": "../known_hosts"},
@@ -255,6 +261,13 @@ class ApiTests(unittest.TestCase):
         self.assertIn('id="credential-onboarding-dialog"', page.text)
         self.assertIn('id="credential-tenant"', page.text)
         self.assertIn('id="credential-device-list"', page.text)
+        self.assertIn('id="prophylaxis-explorer-dialog"', page.text)
+        self.assertIn('id="prophylaxis-explorer-categories"', page.text)
+        self.assertIn('id="prophylaxis-explorer-filter"', page.text)
+        self.assertIn("renderReportCategories", script.text)
+        self.assertIn("renderLogEvents", script.text)
+        self.assertIn("pre.textContent = payload.raw_output", script.text)
+        self.assertNotIn("pre.innerHTML = payload.raw_output", script.text)
         self.assertIn("renderCredentialManufacturerOptions", script.text)
         self.assertIn("renderCredentialProfileOptions", script.text)
         self.assertIn('id="vpn-assignment-dialog"', page.text)

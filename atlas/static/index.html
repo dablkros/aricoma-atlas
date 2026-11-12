@@ -259,6 +259,7 @@
             <label for="prophylaxis-token">Operator token</label>
             <input id="prophylaxis-token" type="password" autocomplete="off" placeholder="Runtime operator token">
           </div>
+          <button id="prophylaxis-explorer-open" class="button button-secondary" type="button">Browse reports</button>
           <button id="prophylaxis-run" class="button button-primary" type="button">Run Prophylaxis</button>
         </div>
         <dl class="result-summary prophylaxis-summary">
@@ -416,6 +417,14 @@
 
         <div class="inventory-fields">
           <div class="field-group">
+            <label for="credential-mode">Credential action</label>
+            <select id="credential-mode">
+              <option value="store">Store or update credentials in OpenBao</option>
+              <option value="reuse">Reuse an existing OpenBao profile</option>
+            </select>
+            <p class="field-help">Reuse verifies the selected purpose paths and applies only the reviewed NetBox settings; secret values are not read or written.</p>
+          </div>
+          <div class="field-group">
             <label for="credential-tenant">Tenant</label>
             <select id="credential-tenant"><option value="">Select a tenant</option></select>
           </div>
@@ -462,6 +471,11 @@
             <div>
               <label class="confirmation-row"><input id="credential-prophylaxis-enabled" type="checkbox"> Prophylaxia</label>
               <p>Read-only device collection using the selected platform transport.</p>
+              <fieldset id="credential-prophylaxis-modes" class="credential-mode-options">
+                <legend>Collection mode</legend>
+                <label class="confirmation-row"><input id="credential-check-identity" type="checkbox" value="identity" checked> Identity &amp; inventory</label>
+                <label class="confirmation-row"><input id="credential-check-full" type="checkbox" value="full_collection"> Full collection</label>
+              </fieldset>
             </div>
             <div id="credential-prophylaxis-ssh-fields" class="credential-secret-fields">
               <input id="credential-prophylaxis-username" type="text" autocomplete="off" placeholder="Username" aria-label="Prophylaxia username">
@@ -479,7 +493,7 @@
               <label class="confirmation-row"><input id="credential-oxidized-enabled" type="checkbox"> Oxidized</label>
               <p>Dedicated SSH credentials for configuration backups.</p>
             </div>
-            <div class="credential-secret-fields">
+            <div id="credential-oxidized-fields" class="credential-secret-fields">
               <input id="credential-oxidized-username" type="text" autocomplete="off" placeholder="Username" aria-label="Oxidized username">
               <input id="credential-oxidized-password" type="password" autocomplete="new-password" placeholder="Password" aria-label="Oxidized password">
             </div>
@@ -490,13 +504,13 @@
               <label class="confirmation-row"><input id="credential-monitoring-enabled" type="checkbox"> SNMP monitoring</label>
               <p>SNMPv2c community for the monitoring flow.</p>
             </div>
-            <div class="credential-secret-fields">
+            <div id="credential-snmp-fields" class="credential-secret-fields">
               <input id="credential-snmp-community" type="password" autocomplete="new-password" placeholder="SNMP community" aria-label="SNMP community">
             </div>
           </section>
         </div>
 
-        <label class="confirmation-row">
+        <label id="credential-replace-row" class="confirmation-row">
           <input id="credential-replace" type="checkbox">
           Replace an existing credential only when the current value differs
         </label>
@@ -833,6 +847,35 @@
             <button id="vpn-assignment-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
           </div>
         </section>
+      </div>
+    </dialog>
+
+    <dialog id="prophylaxis-explorer-dialog" class="inventory-dialog report-explorer-dialog" aria-labelledby="prophylaxis-explorer-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">Authorized collection reports</p>
+            <h2 id="prophylaxis-explorer-title">Report explorer</h2>
+            <p>Choose a run and Site report, then inspect structured results or load bounded raw CLI output.</p>
+          </div>
+          <button id="prophylaxis-explorer-close" class="dialog-close" type="button" aria-label="Close report explorer">×</button>
+        </header>
+        <div class="report-explorer-selectors">
+          <div class="field-group"><label for="prophylaxis-explorer-run">Collection run</label><select id="prophylaxis-explorer-run"></select></div>
+          <div class="field-group"><label for="prophylaxis-explorer-report">Tenant / Site</label><select id="prophylaxis-explorer-report"></select></div>
+          <div class="field-group"><label for="prophylaxis-explorer-device">Device</label><select id="prophylaxis-explorer-device"></select></div>
+        </div>
+        <div id="prophylaxis-explorer-status" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span><div><strong>Loading report</strong><p>Reading the protected local report.</p></div>
+        </div>
+        <section id="prophylaxis-explorer-summary" class="report-explorer-summary" aria-live="polite"></section>
+        <nav id="prophylaxis-explorer-categories" class="report-category-nav" aria-label="Diagnostic categories"></nav>
+        <div class="report-command-filter"><label for="prophylaxis-explorer-filter">Filter commands</label><input id="prophylaxis-explorer-filter" type="search" placeholder="Command or result text"></div>
+        <section id="prophylaxis-explorer-commands" class="report-command-list"></section>
+        <div class="dialog-actions">
+          <a id="prophylaxis-explorer-json" class="button button-secondary" href="#" download>Download JSON</a>
+          <a id="prophylaxis-explorer-text" class="button button-secondary" href="#" download>Download text report</a>
+        </div>
       </div>
     </dialog>
 

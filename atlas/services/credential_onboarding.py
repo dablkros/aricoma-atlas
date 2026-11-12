@@ -68,6 +68,7 @@ class CredentialOnboardingService:
                     fields.get("credential_profile")
                 ),
                 "prophylaxis_enabled": fields.get("profylaxia_enabled") is True,
+                "profylaxia_checks": fields.get("profylaxia_checks") or [],
                 "oxidized_enabled": fields.get("oxidized_enabled") is True,
                 "monitoring_enabled": fields.get("monitoring_enabled") is True,
             })
@@ -189,7 +190,7 @@ class CredentialOnboardingService:
         self,
         body: CredentialOnboardingRequest,
         devices: list[dict],
-    ) -> list[tuple[str, dict]]:
+    ) -> list[tuple[str, dict | None]]:
         try:
             values = []
             platform_slugs = self._platform_slugs(body, devices)
@@ -211,15 +212,18 @@ class CredentialOnboardingService:
                     raise CredentialOnboardingInvalid(
                         "Authentication is not supported by every selected platform"
                     )
-                raw = (
-                    body.prophylaxis_api.model_dump()
-                    if body.prophylaxis_auth == "api_token"
-                    else body.prophylaxis_ssh.model_dump(exclude_none=True)
-                )
-                values.append((
-                    "prophylaxis",
-                    validate_admin_secret(raw, authentication=body.prophylaxis_auth),
-                ))
+                if body.credential_mode == "reuse":
+                    values.append(("prophylaxis", None))
+                else:
+                    raw = (
+                        body.prophylaxis_api.model_dump()
+                        if body.prophylaxis_auth == "api_token"
+                        else body.prophylaxis_ssh.model_dump(exclude_none=True)
+                    )
+                    values.append((
+                        "prophylaxis",
+                        validate_admin_secret(raw, authentication=body.prophylaxis_auth),
+                    ))
             if body.oxidized_enabled:
                 oxidized = self.platform_config.get("oxidized_platform_mapping", {})
                 unsupported = platform_slugs - oxidized.keys()
@@ -230,12 +234,16 @@ class CredentialOnboardingService:
                     )
                 values.append((
                     "oxidized",
-                    validate_admin_secret(body.oxidized.model_dump(exclude_none=True)),
+                    None if body.credential_mode == "reuse" else validate_admin_secret(
+                        body.oxidized.model_dump(exclude_none=True)
+                    ),
                 ))
             if body.monitoring_enabled:
                 values.append((
                     "snmp",
-                    validate_snmp_secret({"version": "2c", **body.snmp.model_dump()}),
+                    None if body.credential_mode == "reuse" else validate_snmp_secret(
+                        {"version": "2c", **body.snmp.model_dump()}
+                    ),
                 ))
             return values
         except DeviceValidationError as exc:
@@ -263,15 +271,68 @@ class CredentialOnboardingService:
         return {"target": "openbao", "purpose": purpose, "path": path,
                 "action": "UPDATE", "version": version, "blocked": False}
 
+    def _existing_secret_operation(self, vendor: str, profile: str, purpose: str):
+        path = credential_path(vendor, profile, purpose=purpose)
+        try:
+            metadata = self.secret_reader.read_secret_metadata(path)
+        except DependencyError as exc:
+            if exc.reason != "secret_not_found":
+                raise
+            return {
+                "target": "openbao", "purpose": purpose, "path": path,
+                "action": "MISSING", "version": 0, "blocked": True,
+                "reason": "credential_profile_not_found",
+            }
+        version = metadata.get("current_version")
+        if isinstance(version, bool) or not isinstance(version, int) or version < 1:
+            raise DependencyError("invalid_response")
+        versions = metadata.get("versions")
+        current = versions.get(str(version), {}) if isinstance(versions, dict) else {}
+        if current.get("destroyed") is True or current.get("deletion_time"):
+            return {
+                "target": "openbao", "purpose": purpose, "path": path,
+                "action": "MISSING", "version": version, "blocked": True,
+                "reason": "credential_profile_not_found",
+            }
+        return {
+            "target": "openbao", "purpose": purpose, "path": path,
+            "action": "REUSE", "version": version, "blocked": False,
+        }
+
+    @staticmethod
+    def _desired_fields(body: CredentialOnboardingRequest, fields: dict) -> dict:
+        desired = {**fields, "credential_profile": body.credential_profile}
+        if body.credential_mode == "store":
+            desired.update({
+                "profylaxia_enabled": body.prophylaxis_enabled,
+                "oxidized_enabled": body.oxidized_enabled,
+                "monitoring_enabled": body.monitoring_enabled,
+            })
+        else:
+            if body.prophylaxis_enabled:
+                desired["profylaxia_enabled"] = True
+            if body.oxidized_enabled:
+                desired["oxidized_enabled"] = True
+            if body.monitoring_enabled:
+                desired["monitoring_enabled"] = True
+        if body.profylaxia_checks is not None:
+            desired["profylaxia_checks"] = list(body.profylaxia_checks)
+        return desired
+
     def plan(self, body: CredentialOnboardingRequest) -> dict:
         devices, vendor, tenant = self._devices(body)
         secrets = self._requested_secrets(body, devices)
-        operations = [
-            self._secret_operation(
-                vendor, body.credential_profile, purpose, value, body.replace_existing
-            )
-            for purpose, value in secrets
-        ]
+        operations = []
+        for purpose, value in secrets:
+            if body.credential_mode == "reuse":
+                operations.append(self._existing_secret_operation(
+                    vendor, body.credential_profile, purpose
+                ))
+            else:
+                operations.append(self._secret_operation(
+                    vendor, body.credential_profile, purpose, value,
+                    body.replace_existing,
+                ))
         platforms = []
         if not body.preserve_device_platforms:
             platforms = self.netbox.get_all(
@@ -326,13 +387,7 @@ class CredentialOnboardingService:
                                    "blocked": True, "reason": "platform_mismatch"})
                 continue
             fields = deepcopy(device.get("custom_fields") or {})
-            desired_fields = {
-                **fields,
-                "credential_profile": body.credential_profile,
-                "profylaxia_enabled": body.prophylaxis_enabled,
-                "oxidized_enabled": body.oxidized_enabled,
-                "monitoring_enabled": body.monitoring_enabled,
-            }
+            desired_fields = self._desired_fields(body, fields)
             changed = fields != desired_fields
             if not body.preserve_device_platforms:
                 changed = changed or current_platform.get("id") != platforms[0]["id"]
@@ -350,6 +405,7 @@ class CredentialOnboardingService:
             "platform": body.platform,
             "preserve_device_platforms": body.preserve_device_platforms,
             "credential_profile": body.credential_profile,
+            "credential_mode": body.credential_mode,
             "apply_allowed": not any(item.get("blocked") for item in operations),
             "operations": operations,
         }
@@ -369,12 +425,18 @@ class CredentialOnboardingService:
             operation = secret_operations.get(purpose)
             if not operation:
                 raise CredentialOnboardingInvalid("Confirmed credential plan is incomplete")
-            current = self._secret_operation(
-                vendor,
-                body.credential_profile,
-                purpose,
-                value,
-                body.replace_existing,
+            current = (
+                self._existing_secret_operation(
+                    vendor, body.credential_profile, purpose
+                )
+                if body.credential_mode == "reuse"
+                else self._secret_operation(
+                    vendor,
+                    body.credential_profile,
+                    purpose,
+                    value,
+                    body.replace_existing,
+                )
             )
             if current != operation:
                 raise CredentialOnboardingInvalid(
@@ -434,12 +496,7 @@ class CredentialOnboardingService:
                         "FortiOS API service state changed; create a new plan"
                     )
             fields = deepcopy(device.get("custom_fields") or {})
-            fields.update({
-                "credential_profile": body.credential_profile,
-                "profylaxia_enabled": body.prophylaxis_enabled,
-                "oxidized_enabled": body.oxidized_enabled,
-                "monitoring_enabled": body.monitoring_enabled,
-            })
+            fields = self._desired_fields(body, fields)
             payload = {"custom_fields": fields}
             if platform is not None:
                 payload["platform"] = platform["id"]

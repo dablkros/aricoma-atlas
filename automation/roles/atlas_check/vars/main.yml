@@ -1,6 +1,17 @@
 ---
 atlas_transport_files:
   ssh:
+    cisco_raw:
+      cisco-ios: raw/cisco.yml
+      cisco-ios-xe: raw/cisco.yml
+      cisco-nxos: raw/cisco.yml
+      cisco-asa: raw/cisco.yml
+      cisco-cbs: raw/cisco.yml
+      cisco-cbs250-350: raw/cisco.yml
+      cisco-catalyst-1200: raw/cisco.yml
+      cisco-catalyst-1300: raw/cisco.yml
+    fortios_raw:
+      fortios: raw/fortios.yml
     fortios_resources:
       fortios: resources/fortios_ssh.yml
     fortios_interfaces:

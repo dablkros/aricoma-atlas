@@ -20,6 +20,17 @@ class FakeSecrets:
         value, version = self.values[path]
         return dict(value), {"version": version}
 
+    def read_secret_metadata(self, path):
+        if path not in self.values:
+            raise DependencyError("secret_not_found")
+        _value, version = self.values[path]
+        return {
+            "current_version": version,
+            "versions": {
+                str(version): {"destroyed": False, "deletion_time": ""},
+            },
+        }
+
     def write_secret(self, path, data, *, cas):
         current = self.values.get(path)
         expected = 0 if current is None else current[1]
@@ -155,6 +166,29 @@ class CredentialOnboardingTests(unittest.TestCase):
         self.assertEqual(blocked["operations"][0]["action"], "CONFLICT")
         self.assertTrue(replacement["apply_allowed"])
         self.assertEqual(replacement["operations"][0]["action"], "UPDATE")
+
+    def test_reuse_existing_profile_reads_only_metadata_and_updates_netbox(self):
+        path = "devices/credentials/fortinet/forti-mt/prophylaxis"
+        self.secrets.values[path] = ({"api_token": "existing-token"}, 4)
+        request = api_request(
+            credential_mode="reuse",
+            prophylaxis_api=None,
+            profylaxia_checks=["identity", "full_collection"],
+        )
+
+        preview = self.service.plan(request)
+        result = self.service.apply(request, expected_plan=preview)
+
+        self.assertTrue(preview["apply_allowed"])
+        self.assertEqual(preview["operations"][0]["action"], "REUSE")
+        self.assertEqual(preview["operations"][0]["version"], 4)
+        self.assertEqual([], self.secrets.writes)
+        self.assertEqual(result["status"], "APPLIED")
+        fields = self.netbox.patches[0][1]["custom_fields"]
+        self.assertEqual(fields["credential_profile"], "forti-mt")
+        self.assertEqual(
+            fields["profylaxia_checks"], ["identity", "full_collection"]
+        )
 
     def test_ssh_is_blocked_when_fortios_api_service_selects_api(self):
         self.netbox.services = [{"id": 50, "name": "fortios-api", "protocol": {"value": "tcp"}, "ports": [444]}]

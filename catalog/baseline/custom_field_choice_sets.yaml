@@ -1,12 +1,9 @@
 choice_sets:
   - name: "Profylaxia checks"
-    description: "Platform-aware Profylaxia groups"
+    description: "Atlas Profylaxia collection modes"
     base_choices: null
     extra_choices:
       - ["identity", "Identity & inventory"]
-      - ["resources", "Resources & environment"]
-      - ["interfaces", "Interfaces"]
-      - ["compliance", "Compliance"]
-      - ["operations", "Operations"]
+      - ["full_collection", "Full collection"]
     choice_colors: {}
     order_alphabetically: false

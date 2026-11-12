@@ -1,0 +1,17 @@
+---
+- name: Initialize the Cisco raw command buffer
+  ansible.builtin.set_fact:
+    atlas_raw_command_results: []
+
+- name: Execute each allow-listed Cisco raw command
+  ansible.builtin.include_tasks: ../common/run_cisco_raw_command.yml
+  loop: "{{ atlas_cisco_raw_commands }}"
+  loop_control:
+    loop_var: atlas_raw_command
+    label: "{{ atlas_raw_command }}"
+
+- name: Prepare Cisco raw outputs for Atlas validation
+  ansible.builtin.set_fact:
+    atlas_transport_result:
+      data:
+        commands: "{{ atlas_raw_command_results }}"

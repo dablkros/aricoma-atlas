@@ -1,12 +1,68 @@
-# Cisco IOS/IOS-XE tematické collectory profylaxie
+# Cisco CLI profylaxia: tematické collectory a raw collection
 
-Stav implementácie: 2026-10-23. Rozsah: NetBox platformy `cisco-ios` a
-`cisco-ios-xe`; CLI normalizátory sú zámerne predbežné do overenia na reálnych
-anonymizovaných výstupoch.
+Stav implementácie: 2026-11-12. Raw režimy podporujú presné platformové slugs
+`cisco-ios`, `cisco-ios-xe`, `cisco-nxos`, `cisco-asa`, `cisco-cbs`,
+`cisco-cbs250-350`, `cisco-catalyst-1200` a `cisco-catalyst-1300`.
+Tematické collectory zostávajú kompatibilné s existujúcimi nastaveniami.
+
+## Raw režimy
+
+`identity` je ľahký connection/authentication/privileged CLI test s tromi
+samostatnými príkazmi. `full_collection` sekvenčne vykoná platformový katalóg
+v jednej Ansible `network_cli` session; aktuálny profil `cisco-ios-xe` obsahuje
+45 príkazov. Každý príkaz má stav
+`success`, `unsupported`, `empty`, `permission_denied`, `timeout`, `error`
+alebo `truncated`; nepodporovaný príkaz nezlyhá celé zariadenie.
+
+Atlas uchová raw stdout po line-based redakcii známych secret tvarov a
+best-effort TextFSM reprezentáciu. TextFSM nie je hodnotiaca autorita:
+`template_missing` a `failed` sú parser metadáta, nie chyby transportu. Limity
+výstupu riadi `backend.prophylaxis_raw_command_max_bytes`, predvolene 1 MiB na
+príkaz.
+
+Výsledné chránené JSON artefakty sú zoskupené po Tenant/Site, pričom každý
+záznam zariadenia nesie NetBox Device ID, platformu, Device Type, management
+IP, credential profile, connection status, počty a jednotlivé výstupy.
+
+## IOS-XE profil a logy
+
+**Fakt:** IOS-XE `full_collection` pokrýva identitu, inventár, filesystémy,
+rozhrania, optiku, CPU/pamäť, environment, L2/L3 topológiu, NTP, licencie,
+lokálny logging, HA/routing voliteľné funkcie a redigovaný running-config.
+Definície a explicitné parsery sú iba v
+`catalog/prophylaxis/cisco_commands.yaml`; Atlas nevytvára druhý register.
+
+**Fakt:** `show clock detail` poskytuje časovú referenciu pre konzervatívny
+sedemdňový filter `show logging`. Do striktnej množiny sa zaradia iba udalosti
+s určiteľným časom. Neurčené udalosti zostávajú v
+`ambiguous_or_undated`. Výsledok uvádza okno, najstaršiu/najnovšiu udalosť,
+počty, truncation a `complete`, `partial` alebo `unknown` coverage. Pomenované
+časové zóny bez jednoznačného UTC offsetu sa neodhadujú.
+
+**Neoverené:** Multiline syslog udalosti a uptime-relative timestampy zatiaľ
+nemajú samostatný parser. Ostávajú dostupné v autorizovanom raw výstupe.
+
+## Report Explorer
+
+**Fakt:** Operations UI obsahuje `Browse reports`. Používateľ vyberie run,
+Tenant/Site artefakt, zariadenie a kategóriu. Prehľad zobrazuje reálne počty
+zberu a parsovania; nepočíta health score. Structured dáta sa renderujú ako
+tabuľky, logy majú časový/severity/text filter a raw CLI sa načíta až na
+vyžiadanie s limitom 65 536 znakov.
+
+**Fakt:** Read-only API používa existujúcu operator autorizáciu, kontroluje že
+artefakt patrí runu, odmieta symlinky a reporty nad 64 MiB. Summary a device
+endpoint nevracajú raw stdout. Kompletný JSON a textový report majú samostatný
+autorizovaný download endpoint.
+
+**Obmedzenie:** Aktuálny Atlas operator účet nemá tenant-scoped principal.
+Prístup je preto autorizovaný na úrovni Profylaxia operátora, nie na úrovni
+jedného NetBox tenantu.
 
 ## Skupiny, výsledky a capability register
 
-**Fakt:** NetBox ponúka päť používateľských skupín. Atlas vybranú skupinu
+**Fakt:** Interné tematické collectory naďalej používajú päť skupín. NetBox UI
+v tejto verzii ponúka iba `identity` a `full_collection`; Atlas vybraný režim
 rozbalí na stabilné interné `CheckId`, platformový register priradí podporované
 výsledky ku `CollectorId` a Ansible Runner vykoná každý naplánovaný collector
 raz na zariadenie. Existujúce API polia, OpenBao účel `prophylaxis`,
@@ -127,12 +183,11 @@ Výstupy nesmú obsahovať heslá, tokeny ani `show running-config`.
 
 ## Zámerne nezaradené príkazy
 
-**Fakt:** `show running-config` sa v profylaxii nevykonáva; konfiguráciu a jej
-históriu vlastní Oxidized. `show arp`, `show mac address-table`, `show vlan`,
-CDP a LLDP sú topologické/inventárne dáta, nie samostatný zdravotný výsledok v
-aktuálnom modeli. Nexus `show vpc` a ASA `show asp drop`/`show failover` sa
-neposielajú na všeobecný IOS alebo CBS profil. Duplicitné varianty `show int`
-a `show interface` sú zredukované na jednu platformovú sadu.
+**Fakt:** Tematické collectory naďalej nepoužívajú `show running-config`.
+Explicitný režim `full_collection` ho však obsahuje ako citlivý diagnostický
+snapshot spolu s ARP/MAC/VLAN/CDP/LLDP, Nexus a ASA príkazmi. Tento snapshot
+nenahrádza Oxidized backup ani jeho Git históriu a nepodporované príkazy sa
+nefiltrujú vopred.
 
 **Inference:** Ak budú topológia, AAA/RADIUS alebo platformovo špecifické HA
 kontroly požadované ako samostatné výsledky, majú dostať vlastný `CheckId`,

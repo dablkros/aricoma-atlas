@@ -2075,18 +2075,36 @@ Platforma, profil a spotrebitelia sa vyberajú z kontrolovaných možností; hes
 API tokeny a SNMP community sa ukladajú iba do OpenBao. Podrobný kontrakt,
 účelové cesty, CAS ochranu a FortiOS API/SSH voľbu opisuje
 [Device credential onboarding](docs/credential-onboarding.md).
+Režim `Reuse an existing OpenBao profile` overí iba metadáta presnej účelovej
+cesty a priradí existujúci `credential_profile` vybraným zariadeniam bez
+načítania alebo prepísania secret hodnoty. V tom istom pláne možno zvoliť
+`identity`, `full_collection` alebo oba režimy Profylaxie.
 Plná threshold evaluation a periodický scheduler zatiaľ nie sú súčasťou tejto
 vrstvy. Existujúca uptime politika vracia `WARNING` pri hodnote pod 3 dni alebo
 nad 365 dní na platformách s hodnotiacim kontraktom. FortiOS je collection-first
 a uptime ponechá `UNKNOWN`, kým nebude zadaná explicitná politika. UI a textový
 report zobrazujú uptime v ľudskom formáte, kým JSON/API zachováva sekundy.
 Operations UI poskytuje
-manuálne spustenie asynchrónneho behu podľa skupín v `profylaxia_checks`. Skupina
+manuálne spustenie asynchrónneho behu podľa režimov v `profylaxia_checks`. Režim
 `identity` vytvára výsledky
 `device_facts`, `os_version` a `uptime` z jedného facts collector jobu. Skupina
-`resources` na Cisco CBS používa jeden read-only SNMP GET job pre overené
-CPU/teplotné/fan OID a samostatný read-only CLI job pre prostredie a pokus o
-normalizáciu pamäte. Cisco IOS/IOS-XE používajú tematické SSH collectory.
+`full_collection` rozbalí platformový read-only katalóg; jeho interné collectory
+môžu na Cisco CBS použiť SNMP aj CLI a na Cisco IOS/IOS-XE tematické SSH zbery.
+Pre Cisco platformy Atlas v jednej
+Ansible session vykoná fixný allow-list 49 príkazov a uloží jeden chránený JSON
+za Tenant/Site pod
+`runs/<run_id>/sites/<tenant>-<site>-<UTC timestamp>.json`. Ak sú vybraté
+`identity` aj `full_collection`, prednosť má úplný zber. Raw stdout zostáva
+autoritatívny; NTC/TextFSM 9.3.0 pridá `structured_data` iba tam, kde existuje
+kompatibilná šablóna. Parser failure nezmení úspešný CLI výsledok. UI a bežné
+API zobrazujú iba bezpečné počty a názov artefaktu, nie citlivý obsah.
+
+FortiOS podporuje rovnaké režimy cez SSH. `identity` vykoná tri základné
+príkazy; `full_collection` vykoná fixný allow-list 30 príkazov a najviac 64
+dynamicky objavených `diagnose hardware deviceinfo nic <interface>` príkazov.
+Atlas používa existujúci Paramiko modul, jednu interaktívnu session, OpenBao
+credentials a nakonfigurovanú host-key politiku. Raw výsledok prechádza cez
+chránený dočasný súbor s režimom `0600`, nie cez bežné Runner eventy.
 Výsledky `PASS`, `FAIL`, `NOT_APPLICABLE`, `UNKNOWN` a `UNSUPPORTED`, presné
 OID, Aruba obmedzenia a porovnanie Zabbix šablón dokumentuje
 [Profylaxia system metrics](docs/prophylaxis-system-metrics.md). Pôvodná
@@ -2161,9 +2179,10 @@ credentials aj dáta bez šifrovania; služba v NetBoxe preto predstavuje vedom�
 povolenie pre dané zariadenie. Telnet facts sa parsujú cez pripnuté NTC
 Templates `cisco_ios`.
 
-Textový Profylaxia report pri úspešných checkoch uvádza normalizované CPU
+Textový Profylaxia report pri úspešných tematických checkoch uvádza normalizované CPU
 percentá, hostname, model, OS verziu, sériové číslo a uptime v sekundách. Raw
-CLI výstupy a credentials do reportu nezapisuje; typované hodnoty zostávajú
+CLI výstupy a credentials do reportu nezapisuje; raw Cisco režim ukladá stdout
+iba do samostatného chráneného Site artefaktu. Typované hodnoty zostávajú
 dostupné aj v `result.json` a API behu.
 
 Pre platformy `cisco-ios` a `cisco-ios-xe` Atlas plánuje tematické collectory
@@ -2218,21 +2237,20 @@ servera a zvyšuje riziko MITM útoku.
 Aktuálne možnosti v NetBoxe:
 
 - `identity` — Identity & inventory
-- `resources` — Resources & environment
-- `interfaces` — Interfaces
-- `compliance` — Compliance
-- `operations` — Operations
+- `full_collection` — Full collection
 
-Každá skupina sa rozbalí na stabilné interné výsledky a platforma vykoná iba
-collectory, ktoré má explicitne povolené. Neimplementované výsledky zostanú
-viditeľné ako `UNSUPPORTED`; Atlas ich potichu nevynechá. Počas migrácie backend
-naďalej akceptuje rozpoznané staré individuálne hodnoty už uložené na
-zariadeniach. Historické voľby `Routing table`, `Routing protocol neighbors` a
-`HA status` sa zachovajú cez skupinu `operations`; na IOS/IOS-XE/CBS ich
-vyhodnotia tematické collectory a neznámy formát zostane neoverený.
-Skupina `operations` navyše zobrazuje stav posledného Oxidized backup jobu.
-Profylaxia nespúšťa vlastnú zálohu, nečíta konfiguráciu a nemení samostatný
-Oxidized polling ani Git históriu.
+`identity` vykoná iba základnú identitu a inventár. `full_collection` spustí
+platformový read-only katalóg. Neimplementované výsledky zostanú viditeľné ako
+`UNSUPPORTED`; Atlas ich potichu nevynechá. Počas migrácie backend naďalej
+akceptuje rozpoznané staré hodnoty, ale baseline ich premapuje na
+`full_collection`. Profylaxia nemení samostatný Oxidized polling ani Git
+históriu.
+
+Operations UI ponúka `Browse reports` pre chránené Tenant/Site JSON artefakty.
+Zobrazuje run a device summary, štruktúrované parser výsledky, stav parsera,
+sedemdňové log okno s coverage informáciou a lazy-load raw CLI. Kompletný JSON
+a existujúci textový report sa sťahujú cez autorizované endpointy. Podrobnosti:
+[Cisco IOS/IOS-XE report flow](docs/prophylaxis-cisco-ios.md).
 
 ## Custom Fields
 
@@ -2894,8 +2912,9 @@ Cieľom je zabrániť nechcenej modifikácii existujúcej zákazníckej konfigur
 
 Jedinou úzkou výnimkou je verzovaná migrácia pôvodného Atlas choice setu
 `Profylaxia checks`: ak sa existujúci objekt presne zhoduje so starou Atlas
-schémou, `--apply` nahradí individuálne voľby piatimi skupinami `identity`,
-`resources`, `interfaces`, `compliance` a `operations`. Ak sa líši ktorékoľvek
+schémou, `--apply` nahradí staré voľby režimami `identity` a
+`full_collection`. Staré tematické voľby sa premapujú na `full_collection`.
+Ak sa líši ktorékoľvek
 ďalšie pole alebo zoznam obsahuje zákaznícku úpravu, objekt zostane chránený a
 bootstrap naďalej oznámi drift. Pri podporovanej Atlas migrácii provisioner
 najprv dočasne pridá nové skupiny bez odstránenia starých choices, premapuje

@@ -1,0 +1,893 @@
+schema_version: 1
+ntc_templates_version: 9.3.0
+
+platforms:
+  - cisco-ios
+  - cisco-ios-xe
+  - cisco-nxos
+  - cisco-asa
+  - cisco-cbs
+  - cisco-cbs250-350
+  - cisco-catalyst-1200
+  - cisco-catalyst-1300
+
+commands:
+  - id: device_version
+    category: device_identity
+    priority: 10
+    modes: [identity, full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show version
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_version.textfsm
+          output_fields: [software_image, version, release, rommon, hostname, uptime, uptime_years, uptime_weeks, uptime_days, uptime_hours, uptime_minutes, reload_reason, running_image, hardware, serial, config_register, mac_address, restarted]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show version
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_version.textfsm
+          output_fields: [uptime, last_reboot_reason, bios, os, boot_image, platform, hostname, serial]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show version
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_version.textfsm
+          output_fields: [version, device_mgr_version, compile_date, image, hostname, uptime, hardware, model, flash, interfaces, license_mode, license_state, max_intf, max_vlans, failover, cluster, serial, last_mod]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show version
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_s300
+          template: cisco_s300_show_version.textfsm
+          output_fields: [sw_version, boot_version, hw_version]
+        verification:
+          documentation: verified
+          parser_fixture_tested: false
+          real_device_tested: true
+          tested_models: [CBS350-12XT, CBS350-16T-2G]
+          tested_os_versions: [3.3.0.16, 3.6.0.3]
+          evidence: [user_device_capture_2026-11-12]
+
+  - id: hardware_inventory
+    category: hardware_inventory
+    priority: 20
+    modes: [identity, full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show inventory
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_inventory.textfsm
+          output_fields: [name, descr, pid, vid, sn]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show inventory
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_inventory.textfsm
+          output_fields: [name, descr, pid, vid, sn]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show inventory
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_inventory.textfsm
+          output_fields: [name, descr, pid, vid, sn]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show inventory
+        parser: {engine: none}
+        verification:
+          documentation: verified
+          parser_fixture_tested: false
+          real_device_tested: true
+          tested_models: [CBS350-12XT, CBS350-16T-2G]
+          tested_os_versions: [3.3.0.16, 3.6.0.3]
+          evidence: [user_device_capture_2026-11-12]
+
+  - id: device_clock
+    category: time
+    priority: 5
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show clock detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_clock.textfsm
+          output_fields: [time, timezone, dayweek, month, day, year]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: platform_inventory
+    category: hardware_inventory
+    priority: 22
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show platform
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_platform.textfsm
+          output_fields: [index, ports, model, serial, mac, hardware_version, software_version]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: directory_listing
+    category: filesystems
+    priority: 24
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: dir
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: file_systems
+    category: filesystems
+    priority: 26
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show file systems
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_file_systems.textfsm
+          output_fields: [size, free, type, flags, prefixes]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: ip_interfaces_brief
+    category: interfaces
+    priority: 145
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show ip interface brief
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_ip_interface_brief.textfsm
+          output_fields: [interface, ip_address, status, proto]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: transceiver_details
+    category: transceivers
+    priority: 205
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show interfaces transceiver detail
+        parser: {engine: none}
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: environment_temperature
+    category: environment
+    priority: 282
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show environment temperature
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_environment_temperature.textfsm
+          output_fields: [switch, switch_temperature, inlet_temperature_value, inlet_temperature_state, inlet_yellow_threshold, inlet_red_threshold, hotspot_temperature_value, hotspot_temperature_state, hotspot_yellow_threshold, hotspot_red_threshold]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: environment_power
+    category: environment
+    priority: 284
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show environment power all
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_environment_power_all.textfsm
+          output_fields: [ps_module, pid, serial, status, sys_pwr, poe_pwr, watts]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: mac_address_table
+    category: vlans
+    priority: 342
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show mac address-table
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_mac-address-table.textfsm
+          output_fields: [destination_address, type, vlan_id, destination_port]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: spanning_tree_root
+    category: spanning_tree
+    priority: 352
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show spanning-tree root
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_spanning-tree_root.textfsm
+          output_fields: [vlan_id, priority, root_id, root_cost, hello_time, max_age, fwd_dly, root_port]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: etherchannel_summary
+    category: etherchannel
+    priority: 354
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show etherchannel summary
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_etherchannel_summary.textfsm
+          output_fields: [group, bundle_name, bundle_status, bundle_protocol, member_interface, member_interface_status]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: ntp_detail
+    category: time
+    priority: 512
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show ntp status
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: license_summary
+    category: licensing
+    priority: 520
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show license summary
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: license_status
+    category: licensing
+    priority: 522
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show license status
+        parser: {engine: none}
+        verification:
+          documentation: verified
+          parser_fixture_tested: false
+          real_device_tested: false
+          evidence: [structured parser intentionally disabled because upstream schema may expose proxy_password]
+
+  - id: license_all
+    category: licensing
+    priority: 524
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show license all
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_license.textfsm
+          output_fields: [feature, period_left, period_used, license_type, license_state, license_count, license_priority]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: switch_detail
+    category: ha_status
+    priority: 600
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show switch detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_switch_detail.textfsm
+          output_fields: [switch, role, mac_address, priority, version, state]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: redundancy
+    category: ha_status
+    priority: 602
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show redundancy
+        parser: {engine: none}
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: standby_brief
+    category: ha_status
+    priority: 604
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show standby brief
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_standby_brief.textfsm
+          output_fields: [interface, group, priority, preempt, state, active, standby, virtual_ip_address]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: vrrp_brief
+    category: ha_status
+    priority: 606
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show vrrp brief
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_vrrp_brief.textfsm
+          output_fields: [interface, group, addr_family, priority, time, own, preempt, state, master_ip_address, virtual_ip_address]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: ospf_neighbors
+    category: routing
+    priority: 608
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show ip ospf neighbor
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_ip_ospf_neighbor.textfsm
+          output_fields: [neighbor_id, priority, state, dead_time, ip_address, interface]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: bgp_summary
+    category: routing
+    priority: 610
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show ip bgp summary
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_ip_bgp_summary.textfsm
+          output_fields: [router_id, local_as, address_family, bgp_neighbor, bgp_version, neighbor_as, messages_received, messages_sent, table_version, input_queue, output_queue, up_down, state_or_prefixes_received]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: vrf_inventory
+    category: routing
+    priority: 612
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show vrf
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_vrf.textfsm
+          output_fields: [name, default_rd, protocols, interfaces]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: access_sessions
+    category: interfaces
+    priority: 614
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show access-session
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_access-session.textfsm
+          output_fields: [interface, mac_address, method, domain, status, session]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: port_security
+    category: interfaces
+    priority: 616
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show port-security
+        parser: {engine: none}
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: dhcp_snooping
+    category: interfaces
+    priority: 618
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show ip dhcp snooping
+        parser: {engine: none}
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: power_inline
+    category: environment
+    priority: 620
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios-xe]
+        command: show power inline
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_power_inline.textfsm
+          output_fields: [interface, admin_status, operational_status, power, device, class, max]
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: smb_system
+    category: device_identity
+    priority: 25
+    modes: [identity, full_collection]
+    variants:
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show system
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_s300
+          template: cisco_s300_show_system.textfsm
+          output_fields: [description, up_time, contact, hostname, location, mac_address, oid, fans_status]
+        verification:
+          documentation: verified
+          parser_fixture_tested: true
+          real_device_tested: false
+          evidence: [ntc_templates_v9.3.0_cisco_s300_show_system]
+
+  - id: interfaces_detail
+    category: interfaces
+    priority: 100
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show interfaces
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_interfaces.textfsm
+          output_fields: [interface, link_status, protocol_status, hardware_type, mac_address, bia, description, ip_address, prefix_length, mtu, duplex, speed, media_type, bandwidth, delay, encapsulation, last_input, last_output, last_output_hang, queue_strategy, input_rate, output_rate, input_pps, output_pps, input_packets, output_packets, runts, giants, input_errors, crc, frame, overrun, abort, output_errors, vlan_id, vlan_id_inner, vlan_id_outer, queue_size, queue_max, queue_drops, queue_flushes, queue_output_drops]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show interface
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_interface.textfsm
+          output_fields: [interface, link_status, admin_state, hardware_type, mac_address, bia, description, ip_address, prefix_length, mtu, mode, duplex, speed, input_packets, output_packets, input_errors, output_errors, bandwidth, delay, encapsulation, last_link_flapped, vlan_id, packet_input_rate, packet_output_rate, bandwidth_input_rate, bandwidth_output_rate, media_type, short_frame, overrun, underrun, ignored, watchdog, bad_etype_drop, bad_proto_drop, interface_down_drop, dribble, input_discards, rx_pause, stomped_crc, rx_jumbo_packets, storm_suppression_bytes, runts, giants, crc, no_buffer, tx_jumbo_packets, collisions, deferred, late_collisions, lost_carrier, no_carrier, babble, output_discards, tx_pause]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show interface detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_interface_detail.textfsm
+          output_fields: [interface, interface_name, link_status, protocol_status, hardware_type, bandwidth, delay, duplex, speed, flowcontrol_in, flowcontrol_out, bonded_port, description, mac_address, mtu, ip_address, netmask, in_packets, in_bytes, no_buffer, broadcasts, runts, giants, in_errors, crc, frame, overrun, ignored, abort, in_pause_resume, in_pause, in_resume, l2_decode_drops, switch_ingress_policy_drops, out_packets, out_bytes, underruns, out_pause_resume, out_pause, out_resume, out_errors, collisions, interface_resets, late_collisions, deferred, out_decode_drops, rate_limit_drops, switch_egress_policy_drops, in_reset_drops, out_reset_drops, vlan_id, control_interface_number, control_interface_config_status, control_interface_state, rxring_number, rxring_packets, rxring_bytes, rxring_overrun, rxring_blocks_free_curr, rxring_blocks_free_low, rxring_interface, txring_number, txring_packets, txring_bytes, txring_underrun, txring_blocks_free_curr, txring_blocks_free_low, txring_interface]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: interfaces_status
+    category: interfaces
+    priority: 110
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show interfaces status
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_interfaces_status.textfsm
+          output_fields: [port, name, status, vlan_id, duplex, speed, type, fc_mode]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show interface status
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_interface_status.textfsm
+          output_fields: [port, name, status, vlan_id, duplex, speed, type]
+        verification:
+          documentation: verified
+          parser_fixture_tested: true
+          real_device_tested: false
+          evidence: [ntc_templates_v9.3.0_cisco_nxos_show_interface_status5]
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show interfaces status
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_s300
+          template: cisco_s300_show_interfaces_status.textfsm
+          output_fields: [port, type, duplex, speed, neg, flowctrl, linkstate, backpressure, mdixmode]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: interfaces_description
+    category: interfaces
+    priority: 120
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show interfaces description
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_interfaces_description.textfsm
+          output_fields: [port, status, protocol, description]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show interface description
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_interface_description.textfsm
+          output_fields: [port, type, speed, description]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show interfaces description
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_s300
+          template: cisco_s300_show_interfaces_description.textfsm
+          output_fields: [interface, description]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: interface_error_counters
+    category: interface_errors
+    priority: 130
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show interfaces counters errors
+        parser:
+          engine: atlas_custom
+          function: parse_cisco_interface_error_counters
+          output_fields: [interface, align_err, fcs_err, xmit_err, rcv_err, undersize, outdiscards, single_col, multi_col, late_col, excess_col, carri_sen, runts, giants]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show interface counters errors
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show interfaces counters
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: transceiver_inventory
+    category: transceivers
+    priority: 140
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show interfaces transceiver
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_interface_transceiver.textfsm
+          output_fields: [interface, temperature, voltage, current, tx_pwr, rx_pwr]
+        verification:
+          documentation: verified
+          parser_fixture_tested: true
+          real_device_tested: false
+          evidence: [ntc_templates_v9.3.0_cisco_ios_show_interface_transceiver]
+      - platforms: [cisco-nxos]
+        command: show interface transceiver details
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_interface_transceiver_details.textfsm
+          output_fields: [interface, lane, temperature_value, temperature_alarm_high, temperature_alarm_low, temperature_warn_high, temperature_warn_low, voltage_value, voltage_alarm_high, voltage_alarm_low, voltage_warn_high, voltage_warn_low, amps_value, amps_alarm_high, amps_alarm_low, amps_warn_high, amps_warn_low, rx_value, rx_alarm_high, rx_alarm_low, rx_warn_high, rx_warn_low, tx_value, tx_alarm_high, tx_alarm_low, tx_warn_high, tx_warn_low]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: cpu_utilization
+    category: cpu
+    priority: 200
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show processes cpu
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_processes_cpu.textfsm
+          output_fields: [cpu_usage_5_sec, cpu_interruption_5_sec, cpu_usage_1_min, cpu_usage_5_min, process_pid, process_runtime, process_invoked, process_cpu_time_for_invocation, process_cpu_usage_5_sec, process_cpu_usage_1_min, process_cpu_usage_5_min, process_tty, process_name]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show cpu utilization
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show cpu usage detailed
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_cpu_usage_detailed.textfsm
+          output_fields: [core, cpu_5_sec, cpu_5_sec_dp, cpu_5_sec_cp, cpu_1_min, cpu_1_min_dp, cpu_1_min_cp, cpu_5_min, cpu_5_min_dp, cpu_5_min_cp]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: memory_utilization
+    category: memory
+    priority: 210
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show processes memory sorted
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_processes_memory_sorted.textfsm
+          output_fields: [memory_total, memory_used, memory_free, process_id, process_allocated, process_freed, process_holding, process]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show system resources
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: environment_status
+    category: environment
+    priority: 220
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show environment
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show environment
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_environment.textfsm
+          output_fields: [power_supply, power_supply_model, power_supply_output, power_supply_input, power_supply_capacity, power_supply_status, fan, fan_status, temperature_module, temperature_sensor, temperature_major_thresh, temperature_minor_thresh, temperature_current, temperature_status]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: routing_table
+    category: routing
+    priority: 300
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show ip route
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_ip_route.textfsm
+          output_fields: [vrf, protocol, type, network, prefix_length, distance, metric, nexthop_ip, nexthop_vrf, nexthop_if, uptime, flag]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show ip route
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_ip_route.textfsm
+          output_fields: [vrf, protocol, type, network, prefix_length, distance, metric, nexthop_ip, nexthop_if, uptime, nexthop_vrf, tag, segid, tunnelid, encap]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show route
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_route.textfsm
+          output_fields: [protocol, type, network, netmask, distance, metric, nexthopip, nexthopif, uptime]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: arp_table
+    category: routing
+    priority: 310
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show arp
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_arp.textfsm
+          output_fields: [protocol, address, age_min, hardware_address, type, interface]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: cdp_neighbors
+    category: neighbors
+    priority: 320
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show cdp neighbors detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_cdp_neighbors_detail.textfsm
+          output_fields: [neighbor_name, mgmt_address, platform, neighbor_interface, local_interface, neighbor_description, capabilities]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show cdp neighbors detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_cdp_neighbors_detail.textfsm
+          output_fields: [chassis_id, neighbor_name, mgmt_address, platform, neighbor_interface, local_interface, neighbor_description, interface_ip, capabilities]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: lldp_neighbors
+    category: neighbors
+    priority: 330
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show lldp neighbors detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_lldp_neighbors_detail.textfsm
+          output_fields: [local_interface, chassis_id, neighbor_port_id, neighbor_interface, neighbor_name, neighbor_description, capabilities, mgmt_address, vlan_id, mac_address, serial, manufacturer, hw_revision, fw_revision, sw_revision, platform, power_pair, power_class, power_device_type, power_priority, power_source, power_requested]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show lldp neighbors detail
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_lldp_neighbors_detail.textfsm
+          output_fields: [neighbor_name, local_interface, neighbor_interface, chassis_id, mgmt_address, neighbor_description, capabilities, vlan_id]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: vlan_inventory
+    category: interfaces
+    priority: 340
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show vlan brief
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_vlan.textfsm
+          output_fields: [vlan_id, vlan_name, status, interfaces]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: spanning_tree
+    category: interfaces
+    priority: 350
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show spanning-tree
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_spanning-tree.textfsm
+          output_fields: [vlan_id, interface, role, status, cost, port_priority, port_id, type]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: ha_status
+    category: ha_status
+    priority: 400
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-nxos]
+        command: show vpc
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_nxos
+          template: cisco_nxos_show_vpc.textfsm
+          output_fields: [id, port, status]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show failover
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_failover.textfsm
+          output_fields: [state, role, lan_intf_name, lan_intf, lan_intf_state, sw_version, sw_version_mate, failover_group, last_failover_time, last_failover_timezone, last_failover_month, last_failover_day, last_failover_year, service_state, service_state_mate, ssp_slot, ssp_model, ssp_status, ssp_slot_mate, ssp_model_mate, ssp_status_mate, interfaces_context, interfaces, interfaces_status, interfaces_state, interfaces_context_mate, interfaces_mate, interfaces_status_mate, interfaces_state_mate]
+        verification:
+          documentation: verified
+          parser_fixture_tested: true
+          real_device_tested: false
+          evidence: [ntc_templates_v9.3.0_cisco_asa_show_failover5505]
+
+  - id: asa_failover_history
+    category: ha_status
+    priority: 410
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-asa]
+        command: show failover history
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: asa_asp_drop
+    category: interface_errors
+    priority: 420
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-asa]
+        command: show asp drop
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: log_events
+    category: logs
+    priority: 500
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show logging
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_ios
+          template: cisco_ios_show_logging.textfsm
+          output_fields: [number, month, day, time, timezone, facility, severity, mnemonic, message]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show logging
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show logging
+        parser:
+          engine: ntc_textfsm
+          platform: cisco_asa
+          template: cisco_asa_show_logging.textfsm
+          output_fields: [month, day, year, time, hostname, facility, severity, mnemonic, message]
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: ntp_status
+    category: environment
+    priority: 510
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show ntp associations
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: smb_software_versions
+    category: device_identity
+    priority: 520
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show software versions
+        parser: {engine: none}
+        verification: {documentation: unverified, parser_fixture_tested: false, real_device_tested: false}
+
+  - id: running_configuration
+    category: configuration
+    priority: 900
+    modes: [full_collection]
+    variants:
+      - platforms: [cisco-ios, cisco-ios-xe]
+        command: show running-config
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-nxos]
+        command: show running-config
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-asa]
+        command: show running-config
+        parser: {engine: none}
+        verification: {documentation: verified, parser_fixture_tested: false, real_device_tested: false}
+      - platforms: [cisco-cbs, cisco-cbs250-350, cisco-catalyst-1200, cisco-catalyst-1300]
+        command: show running-config
+        parser:
+          engine: atlas_custom
+          function: parse_cisco_smb_running_config
+          output_fields: [hostname, config_version, ip_routing_enabled, ssh_server_enabled, snmp_agent_enabled, sntp_client_enabled, configured_user_count, vlan_definitions, vlan_interface_ids]
+        verification:
+          documentation: verified
+          parser_fixture_tested: true
+          real_device_tested: true
+          tested_models: [CBS350-12XT]
+          tested_os_versions: [3.3.0.16]
+          evidence: [tests/test_cisco_raw.py, user_device_capture_2026-11-12]

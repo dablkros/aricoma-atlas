@@ -5,7 +5,12 @@ from __future__ import annotations
 
 import re
 import socket
+import json
+import os
+from pathlib import Path
+import tempfile
 import time
+from datetime import datetime, timezone
 
 from ansible.module_utils.basic import AnsibleModule
 
@@ -46,6 +51,9 @@ options:
   known_hosts_path:
     type: path
     required: false
+  result_path:
+    type: path
+    required: false
 """
 
 
@@ -82,8 +90,10 @@ ALLOWED_COMMANDS = {
     "get system fortiguard-service status",
     "get system interface",
     "get system interface physical",
+    "get system arp",
     "get system status",
     "get system performance status",
+    "get sys interface transceiver",
     "get vpn certificate local details",
     "get vpn certificate ca details",
 }
@@ -94,7 +104,19 @@ INTERFACE_BLOCK_PATTERN = re.compile(
     r"(?ms)^\s*==\s*\[\s*([A-Za-z0-9_.:-]{1,64})\s*]\s*$"
     r"(?P<body>.*?)(?=^\s*==\s*\[|\Z)"
 )
-MAX_DISCOVERED_INTERFACES = 256
+INTERFACE_NAME_PATTERN = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+NON_PHYSICAL_INTERFACE_PATTERN = re.compile(
+    r"(?i)^(?:ssl\.|ipsec|gre|loopback|vlan|tun|vxlan)"
+)
+NON_PHYSICAL_TYPE_PATTERN = re.compile(
+    r"(?im)^\s*type\s*:\s*(?:vlan|tunnel|aggregate|redundant|software-switch|hard-switch)\b"
+)
+DISCOVERY_FAILURE_PATTERN = re.compile(
+    r"(?i)(command parse error before|invalid command|unknown command|"
+    r"not a valid command|unrecognized parameter|syntax error|permission denied|"
+    r"access denied|not authorized|insufficient privilege)"
+)
+MAX_DISCOVERED_INTERFACES = 64
 
 
 class FortiOSPromptTimeout(TimeoutError):
@@ -179,6 +201,114 @@ def _connect(params):
     return client
 
 
+def _utc_now():
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def _record(command, started_at, *, stdout="", message="", failed=False):
+    return {
+        "command": command,
+        "started_at": started_at,
+        "finished_at": _utc_now(),
+        "stdout": stdout,
+        "message": message,
+        "failed": failed,
+    }
+
+
+def _open_session(params):
+    client = _connect(params)
+    channel = client.invoke_shell(width=200, height=1000)
+    banner, prompt = _receive_until_prompt(channel, params["command_timeout"])
+    return client, channel, banner, prompt
+
+
+def _execute_command(channel, command, prompt, timeout):
+    started_at = _utc_now()
+    channel.send(command + "\n")
+    try:
+        output, returned_prompt = _receive_until_prompt(
+            channel, timeout, expected_prompt=prompt,
+        )
+        return _record(
+            command,
+            started_at,
+            stdout=_clean_output(output, command, returned_prompt),
+        )
+    except FortiOSPromptTimeout:
+        return _record(
+            command,
+            started_at,
+            message="FortiOS CLI command timed out",
+            failed=True,
+        )
+    except (ConnectionError, OSError, socket.timeout):
+        return _record(
+            command,
+            started_at,
+            message="FortiOS CLI session was lost",
+            failed=True,
+        )
+
+
+def _discover_interfaces(output):
+    discovered = []
+    for name, body in INTERFACE_BLOCK_PATTERN.findall(output):
+        if not INTERFACE_NAME_PATTERN.fullmatch(name):
+            continue
+        if NON_PHYSICAL_INTERFACE_PATTERN.search(name):
+            continue
+        if NON_PHYSICAL_TYPE_PATTERN.search(body):
+            continue
+        if name not in discovered:
+            discovered.append(name)
+    return tuple(discovered)
+
+
+def _interface_discovery_result(command_results):
+    record = next(
+        (
+            candidate
+            for candidate in command_results
+            if candidate.get("command") == "get system interface physical"
+        ),
+        None,
+    )
+    if (
+        not isinstance(record, dict)
+        or record.get("failed") is True
+        or DISCOVERY_FAILURE_PATTERN.search(str(record.get("stdout") or ""))
+    ):
+        return (), "failed"
+    interfaces = _discover_interfaces(str(record.get("stdout") or ""))
+    if len(interfaces) > MAX_DISCOVERED_INTERFACES:
+        return interfaces[:MAX_DISCOVERED_INTERFACES], "limited"
+    return interfaces, "success" if interfaces else "empty"
+
+
+def _write_result(path_value, payload):
+    path = Path(path_value)
+    path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    descriptor, temporary_name = tempfile.mkstemp(
+        prefix=f".{path.name}.", suffix=".tmp", dir=path.parent,
+    )
+    temporary = Path(temporary_name)
+    try:
+        os.fchmod(descriptor, 0o600)
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            descriptor = -1
+            json.dump(payload, handle, ensure_ascii=False)
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        temporary.replace(path)
+        os.chmod(path, 0o600)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        temporary.unlink(missing_ok=True)
+
+
 def main():
     module = AnsibleModule(
         argument_spec={
@@ -192,6 +322,7 @@ def main():
             "command_timeout": {"type": "int", "default": 30},
             "host_key_checking": {"type": "bool", "default": True},
             "known_hosts_path": {"type": "path", "required": False},
+            "result_path": {"type": "path", "required": False},
         },
         supports_check_mode=True,
     )
@@ -202,63 +333,74 @@ def main():
 
     client = None
     try:
-        client = _connect(params)
-        channel = client.invoke_shell(width=200, height=1000)
-        banner, prompt = _receive_until_prompt(
-            channel,
-            params["command_timeout"],
-        )
+        client, channel, banner, prompt = _open_session(params)
         outputs = {}
+        command_results = []
         for command in commands:
-            channel.send(command + "\n")
-            output, returned_prompt = _receive_until_prompt(
-                channel,
-                params["command_timeout"],
-                expected_prompt=prompt,
+            result = _execute_command(
+                channel, command, prompt, params["command_timeout"],
             )
-            outputs[command] = _clean_output(output, command, returned_prompt)
-        interface_diagnostics = []
+            command_results.append(result)
+            outputs[command] = result["stdout"]
+            if result["failed"]:
+                client.close()
+                client = None
+                try:
+                    client, channel, _recovery_banner, prompt = _open_session(params)
+                except Exception:
+                    channel = None
+                    break
+
+        discovered_interfaces = ()
+        discovery_status = "not_requested"
         if params["collect_interface_diagnostics"]:
-            interface_output = (
-                outputs.get("get system interface physical", "")
-                or outputs.get("get system interface", "")
+            discovered_interfaces, discovery_status = _interface_discovery_result(
+                command_results
             )
-            discovered_interfaces = tuple(dict.fromkeys(
-                name
-                for name, body in INTERFACE_BLOCK_PATTERN.findall(
-                    interface_output
-                )
-                if re.search(
-                    r"(?m)^\s*(?:mode|ip|ipv6|status|speed)\s*:",
-                    body,
-                )
-            ))
-            for interface in discovered_interfaces[:MAX_DISCOVERED_INTERFACES]:
+            for interface in discovered_interfaces:
                 command = f"diagnose hardware deviceinfo nic {interface}"
-                channel.send(command + "\n")
-                output, returned_prompt = _receive_until_prompt(
-                    channel,
-                    params["command_timeout"],
-                    expected_prompt=prompt,
+                if channel is None:
+                    command_results.append(_record(
+                        command, _utc_now(), message="FortiOS CLI session was lost", failed=True,
+                    ))
+                    continue
+                result = _execute_command(
+                    channel, command, prompt, params["command_timeout"],
                 )
-                cleaned = _clean_output(output, command, returned_prompt)
-                outputs[command] = cleaned
-                interface_diagnostics.append(
-                    f"===== {command} =====\n{cleaned}"
-                )
+                command_results.append(result)
+                outputs[command] = result["stdout"]
+                if result["failed"]:
+                    client.close()
+                    client = None
+                    try:
+                        client, channel, _recovery_banner, prompt = _open_session(params)
+                    except Exception:
+                        channel = None
+
+        payload = {
+            "commands": command_results,
+            "discovered_physical_interfaces": list(
+                discovered_interfaces
+            ),
+            "interface_discovery_status": discovery_status,
+            "interface_diagnostics_limited": (
+                discovery_status == "limited"
+            ),
+        }
+        if params.get("result_path"):
+            _write_result(params["result_path"], payload)
+            module.exit_json(
+                changed=False,
+                result_file_written=True,
+                discovered_interface_count=len(payload["discovered_physical_interfaces"]),
+            )
         module.exit_json(
             changed=False,
             outputs=outputs,
-            interface_diagnostics="\n\n".join(interface_diagnostics),
-            discovered_interface_count=len(
-                discovered_interfaces
-                if params["collect_interface_diagnostics"]
-                else ()
-            ),
-            interface_diagnostics_truncated=(
-                params["collect_interface_diagnostics"]
-                and len(discovered_interfaces) > MAX_DISCOVERED_INTERFACES
-            ),
+            commands=command_results,
+            discovered_physical_interfaces=payload["discovered_physical_interfaces"],
+            interface_discovery_status=discovery_status,
+            interface_diagnostics_truncated=payload["interface_diagnostics_limited"],
             banner=_clean_output(banner, "", prompt),
         )
     except ModuleNotFoundError:

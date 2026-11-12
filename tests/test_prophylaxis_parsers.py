@@ -22,6 +22,7 @@ from atlas.prophylaxis.parsers import (
     normalize_ntp_status,
     normalize_pki_certificates,
     normalize_recent_logs,
+    normalize_routing_table,
     normalize_storage_health,
     normalize_uptime,
 )
@@ -363,6 +364,32 @@ class ProphylaxisParserTests(unittest.TestCase):
         self.assertEqual(values.outcome, EvaluationOutcome.UNKNOWN)
         self.assertEqual(values.reason_code, "counter_delta_unavailable")
         self.assertEqual(values.metrics["absolute_error_total"], 15)
+
+    def test_tabular_interface_error_counters_are_normalized(self):
+        raw = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_INTERFACES,
+            show_interfaces_counters_errors=(
+                "Port        Align-Err  FCS-Err  Xmit-Err  Rcv-Err  UnderSize\n"
+                "Gi1/0/1     0          2        0         3        --\n"
+            ),
+        )
+
+        values = normalize_interface_errors(raw)
+
+        self.assertEqual(values.reason_code, "counter_delta_unavailable")
+        self.assertEqual(values.metrics["absolute_error_total"], 5)
+
+    def test_gateway_of_last_resort_not_set_is_not_a_default_route(self):
+        raw = self.command_result(
+            "cisco-ios",
+            CollectorId.IOS_INTERFACES,
+            show_ip_route="Gateway of last resort is not set\nC 192.0.2.0/24 is connected",
+        )
+
+        values = normalize_routing_table(raw)
+
+        self.assertFalse(values.metrics["default_route_present"])
 
     def test_fortios_physical_interfaces_and_spaced_error_counters(self):
         raw = RawCollectorResult(
