@@ -18,6 +18,8 @@ from atlas.prophylaxis.cisco_raw import (
 from atlas.prophylaxis.run_store import FileRunStore
 from atlas.prophylaxis.runs import DeviceFactsRunService
 
+CISCO_REGISTRY_FIXTURES = Path(__file__).parent / "fixtures/cisco_registry"
+
 
 class CiscoRawContractTests(unittest.TestCase):
     def record(self, **overrides):
@@ -32,13 +34,11 @@ class CiscoRawContractTests(unittest.TestCase):
         payload.update(overrides)
         return payload
 
-    def test_catalog_contains_exactly_49_unique_commands(self):
-        self.assertEqual(49, len(CISCO_FULL_COMMANDS))
-        self.assertEqual(49, len(set(CISCO_FULL_COMMANDS)))
-        self.assertEqual(
-            ("show version", "show inventory", "show hostname"),
-            CISCO_IDENTITY_COMMANDS,
-        )
+    def test_legacy_command_views_are_derived_unique_registry_views(self):
+        self.assertEqual(len(CISCO_FULL_COMMANDS), len(set(CISCO_FULL_COMMANDS)))
+        self.assertEqual(len(CISCO_IDENTITY_COMMANDS), len(set(CISCO_IDENTITY_COMMANDS)))
+        self.assertIn("show version", CISCO_IDENTITY_COMMANDS)
+        self.assertIn("show inventory", CISCO_IDENTITY_COMMANDS)
 
     def test_supported_platforms_are_explicit(self):
         self.assertEqual({
@@ -47,17 +47,14 @@ class CiscoRawContractTests(unittest.TestCase):
             "cisco-catalyst-1300",
         }, set(CISCO_RAW_PLATFORMS))
 
-    def test_known_unsupported_hostname_command_is_not_scheduled(self):
-        for platform in (
-            "cisco-ios", "cisco-ios-xe", "cisco-cbs250-350",
-            "cisco-catalyst-1200", "cisco-catalyst-1300",
-        ):
-            with self.subTest(platform=platform):
-                self.assertNotIn(
-                    "show hostname", cisco_raw_commands(platform, "identity")
-                )
+    def test_platform_specific_commands_do_not_leak_between_operating_systems(self):
+        self.assertIn("show vpc", cisco_raw_commands("cisco-nxos", "full_collection"))
+        self.assertNotIn("show asp drop", cisco_raw_commands("cisco-nxos", "full_collection"))
+        self.assertIn("show asp drop", cisco_raw_commands("cisco-asa", "full_collection"))
+        self.assertNotIn("show vpc", cisco_raw_commands("cisco-asa", "full_collection"))
         self.assertIn(
-            "show hostname", cisco_raw_commands("cisco-nxos", "identity")
+            "show cpu utilization",
+            cisco_raw_commands("cisco-catalyst-1200", "full_collection"),
         )
 
     def test_command_statuses_are_distinct(self):
@@ -77,6 +74,16 @@ class CiscoRawContractTests(unittest.TestCase):
         self.assertEqual("permission_denied", denied.status)
         self.assertEqual("empty", empty.status)
         self.assertEqual("timeout", timeout.status)
+
+    def test_historical_error_text_in_show_logging_is_not_execution_failure(self):
+        result = classify_command_record(
+            self.record(
+                command="show logging",
+                stdout="%AUTH-3-FAIL: Authorization failed for old session",
+            ),
+            max_output_bytes=4096,
+        )
+        self.assertEqual("success", result.status)
 
     def test_large_output_is_truncated_and_common_secrets_are_redacted(self):
         result = classify_command_record(
@@ -124,7 +131,7 @@ class CiscoRawContractTests(unittest.TestCase):
         parsed = parse_command_output(raw, platform="cisco-catalyst-1200")
         self.assertEqual("parsed", parsed.parser_status)
         self.assertEqual(
-            "atlas:cisco-smb-running-config-summary/1.0",
+            "atlas:parse_cisco_smb_running_config/1.0",
             parsed.parser_template,
         )
         self.assertEqual([{
@@ -140,24 +147,96 @@ class CiscoRawContractTests(unittest.TestCase):
         }], parsed.structured_data)
         self.assertNotIn("USER-HASH", parsed.stdout)
 
-    @patch("ntc_templates.parse.parse_output", return_value=[{"version": "17.9"}])
+    @patch(
+        "atlas.prophylaxis.cisco_raw._parse_textfsm_template",
+        return_value=[{"version": "17.9"}],
+    )
     def test_textfsm_is_additive_and_preserves_raw_output(self, _parse):
         raw = classify_command_record(self.record(), max_output_bytes=4096)
         parsed = parse_command_output(raw, platform="cisco-ios-xe")
         self.assertEqual("parsed", parsed.parser_status)
+        self.assertEqual("success", parsed.parsing_status)
+        self.assertEqual("ntc_textfsm", parsed.parser_engine)
+        self.assertEqual("cisco_ios", parsed.parser_platform)
+        self.assertEqual("cisco_ios_show_version.textfsm", parsed.parser_template)
+        self.assertEqual("9.3.0", parsed.parser_version)
         self.assertEqual(raw.stdout, parsed.stdout)
         self.assertEqual([{"version": "17.9"}], parsed.structured_data)
 
-    @patch("ntc_templates.parse.parse_output", return_value=[{"sw_version": "4.1.3.36"}])
+    @patch(
+        "atlas.prophylaxis.cisco_raw._parse_textfsm_template",
+        return_value=[{"sw_version": "4.1.3.36"}],
+    )
     def test_catalyst_1200_uses_reviewed_cisco_smb_textfsm_family(self, parse):
         raw = classify_command_record(self.record(), max_output_bytes=4096)
         parsed = parse_command_output(raw, platform="cisco-catalyst-1200")
         self.assertEqual("parsed", parsed.parser_status)
+        self.assertEqual("cisco_s300", parsed.parser_platform)
+        self.assertEqual("cisco_s300_show_version.textfsm", parsed.parser_template)
         self.assertEqual(raw.stdout, parsed.stdout)
         self.assertEqual([{"sw_version": "4.1.3.36"}], parsed.structured_data)
-        parse.assert_called_once_with(
-            platform="cisco_s300", command="show version", data=raw.stdout,
-        )
+        definition = parse.call_args.args[0]
+        self.assertEqual("show version", definition.command)
+        self.assertEqual(raw.stdout, parse.call_args.args[1])
+
+    def test_official_ios_transceiver_fixture_uses_explicit_template(self):
+        raw = classify_command_record(self.record(
+            command="show interfaces transceiver",
+            stdout=(CISCO_REGISTRY_FIXTURES / "ios_transceiver.raw").read_text(),
+        ), max_output_bytes=65536)
+        parsed = parse_command_output(raw, platform="cisco-ios")
+        self.assertEqual("success", parsed.parsing_status)
+        self.assertEqual("cisco_ios_show_interface_transceiver.textfsm", parsed.parser_template)
+        self.assertEqual("Te1/49", parsed.structured_data[0]["interface"])
+
+    def test_official_nxos_interface_status_fixture_uses_explicit_template(self):
+        raw = classify_command_record(self.record(
+            command="show interface status",
+            stdout=(CISCO_REGISTRY_FIXTURES / "nxos_interface_status.raw").read_text(),
+        ), max_output_bytes=65536)
+        parsed = parse_command_output(raw, platform="cisco-nxos")
+        self.assertEqual("success", parsed.parsing_status)
+        self.assertEqual("cisco_nxos_show_interface_status.textfsm", parsed.parser_template)
+        self.assertEqual("Eth1/1", parsed.structured_data[0]["port"])
+        self.assertIsNone(parsed.normalized_data["items"][0]["description"])
+
+    def test_official_smb_system_fixture_is_parsed(self):
+        raw = classify_command_record(self.record(
+            command="show system",
+            stdout=(CISCO_REGISTRY_FIXTURES / "smb_system.raw").read_text(),
+        ), max_output_bytes=65536)
+        parsed = parse_command_output(raw, platform="cisco-cbs250-350")
+        self.assertEqual("success", parsed.parsing_status)
+        self.assertEqual("ZOO-SF300-POE-2", parsed.structured_data[0]["hostname"])
+
+    def test_official_asa_failover_fixture_is_parsed(self):
+        raw = classify_command_record(self.record(
+            command="show failover",
+            stdout=(CISCO_REGISTRY_FIXTURES / "asa_failover.raw").read_text(),
+        ), max_output_bytes=65536)
+        parsed = parse_command_output(raw, platform="cisco-asa")
+        self.assertEqual("success", parsed.parsing_status)
+        self.assertEqual("cisco_asa_show_failover.textfsm", parsed.parser_template)
+        self.assertEqual("Primary", parsed.structured_data[0]["role"])
+
+    @patch(
+        "atlas.prophylaxis.cisco_raw._parse_textfsm_template",
+        side_effect=ValueError("fixture does not match"),
+    )
+    def test_parse_error_preserves_successful_collection_and_stdout(self, _parse):
+        raw = classify_command_record(self.record(), max_output_bytes=4096)
+        parsed = parse_command_output(raw, platform="cisco-ios")
+        self.assertEqual("success", parsed.status)
+        self.assertEqual("parse_error", parsed.parsing_status)
+        self.assertEqual("failed", parsed.parser_status)
+        self.assertEqual(raw.stdout, parsed.stdout)
+
+    @patch("atlas.prophylaxis.cisco_raw._parse_textfsm_template", return_value=[])
+    def test_empty_parser_result_is_distinct_from_empty_command_output(self, _parse):
+        raw = classify_command_record(self.record(), max_output_bytes=4096)
+        parsed = parse_command_output(raw, platform="cisco-ios")
+        self.assertEqual("success", parsed.status)
+        self.assertEqual("empty_result", parsed.parsing_status)
 
     def test_site_filename_is_stable_and_utc(self):
         name = site_artifact_name(

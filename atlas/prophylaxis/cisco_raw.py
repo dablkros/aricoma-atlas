@@ -3,61 +3,32 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from importlib.resources import files
 import re
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
+from atlas.prophylaxis.cisco_registry import (
+    DEFAULT_CISCO_COMMAND_REGISTRY,
+    ResolvedCiscoCommand,
+)
+
 
 RAW_SCHEMA_VERSION = "1.0"
 CISCO_RAW_SCHEMA_VERSION = RAW_SCHEMA_VERSION
-CISCO_RAW_PLATFORMS = frozenset({
-    "cisco-ios", "cisco-ios-xe", "cisco-nxos", "cisco-asa", "cisco-cbs",
-    "cisco-cbs250-350", "cisco-catalyst-1200", "cisco-catalyst-1300",
-})
-CISCO_IDENTITY_COMMANDS = (
-    "show version", "show inventory", "show hostname",
-)
-CISCO_FULL_COMMANDS = (
-    "dir", "more flash:logfile.txt", "show aaa-server protocol radius",
-    "show arp", "show asp drop", "show cdp neighbors", "show clock",
-    "show crypto ca certificates", "show env all", "show environment",
-    "show failover history", "show failover state",
-    "show flash: | include crash", "show hardware", "show hostname",
-    "show interfaces description", "show int status", "show interface",
-    "show interfaces counters errors", "show interfaces status",
-    "show interfaces transceiver", "show inventory", "show ip arp",
-    "show ip int brief", "show ip route", "show license all",
-    "show license summary", "show lldp neighbors", "show logging",
-    "show logging last 1000", "show logging last 2000",
-    "show mac address-table", "show memory", "show ntp associations",
-    "show ntp peer-status", "show ntp status",
-    "show platform software status control-processor brief", "show post",
-    "show power inline", "show processes cpu history", "show route",
-    "show running-config", "show stack", "show switch",
-    "show switch stack-ports summary", "show system resources",
-    "show version", "show vlan", "show vpc",
-)
-
-_SHOW_HOSTNAME_UNSUPPORTED = frozenset({
-    "cisco-ios",
-    "cisco-ios-xe",
-    "cisco-cbs",
-    "cisco-cbs250-350",
-    "cisco-catalyst-1200",
-    "cisco-catalyst-1300",
-})
+CISCO_COMMAND_REGISTRY = DEFAULT_CISCO_COMMAND_REGISTRY
+CISCO_RAW_PLATFORMS = CISCO_COMMAND_REGISTRY.platforms
+# Backwards-compatible derived views. The platform matrix itself lives only in YAML.
+CISCO_IDENTITY_COMMANDS = CISCO_COMMAND_REGISTRY.all_commands("identity")
+CISCO_FULL_COMMANDS = CISCO_COMMAND_REGISTRY.all_commands("full_collection")
 
 
 def cisco_raw_commands(platform: str, mode: str) -> tuple[str, ...]:
-    """Return the reviewed command set without known platform noise."""
-    commands = (
-        CISCO_FULL_COMMANDS if mode == "full_collection"
-        else CISCO_IDENTITY_COMMANDS
+    """Resolve the ordered, platform-specific command set from the registry."""
+    return tuple(
+        item.command for item in CISCO_COMMAND_REGISTRY.resolve(platform, mode)
     )
-    if platform in _SHOW_HOSTNAME_UNSUPPORTED:
-        return tuple(command for command in commands if command != "show hostname")
-    return commands
 
 CommandStatus = Literal[
     "success", "unsupported", "empty", "permission_denied", "timeout",
@@ -102,12 +73,6 @@ _SECRET_LINES = (
     ),
 )
 
-_CISCO_SMB_PLATFORMS = frozenset({
-    "cisco-cbs",
-    "cisco-cbs250-350",
-    "cisco-catalyst-1200",
-    "cisco-catalyst-1300",
-})
 _SMB_CONFIG_VERSION = re.compile(r"(?m)^v(?P<version>\d+(?:\.\d+)+)\s+/\s+")
 _SMB_HOSTNAME = re.compile(r"(?m)^hostname\s+(?P<hostname>\S+)\s*$")
 _SMB_VLAN_DATABASE = re.compile(r"(?m)^vlan\s+(?P<definition>[0-9,-]+)\s*$")
@@ -167,8 +132,17 @@ class CiscoRawCommandResult(BaseModel):
     reason_code: str | None = Field(default=None, max_length=128)
     truncated: bool = False
     parser_status: Literal["not_requested", "parsed", "template_missing", "failed"] = "not_requested"
+    parsing_status: Literal[
+        "success", "no_parser", "empty_result", "parse_error", "skipped"
+    ] = "skipped"
+    command_id: str | None = Field(default=None, max_length=64)
+    category: str | None = Field(default=None, max_length=64)
+    parser_engine: Literal["ntc_textfsm", "atlas_custom", "none"] | None = None
+    parser_platform: str | None = Field(default=None, max_length=64)
     parser_template: str | None = Field(default=None, max_length=255)
+    parser_version: str | None = Field(default=None, max_length=32)
     structured_data: list[dict[str, Any]] | None = None
+    normalized_data: dict[str, Any] | None = None
 
     @model_validator(mode="after")
     def validate_payload(self):
@@ -181,6 +155,10 @@ class CiscoRawCommandResult(BaseModel):
             raise ValueError("truncated status requires truncated=true")
         if self.parser_status == "parsed" and self.structured_data is None:
             raise ValueError("parsed output requires structured data")
+        if self.parsing_status == "success" and self.parser_status != "parsed":
+            raise ValueError("successful parsing requires legacy parsed status")
+        if self.parsing_status == "success" and self.structured_data is None:
+            raise ValueError("successful parsing requires structured data")
         return self
 
 
@@ -292,7 +270,11 @@ def classify_command_record(
     stdout = raw_stdout if isinstance(raw_stdout, str) else ""
     message = record.get("message")
     message = message if isinstance(message, str) else ""
-    evidence = f"{message}\n{stdout}".strip()
+    # A successful `show logging` can legitimately contain old timeout,
+    # authorization, and invalid-command messages. Only transport/module
+    # diagnostics may classify that command as an execution failure.
+    inspect_stdout = not command.casefold().startswith("show logging")
+    evidence = f"{message}\n{stdout if inspect_stdout else ''}".strip()
     common = dict(command=command, duration_ms=duration_ms,
                   started_at=started, finished_at=finished)
     permission_pattern = _FORTIOS_PERMISSION if platform == "fortios" else _PERMISSION
@@ -315,61 +297,176 @@ def classify_command_record(
     return CiscoRawCommandResult(**common, status="success", stdout=cleaned)
 
 
-_NTC_PLATFORM = {
-    "cisco-ios": "cisco_ios",
-    "cisco-ios-xe": "cisco_ios",
-    "cisco-nxos": "cisco_nxos",
-    "cisco-asa": "cisco_asa",
-    "cisco-cbs": "cisco_s300",
-    "cisco-cbs250-350": "cisco_s300",
-    # Device captures from Catalyst 1200 use the same show-version layout as
-    # the reviewed CBS/S300 family. Unsupported commands remain raw-only.
-    "cisco-catalyst-1200": "cisco_s300",
-    "cisco-catalyst-1300": "cisco_s300",
+_INTERFACE_ERROR_FIELDS = frozenset({
+    "align_err", "fcs_err", "xmit_err", "rcv_err", "undersize",
+    "outdiscards", "single_col", "multi_col", "late_col", "excess_col",
+    "carri_sen", "runts", "giants",
+})
+
+
+def _field_name(value: str) -> str:
+    return re.sub(r"[^a-z0-9]+", "_", value.casefold()).strip("_")
+
+
+def parse_cisco_interface_error_counters(text: str) -> list[dict[str, Any]]:
+    """Parse IOS tabular error counters without inventing missing zeroes."""
+    interfaces: dict[str, dict[str, Any]] = {}
+    header: list[str] | None = None
+    for raw_line in text.splitlines():
+        tokens = raw_line.split()
+        if not tokens:
+            continue
+        first = _field_name(tokens[0])
+        if first in {"port", "interface"}:
+            header = ["interface", *(_field_name(item) for item in tokens[1:])]
+            continue
+        if header is None or len(tokens) != len(header):
+            continue
+        if not any(character.isdigit() for character in tokens[0]):
+            continue
+        row = interfaces.setdefault(tokens[0], {"interface": tokens[0]})
+        for field, value in zip(header[1:], tokens[1:]):
+            if field not in _INTERFACE_ERROR_FIELDS:
+                continue
+            if value in {"--", "N/A", "n/a"}:
+                row[field] = None
+            elif re.fullmatch(r"\d+", value.replace(",", "")):
+                row[field] = int(value.replace(",", ""))
+    return list(interfaces.values())
+
+
+def parse_cisco_smb_running_config(text: str) -> list[dict[str, Any]]:
+    summary = _parse_cisco_smb_running_config(text)
+    return [summary] if summary is not None else []
+
+
+_CUSTOM_PARSERS = {
+    "parse_cisco_interface_error_counters": parse_cisco_interface_error_counters,
+    "parse_cisco_smb_running_config": parse_cisco_smb_running_config,
 }
+
+
+def _parse_textfsm_template(
+    definition: ResolvedCiscoCommand, text: str,
+) -> list[dict[str, Any]]:
+    """Parse with the exact packaged template named by the registry."""
+    import textfsm
+
+    template_name = definition.parser.template
+    if template_name is None:
+        raise ValueError("TextFSM parser has no template")
+    template = files("ntc_templates").joinpath("templates", template_name)
+    if not template.is_file():
+        raise FileNotFoundError(template_name)
+    with template.open("r", encoding="utf-8") as handle:
+        parser = textfsm.TextFSM(handle)
+        records = parser.ParseText(text)
+    headers = [str(header).casefold() for header in parser.header]
+    return [dict(zip(headers, record)) for record in records]
+
+
+def _normalize_rows(
+    definition: ResolvedCiscoCommand, rows: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    """Provide a small common view only where field meaning is unambiguous."""
+    def known(value: Any) -> Any:
+        return None if value in {None, "", "--", "N/A", "n/a"} else value
+
+    if definition.category == "hardware_inventory":
+        return {
+            "category": definition.category,
+            "items": [{
+                "name": known(row.get("name")),
+                "description": known(row.get("descr")),
+                "product_id": known(row.get("pid")),
+                "version_id": known(row.get("vid")),
+                "serial_number": known(row.get("sn")),
+            } for row in rows],
+        }
+    if definition.id in {"interfaces_status", "interfaces_description"}:
+        return {
+            "category": "interfaces",
+            "items": [{
+                "name": known(row.get("interface") or row.get("port")),
+                "description": known(row.get("description") or row.get("name")),
+                "status": known(row.get("status") or row.get("linkstate")),
+                "vlan_id": known(row.get("vlan_id")),
+                "duplex": known(row.get("duplex")),
+                "speed": known(row.get("speed")),
+                "media_type": known(row.get("type")),
+            } for row in rows],
+        }
+    if definition.category == "interface_errors":
+        return {"category": definition.category, "items": rows}
+    return None
 
 
 def parse_command_output(
     result: CiscoRawCommandResult, *, platform: str,
 ) -> CiscoRawCommandResult:
-    """Add reviewed structured data without changing raw collection state."""
+    """Add registry-selected structured data without changing raw state."""
     if result.status not in {"success", "truncated"} or not result.stdout:
-        return result
-    if result.command == "show running-config" and platform in _CISCO_SMB_PLATFORMS:
-        summary = _parse_cisco_smb_running_config(result.stdout)
-        if summary is None:
-            return result.model_copy(update={"parser_status": "failed"})
+        return result.model_copy(update={"parsing_status": "skipped"})
+    definition = CISCO_COMMAND_REGISTRY.command(platform, result.command)
+    if definition is None:
         return result.model_copy(update={
-            "parser_status": "parsed",
-            "parser_template": "atlas:cisco-smb-running-config-summary/1.0",
-            "structured_data": [summary],
+            "parser_status": "template_missing",
+            "parsing_status": "no_parser",
         })
-    ntc_platform = _NTC_PLATFORM.get(platform)
-    if ntc_platform is None:
-        return result.model_copy(update={"parser_status": "template_missing"})
+    common = {
+        "command_id": definition.id,
+        "category": definition.category,
+        "parser_engine": definition.parser.engine,
+        "parser_platform": definition.parser.platform,
+        "parser_template": (
+            definition.parser.template
+            if definition.parser.engine == "ntc_textfsm"
+            else f"atlas:{definition.parser.function}/1.0"
+            if definition.parser.engine == "atlas_custom" else None
+        ),
+        "parser_version": (
+            CISCO_COMMAND_REGISTRY.catalog.ntc_templates_version
+            if definition.parser.engine == "ntc_textfsm" else "1.0"
+            if definition.parser.engine == "atlas_custom" else None
+        ),
+    }
+    if definition.parser.engine == "none":
+        return result.model_copy(update={
+            **common,
+            "parser_status": "template_missing",
+            "parsing_status": "no_parser",
+        })
     try:
-        from ntc_templates.parse import parse_output
-        rows = parse_output(
-            platform=ntc_platform,
-            command=result.command,
-            data=result.stdout,
-        )
-    except Exception as exc:
-        message = str(exc).casefold()
-        parser_status = (
-            "template_missing"
-            if "template" in message and ("not found" in message or "no template" in message)
-            else "failed"
-        )
-        return result.model_copy(update={"parser_status": parser_status})
+        if definition.parser.engine == "ntc_textfsm":
+            rows = _parse_textfsm_template(definition, result.stdout)
+        else:
+            function = _CUSTOM_PARSERS.get(definition.parser.function or "")
+            if function is None:
+                raise ValueError("unregistered custom parser")
+            rows = function(result.stdout)
+    except Exception:
+        return result.model_copy(update={
+            **common, "parser_status": "failed", "parsing_status": "parse_error",
+        })
     if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
-        return result.model_copy(update={"parser_status": "failed"})
+        return result.model_copy(update={
+            **common, "parser_status": "failed", "parsing_status": "parse_error",
+        })
     if not rows:
-        return result.model_copy(update={"parser_status": "failed"})
+        return result.model_copy(update={
+            **common, "parser_status": "failed", "parsing_status": "empty_result",
+        })
+    allowed = set(definition.parser.output_fields)
+    if any(set(row) - allowed for row in rows):
+        return result.model_copy(update={
+            **common, "parser_status": "failed", "parsing_status": "parse_error",
+        })
     return result.model_copy(update={
+        **common,
         "parser_status": "parsed",
-        "parser_template": f"ntc-templates:9.3.0/{ntc_platform}/{result.command}",
+        "parsing_status": "success",
         "structured_data": rows,
+        "normalized_data": _normalize_rows(definition, rows),
     })
 
 
@@ -393,6 +490,7 @@ __all__ = [
     "CISCO_RAW_SCHEMA_VERSION", "CiscoRawCommandResult",
     "CiscoRawDeviceReport", "CiscoRawIgnoredCommand",
     "cisco_raw_commands", "classify_command_record", "parse_command_output", "safe_slug",
+    "parse_cisco_interface_error_counters", "parse_cisco_smb_running_config",
     "site_artifact_name",
     "RAW_SCHEMA_VERSION",
 ]

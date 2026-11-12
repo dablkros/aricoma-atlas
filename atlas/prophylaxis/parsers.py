@@ -877,6 +877,20 @@ def normalize_interface_errors(raw: RawCollectorResult) -> DiagnosticValues:
             text,
         )
     ]
+    if raw.platform in {"cisco-ios", "cisco-ios-xe"}:
+        from atlas.prophylaxis.cisco_raw import (
+            parse_cisco_interface_error_counters,
+        )
+
+        for output in outputs.values():
+            for row in parse_cisco_interface_error_counters(output):
+                counters.extend(
+                    value
+                    for field, value in row.items()
+                    if field != "interface"
+                    and isinstance(value, int)
+                    and not isinstance(value, bool)
+                )
     if raw.platform == "fortios":
         counters.extend(
             int(value)
@@ -1599,7 +1613,9 @@ def normalize_routing_table(raw: RawCollectorResult) -> DiagnosticValues:
         r"(?im)^\s*(?:[A-Z*][A-Z0-9* ]*\s+)?(?:\d{1,3}\.){3}\d{1,3}/\d+",
         text,
     )
-    default = bool(re.search(r"(?im)\b0\.0\.0\.0/0\b|gateway of last resort", text))
+    default = bool(re.search(r"(?im)\b0\.0\.0\.0/0\b", text)) or bool(
+        re.search(r"(?im)gateway of last resort(?!\s+is\s+not\s+set)", text)
+    )
     return _diagnostic(
         EvaluationOutcome.UNKNOWN,
         "Routing table inventory collected",
