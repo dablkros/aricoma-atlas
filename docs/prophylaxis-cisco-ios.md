@@ -1,6 +1,6 @@
 # Cisco CLI profylaxia: tematické collectory a raw collection
 
-Stav implementácie: 2026-11-10. Raw režimy podporujú presné platformové slugs
+Stav implementácie: 2026-11-12. Raw režimy podporujú presné platformové slugs
 `cisco-ios`, `cisco-ios-xe`, `cisco-nxos`, `cisco-asa`, `cisco-cbs`,
 `cisco-cbs250-350`, `cisco-catalyst-1200` a `cisco-catalyst-1300`.
 Tematické collectory zostávajú kompatibilné s existujúcimi nastaveniami.
@@ -8,8 +8,9 @@ Tematické collectory zostávajú kompatibilné s existujúcimi nastaveniami.
 ## Raw režimy
 
 `identity` je ľahký connection/authentication/privileged CLI test s tromi
-samostatnými príkazmi. `full_collection` sekvenčne vykoná fixný katalóg 49
-príkazov v jednej Ansible `network_cli` session. Každý príkaz má stav
+samostatnými príkazmi. `full_collection` sekvenčne vykoná platformový katalóg
+v jednej Ansible `network_cli` session; aktuálny profil `cisco-ios-xe` obsahuje
+45 príkazov. Každý príkaz má stav
 `success`, `unsupported`, `empty`, `permission_denied`, `timeout`, `error`
 alebo `truncated`; nepodporovaný príkaz nezlyhá celé zariadenie.
 
@@ -23,9 +24,45 @@ Výsledné chránené JSON artefakty sú zoskupené po Tenant/Site, pričom kaž
 záznam zariadenia nesie NetBox Device ID, platformu, Device Type, management
 IP, credential profile, connection status, počty a jednotlivé výstupy.
 
+## IOS-XE profil a logy
+
+**Fakt:** IOS-XE `full_collection` pokrýva identitu, inventár, filesystémy,
+rozhrania, optiku, CPU/pamäť, environment, L2/L3 topológiu, NTP, licencie,
+lokálny logging, HA/routing voliteľné funkcie a redigovaný running-config.
+Definície a explicitné parsery sú iba v
+`catalog/prophylaxis/cisco_commands.yaml`; Atlas nevytvára druhý register.
+
+**Fakt:** `show clock detail` poskytuje časovú referenciu pre konzervatívny
+sedemdňový filter `show logging`. Do striktnej množiny sa zaradia iba udalosti
+s určiteľným časom. Neurčené udalosti zostávajú v
+`ambiguous_or_undated`. Výsledok uvádza okno, najstaršiu/najnovšiu udalosť,
+počty, truncation a `complete`, `partial` alebo `unknown` coverage. Pomenované
+časové zóny bez jednoznačného UTC offsetu sa neodhadujú.
+
+**Neoverené:** Multiline syslog udalosti a uptime-relative timestampy zatiaľ
+nemajú samostatný parser. Ostávajú dostupné v autorizovanom raw výstupe.
+
+## Report Explorer
+
+**Fakt:** Operations UI obsahuje `Browse reports`. Používateľ vyberie run,
+Tenant/Site artefakt, zariadenie a kategóriu. Prehľad zobrazuje reálne počty
+zberu a parsovania; nepočíta health score. Structured dáta sa renderujú ako
+tabuľky, logy majú časový/severity/text filter a raw CLI sa načíta až na
+vyžiadanie s limitom 65 536 znakov.
+
+**Fakt:** Read-only API používa existujúcu operator autorizáciu, kontroluje že
+artefakt patrí runu, odmieta symlinky a reporty nad 64 MiB. Summary a device
+endpoint nevracajú raw stdout. Kompletný JSON a textový report majú samostatný
+autorizovaný download endpoint.
+
+**Obmedzenie:** Aktuálny Atlas operator účet nemá tenant-scoped principal.
+Prístup je preto autorizovaný na úrovni Profylaxia operátora, nie na úrovni
+jedného NetBox tenantu.
+
 ## Skupiny, výsledky a capability register
 
-**Fakt:** NetBox ponúka päť používateľských skupín. Atlas vybranú skupinu
+**Fakt:** Interné tematické collectory naďalej používajú päť skupín. NetBox UI
+v tejto verzii ponúka iba `identity` a `full_collection`; Atlas vybraný režim
 rozbalí na stabilné interné `CheckId`, platformový register priradí podporované
 výsledky ku `CollectorId` a Ansible Runner vykoná každý naplánovaný collector
 raz na zariadenie. Existujúce API polia, OpenBao účel `prophylaxis`,

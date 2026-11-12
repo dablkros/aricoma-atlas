@@ -35,6 +35,8 @@ class RunNotFoundError(RuntimeError):
 
 class FileRunStore:
     ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9_.-]{0,126}\.svg")
+    REPORT_ARTIFACT_NAME = re.compile(r"[a-z0-9][a-z0-9.-]{0,239}Z?\.json")
+    MAX_REPORT_BYTES = 64 * 1024 * 1024
 
     def __init__(self, root: Path, *, max_runs: int = 100) -> None:
         self.root = Path(root)
@@ -253,6 +255,67 @@ class FileRunStore:
                 raise
             except (OSError, ValueError, json.JSONDecodeError):
                 raise RunStoreError() from None
+
+    def list_runs(self, *, limit: int = 20) -> tuple[ProphylaxisRun, ...]:
+        """Return newest readable runs without following filesystem links."""
+        if limit < 1 or limit > 100:
+            raise ValueError("limit must be between 1 and 100")
+        with self._lock:
+            self._prepare_root()
+            candidates: list[tuple[float, UUID]] = []
+            try:
+                for directory in self.root.iterdir():
+                    if directory.is_symlink() or not directory.is_dir():
+                        continue
+                    try:
+                        run_id = UUID(directory.name)
+                    except ValueError:
+                        continue
+                    result = directory / "result.json"
+                    if result.is_symlink() or not result.is_file():
+                        continue
+                    candidates.append((result.stat().st_mtime, run_id))
+            except OSError:
+                raise RunStoreError() from None
+        runs = []
+        for _mtime, run_id in sorted(candidates, reverse=True)[:limit]:
+            runs.append(self.get(run_id))
+        return tuple(runs)
+
+    def site_report_path(self, run_id: UUID, artifact: str) -> Path:
+        if not self.REPORT_ARTIFACT_NAME.fullmatch(artifact):
+            raise RunNotFoundError()
+        run = self.get(run_id)
+        if artifact not in {item.artifact for item in run.raw_reports}:
+            raise RunNotFoundError()
+        with self._lock:
+            path = self._directory(run_id) / "sites" / artifact
+            try:
+                if path.is_symlink() or not path.is_file():
+                    raise RunNotFoundError()
+                if path.stat().st_size > self.MAX_REPORT_BYTES:
+                    raise RunStoreError()
+            except OSError:
+                raise RunStoreError() from None
+            return path
+
+    def read_site_report(self, run_id: UUID, artifact: str) -> dict:
+        path = self.site_report_path(run_id, artifact)
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            raise RunStoreError() from None
+        if not isinstance(payload, dict) or not isinstance(payload.get("devices"), list):
+            raise RunStoreError()
+        return payload
+
+    def text_report_path(self, run_id: UUID) -> Path:
+        self.get(run_id)
+        with self._lock:
+            path = self._directory(run_id) / "report.txt"
+            if path.is_symlink() or not path.is_file():
+                raise RunNotFoundError()
+            return path
 
     @staticmethod
     def _report_data(run: ProphylaxisRun) -> dict:

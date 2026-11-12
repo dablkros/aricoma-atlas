@@ -2246,6 +2246,12 @@ akceptuje rozpoznané staré hodnoty, ale baseline ich premapuje na
 `full_collection`. Profylaxia nemení samostatný Oxidized polling ani Git
 históriu.
 
+Operations UI ponúka `Browse reports` pre chránené Tenant/Site JSON artefakty.
+Zobrazuje run a device summary, štruktúrované parser výsledky, stav parsera,
+sedemdňové log okno s coverage informáciou a lazy-load raw CLI. Kompletný JSON
+a existujúci textový report sa sťahujú cez autorizované endpointy. Podrobnosti:
+[Cisco IOS/IOS-XE report flow](docs/prophylaxis-cisco-ios.md).
+
 ## Custom Fields
 
 | Name | Type | Group |

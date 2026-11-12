@@ -58,8 +58,15 @@ stdout. Historical error text returned by `show logging` is not treated as an
 execution failure. Commands with `none` report `no_parser` and retain raw data.
 
 Reports record the actual `parser_engine`, `parser_platform`, `parser_template`,
-and `parser_version`. `normalized_data` is emitted only for reviewed common
-fields; `structured_data` and redacted raw stdout remain available.
+and `parser_version`. Reviewed common fields have dedicated normalization;
+other successful parser rows receive an additive `{category, items}` wrapper.
+The authoritative `structured_data` and redacted raw stdout remain available.
+
+The Operations UI Report Explorer reads the existing per-Site JSON artifacts.
+Summary endpoints exclude raw stdout. Raw command output is fetched separately,
+is bounded to 65,536 characters per request and is rendered with `textContent`,
+never as HTML. Stored report lookup validates the artifact against the owning
+run and rejects symbolic links and oversized artifacts.
 
 ## Configuration safety
 

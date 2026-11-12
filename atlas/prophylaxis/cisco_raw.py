@@ -53,6 +53,7 @@ _FORTIOS_PERMISSION = re.compile(
 )
 _PROMPT_ONLY = re.compile(r"(?m)^\s*[A-Za-z0-9_.()/-]+[>#]\s*$")
 _SECRET_LINES = (
+    re.compile(r"(?i)^(\s*(?:proxy\s+)?password\s*:\s*).*$"),
     re.compile(
         r"(?i)^(\s*username\s+\S+.*?\b(?:password|secret)\b(?:\s+\d+)?\s+).*$"
     ),
@@ -398,7 +399,9 @@ def _normalize_rows(
         }
     if definition.category == "interface_errors":
         return {"category": definition.category, "items": rows}
-    return None
+    # Parser rows remain authoritative. This additive wrapper gives report
+    # consumers a stable category without inventing absent values or units.
+    return {"category": definition.category, "items": rows}
 
 
 def parse_command_output(

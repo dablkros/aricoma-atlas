@@ -15,7 +15,7 @@ from atlas.prophylaxis.cisco_raw import (
     parse_command_output,
     site_artifact_name,
 )
-from atlas.prophylaxis.run_store import FileRunStore
+from atlas.prophylaxis.run_store import FileRunStore, RunNotFoundError
 from atlas.prophylaxis.runs import DeviceFactsRunService
 
 CISCO_REGISTRY_FIXTURES = Path(__file__).parent / "fixtures/cisco_registry"
@@ -56,6 +56,15 @@ class CiscoRawContractTests(unittest.TestCase):
             "show cpu utilization",
             cisco_raw_commands("cisco-catalyst-1200", "full_collection"),
         )
+        ios_xe = cisco_raw_commands("cisco-ios-xe", "full_collection")
+        for command in (
+            "show clock detail", "show platform", "show file systems",
+            "show ip interface brief", "show etherchannel summary",
+            "show license all", "show ip bgp summary", "show power inline",
+        ):
+            self.assertIn(command, ios_xe)
+        self.assertNotIn("show vpc", ios_xe)
+        self.assertNotIn("show system resources", ios_xe)
 
     def test_command_statuses_are_distinct(self):
         unsupported = classify_command_record(
@@ -112,6 +121,13 @@ class CiscoRawContractTests(unittest.TestCase):
         self.assertNotIn("PRIVATE-COMMUNITY", result.stdout)
         self.assertNotIn("CBD-SECRET", result.stdout)
         self.assertEqual(3, result.stdout.count("<redacted>"))
+
+    def test_colon_form_proxy_password_is_redacted(self):
+        result = classify_command_record(
+            self.record(command="show license status", stdout="Proxy Password: TOP-SECRET"),
+            max_output_bytes=4096,
+        )
+        self.assertEqual("Proxy Password: <redacted>", result.stdout)
 
     def test_cisco_smb_running_config_has_safe_structured_summary(self):
         raw = classify_command_record(
@@ -318,6 +334,13 @@ class CiscoRawContractTests(unittest.TestCase):
             self.assertEqual(
                 "atlas_cisco_site_collection", payload["document_type"]
             )
+            store.save(run.model_copy(update={"raw_reports": artifacts}))
+            self.assertEqual(payload, store.read_site_report(
+                run.run_id, artifacts[0].artifact,
+            ))
+            self.assertEqual(run.run_id, store.list_runs(limit=1)[0].run_id)
+            with self.assertRaises(RunNotFoundError):
+                store.site_report_path(run.run_id, "unowned-report.json")
 
 
 if __name__ == "__main__":

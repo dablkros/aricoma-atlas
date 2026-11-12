@@ -1,8 +1,10 @@
 import tempfile
 import unittest
+from importlib.resources import files
 from pathlib import Path
 
 from pydantic import ValidationError
+import textfsm
 
 from atlas.prophylaxis.cisco_registry import (
     DEFAULT_CISCO_COMMAND_REGISTRY,
@@ -11,6 +13,24 @@ from atlas.prophylaxis.cisco_registry import (
 
 
 class CiscoCommandRegistryTests(unittest.TestCase):
+    def test_declared_ntc_templates_exist_and_headers_match_pinned_schema(self):
+        templates = files("ntc_templates").joinpath("templates")
+        checked = set()
+        for mode in ("identity", "full_collection"):
+            for platform in DEFAULT_CISCO_COMMAND_REGISTRY.platforms:
+                for command in DEFAULT_CISCO_COMMAND_REGISTRY.resolve(platform, mode):
+                    parser = command.parser
+                    if parser.engine != "ntc_textfsm" or parser.template in checked:
+                        continue
+                    checked.add(parser.template)
+                    template = templates.joinpath(parser.template)
+                    self.assertTrue(template.is_file(), parser.template)
+                    with template.open("r", encoding="utf-8") as handle:
+                        header = tuple(
+                            str(field).casefold() for field in textfsm.TextFSM(handle).header
+                        )
+                    self.assertEqual(parser.output_fields, header, parser.template)
+
     def test_repository_catalog_is_valid_and_platform_specific(self):
         registry = DEFAULT_CISCO_COMMAND_REGISTRY
         ios = registry.resolve("cisco-ios", "full_collection")

@@ -47,6 +47,7 @@ from atlas.prophylaxis.cisco_raw import (
     parse_command_output,
     site_artifact_name,
 )
+from atlas.prophylaxis.cisco_logs import enrich_cisco_log_results
 from atlas.prophylaxis.fortios_raw import (
     FORTIOS_FULL_COMMANDS,
     FORTIOS_IDENTITY_COMMANDS,
@@ -160,6 +161,9 @@ class DeviceFactsRunService:
 
     def get(self, run_id) -> ProphylaxisRun:
         return self.store.get(run_id)
+
+    def list_runs(self, limit: int = 20) -> tuple[ProphylaxisRun, ...]:
+        return self.store.list_runs(limit=limit)
 
     def run(self, run_id) -> None:
         # The Oxidized snapshot belongs to one run and is shared by that run's
@@ -725,6 +729,8 @@ class DeviceFactsRunService:
                     command_results.append(parse_command_output(
                         classified, platform=target.platform,
                     ))
+            elif target.platform in {"cisco-ios", "cisco-ios-xe"}:
+                command_results = list(enrich_cisco_log_results(command_results))
 
             counts = {
                 status: sum(result.status == status for result in command_results)

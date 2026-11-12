@@ -6,6 +6,10 @@ const state = {
   backupsInProgress: new Set(),
   prophylaxisToken: "",
   prophylaxisRun: null,
+  prophylaxisExplorerRuns: [],
+  prophylaxisExplorerSummary: null,
+  prophylaxisExplorerDevice: null,
+  prophylaxisExplorerCategory: "overview",
   monitoringDevices: [],
   monitoringToken: "",
   monitoringJobs: new Map(),
@@ -74,6 +78,19 @@ const elements = {
   prophylaxisReport: document.querySelector("#prophylaxis-report"),
   prophylaxisResults: document.querySelector("#prophylaxis-results"),
   prophylaxisCharts: document.querySelector("#prophylaxis-charts"),
+  prophylaxisExplorerOpen: document.querySelector("#prophylaxis-explorer-open"),
+  prophylaxisExplorerDialog: document.querySelector("#prophylaxis-explorer-dialog"),
+  prophylaxisExplorerClose: document.querySelector("#prophylaxis-explorer-close"),
+  prophylaxisExplorerRun: document.querySelector("#prophylaxis-explorer-run"),
+  prophylaxisExplorerReport: document.querySelector("#prophylaxis-explorer-report"),
+  prophylaxisExplorerDevice: document.querySelector("#prophylaxis-explorer-device"),
+  prophylaxisExplorerStatus: document.querySelector("#prophylaxis-explorer-status"),
+  prophylaxisExplorerSummary: document.querySelector("#prophylaxis-explorer-summary"),
+  prophylaxisExplorerCategories: document.querySelector("#prophylaxis-explorer-categories"),
+  prophylaxisExplorerFilter: document.querySelector("#prophylaxis-explorer-filter"),
+  prophylaxisExplorerCommands: document.querySelector("#prophylaxis-explorer-commands"),
+  prophylaxisExplorerJson: document.querySelector("#prophylaxis-explorer-json"),
+  prophylaxisExplorerText: document.querySelector("#prophylaxis-explorer-text"),
   monitoringToken: document.querySelector("#monitoring-token"),
   monitoringMode: document.querySelector("#monitoring-mode"),
   monitoringLoad: document.querySelector("#monitoring-load"),
@@ -2549,6 +2566,330 @@ async function launchProphylaxisRun() {
   }
 }
 
+function setReportExplorerBusy(busy) {
+  elements.prophylaxisExplorerStatus.hidden = !busy;
+  for (const element of [
+    elements.prophylaxisExplorerRun,
+    elements.prophylaxisExplorerReport,
+    elements.prophylaxisExplorerDevice,
+  ]) element.disabled = busy;
+}
+
+function reportExplorerRun() {
+  return state.prophylaxisExplorerRuns.find(
+    (run) => run.run_id === elements.prophylaxisExplorerRun.value,
+  );
+}
+
+function renderReportSummary(summary) {
+  const fields = [
+    ["Run", summary.run_id], ["Collected", summary.started_at],
+    ["Tenant", summary.tenant?.name], ["Site", summary.site?.name],
+    ["Devices", summary.devices_total], ["Devices successful", summary.devices_successful],
+    ["Devices partial", summary.devices_partial], ["Devices failed", summary.devices_failed],
+    ["Commands attempted", summary.commands_attempted],
+    ["Commands successful", summary.commands_successful],
+    ["Unsupported", summary.commands_unsupported], ["Failed", summary.commands_failed],
+    ["Parsed", summary.parsing_successful], ["No parser", summary.parsing_unavailable],
+    ["Parse failures", summary.parsing_failed],
+  ];
+  const list = document.createElement("dl");
+  list.className = "result-summary report-explorer-metrics";
+  for (const [label, value] of fields) {
+    const item = document.createElement("div");
+    const term = document.createElement("dt");
+    const description = document.createElement("dd");
+    term.textContent = label;
+    description.textContent = value ?? "Not collected";
+    item.append(term, description);
+    list.append(item);
+  }
+  elements.prophylaxisExplorerSummary.replaceChildren(list);
+}
+
+function structuredTable(rows) {
+  if (!Array.isArray(rows) || !rows.length) {
+    const empty = document.createElement("p");
+    empty.className = "field-help";
+    empty.textContent = "No structured rows were produced.";
+    return empty;
+  }
+  const fields = [...new Set(rows.slice(0, 200).flatMap((row) => Object.keys(row)))].slice(0, 12);
+  const wrap = document.createElement("div");
+  wrap.className = "table-wrap report-structured-table";
+  const table = document.createElement("table");
+  const head = document.createElement("thead");
+  const headRow = document.createElement("tr");
+  for (const field of fields) {
+    const cell = document.createElement("th");
+    cell.textContent = titleCase(field);
+    headRow.append(cell);
+  }
+  head.append(headRow);
+  const body = document.createElement("tbody");
+  for (const row of rows.slice(0, 200)) {
+    const line = document.createElement("tr");
+    for (const field of fields) {
+      const cell = document.createElement("td");
+      const value = row[field];
+      cell.textContent = Array.isArray(value) ? value.join(", ")
+        : value && typeof value === "object" ? JSON.stringify(value)
+          : value ?? "—";
+      line.append(cell);
+    }
+    body.append(line);
+  }
+  table.append(head, body);
+  wrap.append(table);
+  return wrap;
+}
+
+function renderLogEvents(command, container) {
+  const normalized = command.normalized_data || {};
+  const coverage = document.createElement("p");
+  coverage.className = `report-log-coverage coverage-${normalized.coverage_status || "unknown"}`;
+  coverage.textContent = `Coverage: ${normalized.coverage_status || "unknown"} · ${normalized.filtered_events ?? 0} dated events in ${normalized.requested_window_days ?? 7} days · ${normalized.undated_events ?? 0} undated`;
+  const controls = document.createElement("div");
+  controls.className = "report-log-filters";
+  const search = document.createElement("input");
+  search.type = "search";
+  search.placeholder = "Search log messages";
+  const severity = document.createElement("select");
+  severity.append(new Option("All severities", ""));
+  const events = [...(normalized.events || []), ...(normalized.ambiguous_or_undated || [])];
+  for (const value of [...new Set(events.map((event) => event.severity).filter(Boolean))].sort()) {
+    severity.append(new Option(value, value));
+  }
+  const from = document.createElement("input");
+  from.type = "datetime-local";
+  from.setAttribute("aria-label", "Log events from");
+  const to = document.createElement("input");
+  to.type = "datetime-local";
+  to.setAttribute("aria-label", "Log events to");
+  const tableHost = document.createElement("div");
+  const draw = () => {
+    const needle = search.value.trim().toLowerCase();
+    const lower = from.value ? new Date(from.value) : null;
+    const upper = to.value ? new Date(to.value) : null;
+    const filtered = events.filter((event) => {
+      const stamp = event.timestamp ? new Date(event.timestamp) : null;
+      return (!severity.value || event.severity === severity.value)
+        && (!needle || JSON.stringify(event).toLowerCase().includes(needle))
+        && (!lower || (stamp && stamp >= lower)) && (!upper || (stamp && stamp <= upper));
+    });
+    tableHost.replaceChildren(structuredTable(filtered));
+  };
+  for (const control of [search, severity, from, to]) control.addEventListener("input", draw);
+  controls.append(search, severity, from, to);
+  container.append(coverage, controls, tableHost);
+  draw();
+}
+
+async function loadRawCommand(button, pre, command) {
+  button.disabled = true;
+  button.textContent = "Loading raw output…";
+  try {
+    const runId = elements.prophylaxisExplorerRun.value;
+    const artifact = elements.prophylaxisExplorerReport.value;
+    const deviceId = elements.prophylaxisExplorerDevice.value;
+    const payload = await apiRequest(
+      `/api/prophylaxis/runs/${runId}/reports/${encodeURIComponent(artifact)}/devices/${deviceId}/commands/${encodeURIComponent(command.command_id)}?limit=65536`,
+      { headers: prophylaxisHeaders() },
+    );
+    pre.textContent = payload.raw_output || "No raw output was stored.";
+    pre.hidden = false;
+    button.textContent = payload.raw_response_truncated ? "Raw output loaded (bounded)" : "Raw output loaded";
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = "Retry raw output";
+    toast(error.safeMessage || "Raw command output is unavailable.", "error");
+  }
+}
+
+function renderReportCommands() {
+  const report = state.prophylaxisExplorerDevice;
+  elements.prophylaxisExplorerCommands.replaceChildren();
+  if (!report) return;
+  const category = state.prophylaxisExplorerCategory;
+  const needle = elements.prophylaxisExplorerFilter.value.trim().toLowerCase();
+  if (category === "overview") {
+    const overview = document.createElement("dl");
+    overview.className = "result-summary report-device-overview";
+    const device = report.device || {};
+    const versionResult = (report.outputs || []).find((item) => item.command_id === "device_version");
+    const versionFacts = versionResult?.structured_data?.[0] || {};
+    const inventoryResult = (report.outputs || []).find((item) => item.command_id === "hardware_inventory");
+    const inventoryFacts = inventoryResult?.normalized_data?.items?.find((item) => item.serial_number)
+      || inventoryResult?.normalized_data?.items?.[0] || {};
+    for (const [label, value] of [
+      ["Hostname", device.hostname], ["Management IP", device.management_ip],
+      ["Platform", device.platform], ["Model", device.device_type],
+      ["Software version", versionFacts.version || versionFacts.software_version || versionFacts.sw_version],
+      ["Serial number", versionFacts.serial || inventoryFacts.serial_number],
+      ["Uptime", versionFacts.uptime],
+      ["Collection", report.collection?.status], ["Transport", report.connection?.transport],
+    ]) {
+      const item = document.createElement("div");
+      const term = document.createElement("dt");
+      const description = document.createElement("dd");
+      term.textContent = label; description.textContent = value || "Not collected";
+      item.append(term, description); overview.append(item);
+    }
+    elements.prophylaxisExplorerCommands.append(overview);
+    return;
+  }
+  if (category === "unsupported") {
+    const ignored = (report.ignored_commands || []).filter((item) => !needle
+      || JSON.stringify(item).toLowerCase().includes(needle));
+    elements.prophylaxisExplorerCommands.append(structuredTable(ignored));
+    return;
+  }
+  const commands = (report.outputs || []).filter((command) =>
+    command.category === category
+      && (!needle || `${command.command} ${JSON.stringify(command.normalized_data || {})}`.toLowerCase().includes(needle)));
+  if (!commands.length) {
+    const empty = document.createElement("p");
+    empty.className = "table-message";
+    empty.textContent = "No collected commands match this section and filter.";
+    elements.prophylaxisExplorerCommands.append(empty);
+    return;
+  }
+  for (const command of commands) {
+    const details = document.createElement("details");
+    details.className = "report-command";
+    const summary = document.createElement("summary");
+    summary.textContent = `${command.command} · execution ${command.status} · parsing ${command.parsing_status}`;
+    const meta = document.createElement("p");
+    meta.className = "field-help";
+    meta.textContent = `Parser: ${command.parser_template || "No parser"} · ${command.parser_version || "—"}`;
+    const content = document.createElement("div");
+    if (category === "logs" && command.normalized_data) {
+      renderLogEvents(command, content);
+    } else {
+      content.append(structuredTable(command.normalized_data?.items || command.structured_data));
+    }
+    const rawButton = document.createElement("button");
+    rawButton.className = "button button-secondary report-raw-load";
+    rawButton.type = "button";
+    rawButton.textContent = "Load raw CLI output";
+    const raw = document.createElement("pre");
+    raw.className = "report-raw-output";
+    raw.hidden = true;
+    rawButton.addEventListener("click", () => loadRawCommand(rawButton, raw, command));
+    const copy = document.createElement("button");
+    copy.className = "button button-secondary";
+    copy.type = "button"; copy.textContent = "Copy raw output";
+    copy.addEventListener("click", () => navigator.clipboard.writeText(raw.textContent || ""));
+    details.append(summary, meta, content, rawButton, copy, raw);
+    elements.prophylaxisExplorerCommands.append(details);
+  }
+}
+
+function renderReportCategories() {
+  const device = state.prophylaxisExplorerDevice;
+  const categories = ["overview", ...new Set((device?.outputs || []).map((item) => item.category).filter(Boolean))];
+  if (device?.ignored_commands?.length) categories.push("unsupported");
+  const buttons = categories.map((category) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `button ${category === state.prophylaxisExplorerCategory ? "button-primary" : "button-secondary"}`;
+    button.textContent = titleCase(category === "transceivers" ? "optics" : category);
+    button.addEventListener("click", () => {
+      state.prophylaxisExplorerCategory = category;
+      renderReportCategories(); renderReportCommands();
+    });
+    return button;
+  });
+  elements.prophylaxisExplorerCategories.replaceChildren(...buttons);
+}
+
+async function loadReportDevice() {
+  const deviceId = elements.prophylaxisExplorerDevice.value;
+  if (!deviceId) return;
+  setReportExplorerBusy(true);
+  try {
+    state.prophylaxisExplorerDevice = await apiRequest(
+      `/api/prophylaxis/runs/${elements.prophylaxisExplorerRun.value}/reports/${encodeURIComponent(elements.prophylaxisExplorerReport.value)}/devices/${deviceId}`,
+      { headers: prophylaxisHeaders() },
+    );
+    state.prophylaxisExplorerCategory = "overview";
+    renderReportCategories(); renderReportCommands();
+  } catch (error) {
+    toast(error.safeMessage || "The device report is unavailable.", "error");
+  } finally { setReportExplorerBusy(false); }
+}
+
+async function loadReportSummary() {
+  const artifact = elements.prophylaxisExplorerReport.value;
+  if (!artifact) return;
+  setReportExplorerBusy(true);
+  try {
+    const runId = elements.prophylaxisExplorerRun.value;
+    const summary = await apiRequest(
+      `/api/prophylaxis/runs/${runId}/reports/${encodeURIComponent(artifact)}`,
+      { headers: prophylaxisHeaders() },
+    );
+    state.prophylaxisExplorerSummary = summary;
+    renderReportSummary(summary);
+    elements.prophylaxisExplorerDevice.replaceChildren(...summary.devices.map((device) => new Option(
+      `${device.hostname} · ${device.platform || "unknown platform"}`, device.netbox_id,
+    )));
+    elements.prophylaxisExplorerJson.href = `/api/prophylaxis/runs/${runId}/reports/${encodeURIComponent(artifact)}/download`;
+    elements.prophylaxisExplorerText.href = `/api/prophylaxis/runs/${runId}/report.txt`;
+  } catch (error) {
+    toast(error.safeMessage || "The report summary is unavailable.", "error");
+    return;
+  } finally { setReportExplorerBusy(false); }
+  await loadReportDevice();
+}
+
+async function selectExplorerRun() {
+  const run = reportExplorerRun();
+  const reports = run?.raw_reports || [];
+  elements.prophylaxisExplorerReport.replaceChildren(...reports.map((report) => new Option(
+    `${report.tenant} / ${report.site} · ${report.device_count} devices`, report.artifact,
+  )));
+  if (reports.length) await loadReportSummary();
+}
+
+async function openReportExplorer() {
+  if (!state.authenticated && !elements.prophylaxisToken.value.trim()) {
+    toast("Enter the operator token before browsing reports.", "warning");
+    return;
+  }
+  if (!state.authenticated) state.prophylaxisToken = elements.prophylaxisToken.value.trim();
+  elements.prophylaxisExplorerDialog.showModal();
+  setReportExplorerBusy(true);
+  try {
+    state.prophylaxisExplorerRuns = await apiRequest("/api/prophylaxis/runs?limit=50", { headers: prophylaxisHeaders() });
+    const runs = state.prophylaxisExplorerRuns.filter((run) => run.raw_reports?.length);
+    elements.prophylaxisExplorerRun.replaceChildren(...runs.map((run) => new Option(
+      `${run.started_at || run.created_at} · ${run.status} · ${run.run_id}`, run.run_id,
+    )));
+    if (state.prophylaxisRun && runs.some((run) => run.run_id === state.prophylaxisRun.run_id)) {
+      elements.prophylaxisExplorerRun.value = state.prophylaxisRun.run_id;
+    }
+  } catch (error) {
+    toast(error.safeMessage || "Report history is unavailable.", "error");
+    return;
+  } finally { setReportExplorerBusy(false); }
+  await selectExplorerRun();
+}
+
+async function downloadProtectedReport(event) {
+  event.preventDefault();
+  try {
+    const response = await fetch(event.currentTarget.href, { headers: prophylaxisHeaders() });
+    if (!response.ok) throw new Error("download_failed");
+    const url = URL.createObjectURL(await response.blob());
+    const link = document.createElement("a");
+    link.href = url;
+    link.download = event.currentTarget === elements.prophylaxisExplorerJson
+      ? elements.prophylaxisExplorerReport.value : `${elements.prophylaxisExplorerRun.value}.txt`;
+    link.click(); URL.revokeObjectURL(url);
+  } catch (_) { toast("The protected report could not be downloaded.", "error"); }
+}
+
 async function synchronizeInventory() {
   if (state.syncing) return;
   setSyncBusy(true);
@@ -3384,6 +3725,14 @@ elements.vpnTestOTPCode.addEventListener("keydown", (event) => {
     submitVPNOTPInput();
   }
 });
+elements.prophylaxisExplorerOpen.addEventListener("click", openReportExplorer);
+elements.prophylaxisExplorerClose.addEventListener("click", () => elements.prophylaxisExplorerDialog.close());
+elements.prophylaxisExplorerRun.addEventListener("change", selectExplorerRun);
+elements.prophylaxisExplorerReport.addEventListener("change", loadReportSummary);
+elements.prophylaxisExplorerDevice.addEventListener("change", loadReportDevice);
+elements.prophylaxisExplorerFilter.addEventListener("input", renderReportCommands);
+elements.prophylaxisExplorerJson.addEventListener("click", downloadProtectedReport);
+elements.prophylaxisExplorerText.addEventListener("click", downloadProtectedReport);
 
 for (const input of [
   elements.credentialMode,

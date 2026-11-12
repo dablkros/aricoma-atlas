@@ -259,6 +259,7 @@
             <label for="prophylaxis-token">Operator token</label>
             <input id="prophylaxis-token" type="password" autocomplete="off" placeholder="Runtime operator token">
           </div>
+          <button id="prophylaxis-explorer-open" class="button button-secondary" type="button">Browse reports</button>
           <button id="prophylaxis-run" class="button button-primary" type="button">Run Prophylaxis</button>
         </div>
         <dl class="result-summary prophylaxis-summary">
@@ -846,6 +847,35 @@
             <button id="vpn-assignment-apply" class="button button-primary" type="button" disabled>Apply approved plan</button>
           </div>
         </section>
+      </div>
+    </dialog>
+
+    <dialog id="prophylaxis-explorer-dialog" class="inventory-dialog report-explorer-dialog" aria-labelledby="prophylaxis-explorer-title">
+      <div class="dialog-shell">
+        <header class="dialog-heading">
+          <div>
+            <p class="section-kicker">Authorized collection reports</p>
+            <h2 id="prophylaxis-explorer-title">Report explorer</h2>
+            <p>Choose a run and Site report, then inspect structured results or load bounded raw CLI output.</p>
+          </div>
+          <button id="prophylaxis-explorer-close" class="dialog-close" type="button" aria-label="Close report explorer">×</button>
+        </header>
+        <div class="report-explorer-selectors">
+          <div class="field-group"><label for="prophylaxis-explorer-run">Collection run</label><select id="prophylaxis-explorer-run"></select></div>
+          <div class="field-group"><label for="prophylaxis-explorer-report">Tenant / Site</label><select id="prophylaxis-explorer-report"></select></div>
+          <div class="field-group"><label for="prophylaxis-explorer-device">Device</label><select id="prophylaxis-explorer-device"></select></div>
+        </div>
+        <div id="prophylaxis-explorer-status" class="inventory-activity" role="status" aria-live="polite" hidden>
+          <span class="monitoring-spinner" aria-hidden="true"></span><div><strong>Loading report</strong><p>Reading the protected local report.</p></div>
+        </div>
+        <section id="prophylaxis-explorer-summary" class="report-explorer-summary" aria-live="polite"></section>
+        <nav id="prophylaxis-explorer-categories" class="report-category-nav" aria-label="Diagnostic categories"></nav>
+        <div class="report-command-filter"><label for="prophylaxis-explorer-filter">Filter commands</label><input id="prophylaxis-explorer-filter" type="search" placeholder="Command or result text"></div>
+        <section id="prophylaxis-explorer-commands" class="report-command-list"></section>
+        <div class="dialog-actions">
+          <a id="prophylaxis-explorer-json" class="button button-secondary" href="#" download>Download JSON</a>
+          <a id="prophylaxis-explorer-text" class="button button-secondary" href="#" download>Download text report</a>
+        </div>
       </div>
     </dialog>
 
